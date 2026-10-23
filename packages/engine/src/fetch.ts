@@ -194,3 +194,30 @@ export function installScriptedFetch(
     else delete (g as { fetch?: unknown }).fetch;
   };
 }
+
+/**
+ * Run platform work (a reset, a snapshot) with no network: `fetch` rejects
+ * while it runs. Reports whether anything tried, so code that runs outside
+ * the simulation (an object's constructor during a reset) cannot reach the
+ * network unseen.
+ */
+export async function withoutNetwork<T>(
+  work: () => Promise<T>,
+): Promise<{ readonly value: T; readonly requested: boolean }> {
+  let requested = false;
+  const saved = Object.getOwnPropertyDescriptor(globalThis, "fetch");
+  Object.defineProperty(globalThis, "fetch", {
+    value: async () => {
+      requested = true;
+      throw new TypeError("network access is blocked while Eutaxy resets or snapshots state");
+    },
+    configurable: true,
+    writable: true,
+  });
+  try {
+    return { value: await work(), requested };
+  } finally {
+    if (saved) Object.defineProperty(globalThis, "fetch", saved);
+    else delete (globalThis as { fetch?: unknown }).fetch;
+  }
+}

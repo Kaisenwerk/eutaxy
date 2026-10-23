@@ -51,6 +51,12 @@ export function createFakePlatform(
     concurrent?: boolean;
     /** An order whose insert never completes, like a binding call that hangs. */
     hangInsert?: string;
+    /** The insert reads first inside its own effect, like an object that calls out during a call. */
+    nestedRead?: boolean;
+    /** Called inside every insert's effect, while its I/O is still pending. */
+    duringInsert?: () => void;
+    /** Mark the insert as hosting effects, like a Durable Object call. */
+    insertHosts?: boolean;
   } = {},
 ): Platform & {
   readonly rows: Map<string, number>;
@@ -95,9 +101,15 @@ export function createFakePlatform(
               op: "run",
               args: { sql: "INSERT", params: [orderId] },
               allowed: ["crash_before", "crash_after", "ambiguous", "error"],
+              ...(options.insertHosts ? { hostsEffects: true } : {}),
             },
             async () => {
               if (orderId === options.hangInsert) await new Promise(() => {});
+              if (options.nestedRead) await env.count(orderId);
+              if (options.duringInsert) {
+                options.duringInsert();
+                await new Promise((resolve) => setTimeout(resolve, 0));
+              }
               const before = rows.get(orderId) ?? 0;
               if (options.idempotent && before > 0) return { changes: 0 };
               rows.set(orderId, before + 1);

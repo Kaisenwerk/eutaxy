@@ -111,6 +111,25 @@ interface DeliveryCell {
 
 const deliveryScope = asyncScope<DeliveryCell>();
 
+/**
+ * An effect being performed. An effect made inside it is nested in it; when
+ * a crash is injected there, the nested effect hangs like any crashed
+ * effect and tells this frame, so the enclosing effect ends too. User code
+ * never sees the crash as an error it could catch.
+ */
+class Frame {
+  private wake: () => void = () => {};
+  readonly crashed = new Promise<"nested_crash">((resolve) => {
+    this.wake = () => resolve("nested_crash");
+  });
+  crash(): void {
+    this.wake();
+  }
+}
+
+/** The frame of the effect whose `perform` the current code runs inside. */
+const effectScope = asyncScope<Frame>();
+
 /** Whether this host can run concurrent invocations: attribution needs async context. */
 export const concurrencySupported = deliveryScope !== null;
 
@@ -134,6 +153,10 @@ export class Run implements RunHooks {
   private readonly invocations = new Map<string, InvocationState>();
   private readonly reasons: string[] = [];
   private inFlight = 0;
+  /** Effects being performed, innermost last (the nesting test where there is no async context). */
+  private readonly frames: Frame[] = [];
+  /** Per invocation, its effects with `hostsEffects` being performed, innermost last. */
+  private readonly hosting = new Map<string, Frame[]>();
   private patched: Patched | null = null;
   private restoreFetch: (() => void) | null = null;
   /** The invocation whose code is running (one at a time); outbound fetches are attributed to it. */
@@ -270,6 +293,15 @@ export class Run implements RunHooks {
     return queued;
   }
 
+  private hostingFrames(invocation: string): Frame[] {
+    let frames = this.hosting.get(invocation);
+    if (!frames) {
+      frames = [];
+      this.hosting.set(invocation, frames);
+    }
+    return frames;
+  }
+
   running(): string {
     if (!this.concurrent) return this.current;
     return deliveryScope?.getStore()?.id ?? this.current;
@@ -336,18 +368,31 @@ export class Run implements RunHooks {
   ): Promise<T> {
     const inv = this.invocation(point.invocation);
     if (inv.isCrashed()) return hang();
-    if (this.concurrent) {
+    // An effect made inside another's perform (an object calling out during a call) is part of
+    // that effect's turn: parking it would wait for the outer one, which waits for it. Async
+    // context tells exactly which code is inside; an invocation merely woken meanwhile is not.
+    // A hosting effect's own effects are attributed to its invocation: only those count as nested.
+    const enclosing = effectScope
+      ? (effectScope.getStore() ?? this.hosting.get(point.invocation)?.at(-1))
+      : this.frames.at(-1);
+    const nested = enclosing !== undefined;
+    if (this.concurrent && !nested) {
       await new Promise<void>((go) => {
         this.parked.push({ inv, seq: this.parkSeq++, go });
         this.progressed();
       });
       if (inv.isCrashed()) return hang();
     }
+    // A crash hangs this effect; inside another effect's perform it ends that effect too.
+    const dead = (): Promise<T> => {
+      enclosing?.crash();
+      return hang();
+    };
     const fault = this.open(point, inv);
     if (fault === "crash_before" || fault === "cut_off") {
       this.record(point, "fault", { args: point.args, fault });
       inv.crash();
-      return hang();
+      return dead();
     }
     if (fault === "error") {
       this.record(point, "fault", { args: point.args, fault });
@@ -356,25 +401,34 @@ export class Run implements RunHooks {
     let settled:
       | { readonly ok: true; readonly value: T }
       | { readonly ok: false; readonly error: unknown }
-      | "expired";
+      | "expired"
+      | "nested_crash";
     // Real I/O that outlasts the scenario's whole budget is treated as hung, so the run ends.
     const deadline = realDeadline(this.options.bounds.budgetMs);
+    const frame = new Frame();
+    const hosted = point.hostsEffects ? this.hostingFrames(point.invocation) : undefined;
     this.inFlight++;
+    this.frames.push(frame);
+    hosted?.push(frame);
     try {
+      const inside = (): Promise<T> => (effectScope ? effectScope.run(frame, perform) : perform());
       // The library's own timers inside the I/O are real; the handler's stay virtual.
-      const io = this.patched ? this.patched.libraryIo(perform) : perform();
+      const io = this.patched ? this.patched.libraryIo(inside) : inside();
       settled = await Promise.race([
         io.then(
           (value) => ({ ok: true as const, value }),
           (error: unknown) => ({ ok: false as const, error }),
         ),
         deadline.expired,
+        frame.crashed,
       ]);
     } catch (err) {
       // `perform` threw before returning a promise.
       settled = { ok: false, error: err };
     } finally {
       deadline.cancel();
+      hosted?.splice(hosted.lastIndexOf(frame), 1);
+      this.frames.splice(this.frames.lastIndexOf(frame), 1);
       this.inFlight--;
       this.patched?.clock.advance(effectLatencyMs);
       if (this.concurrent) this.progressed();
@@ -386,6 +440,8 @@ export class Run implements RunHooks {
       inv.crash();
       return hang();
     }
+    // A crash injected into an effect made during this one: it ends this one too, and outwards.
+    if (settled === "nested_crash") return dead();
     if (!settled.ok) {
       this.record(point, "result", {
         args: point.args,
@@ -401,7 +457,7 @@ export class Run implements RunHooks {
     if (fault === "crash_after") {
       this.record(point, "fault", { args: point.args, fault });
       inv.crash();
-      return hang();
+      return dead();
     }
     if (fault === "ambiguous") {
       this.record(point, "fault", { args: point.args, fault });

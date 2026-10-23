@@ -32,6 +32,12 @@ export interface EffectPoint {
   readonly args: JsonValue;
   /** Which faults make sense here; the engine only injects from this list. */
   readonly allowed: readonly FaultKind[];
+  /**
+   * Performing this effect runs user code that may make effects of its own
+   * (a Durable Object call). Those are part of this effect's turn even when
+   * the runtime does not carry async context into that code.
+   */
+  readonly hostsEffects?: boolean;
 }
 
 /** One invocation of the Worker, as the engine tracks it. */

@@ -19,6 +19,7 @@ export {
   hostMatches,
   installScriptedFetch,
   type ScriptedFetch,
+  withoutNetwork,
 } from "./fetch.ts";
 export { CrashSignal, InjectedEffectError, Run, type RunOptions } from "./run.ts";
 export { restrictSpec, type ShrinkOptions, type ShrinkResult, shrink } from "./shrink.ts";

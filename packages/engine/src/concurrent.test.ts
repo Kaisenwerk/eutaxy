@@ -2,6 +2,7 @@ import { type AtMostOncePerKey, digestLog, type ScenarioSpec } from "@eutaxy/cor
 import { describe, expect, test } from "vitest";
 import { explore, replayRun } from "./explore.ts";
 import { checkThenInsertConsumer, createFakePlatform, type FakeHandler } from "./fake-platform.ts";
+import { Run } from "./run.ts";
 
 const once: AtMostOncePerKey = {
   kind: "atMostOncePerKey",
@@ -155,6 +156,108 @@ describe("concurrent invocations", () => {
       ["o-3", 1],
     ]);
     expect(calls(run.log.entries)).toContain("m2#2 run");
+  });
+
+  test("an effect made while another is performed runs in that turn instead of deadlocking", {
+    timeout: 10_000,
+  }, async () => {
+    const insertThenAck: FakeHandler = async (message, env) => {
+      await env.insert((message.body as { orderId: string }).orderId);
+      message.ack();
+    };
+    const spec: ScenarioSpec = {
+      ...raceSpec(2),
+      drive: {
+        kind: "queue",
+        queue: "q",
+        messages: [
+          { id: "m1", body: { orderId: "o-1" } },
+          { id: "m2", body: { orderId: "o-2" } },
+        ],
+      },
+    };
+    const verdict = await explore(
+      spec,
+      createFakePlatform(insertThenAck, { concurrent: true, nestedRead: true }),
+      { seed: "nested", now: fixedClock, maxRuns: 5 },
+    );
+    expect(verdict.kind).toBe("BOUNDED");
+  });
+
+  test("an invocation woken during another's effect still waits for its turn", async () => {
+    let wake: () => void = () => {};
+    let current: Promise<void> = Promise.resolve();
+    // m1 inserts, and its insert wakes m2 while still in flight; m2 then reads.
+    const handler: FakeHandler = async (message, env) => {
+      if (message.id === "m1") await env.insert("o-1");
+      else {
+        await current;
+        await env.count("o-2");
+      }
+      message.ack();
+    };
+    const spec: ScenarioSpec = {
+      ...raceSpec(2),
+      drive: {
+        kind: "queue",
+        queue: "q",
+        messages: [
+          { id: "m1", body: {} },
+          { id: "m2", body: {} },
+        ],
+      },
+    };
+    for (const [seed, insertHosts] of [1, 2, 3, 4, 5, 6, 7, 8].flatMap((n) => [
+      [n, false] as const,
+      [n, true] as const,
+    ])) {
+      let wakeNow: () => void = () => {};
+      const wokenNow = new Promise<void>((resolve) => {
+        wakeNow = resolve;
+      });
+      wake = wakeNow;
+      current = wokenNow;
+      const platform = createFakePlatform(handler, {
+        concurrent: true,
+        duringInsert: () => wake(),
+        insertHosts,
+      });
+      const run = await replayRun(spec, platform, { seed, faults: [] });
+      const order = run.log.entries.map((e) => `${e.invocation} ${e.kind} ${e.op}`);
+      // m2's read is not part of m1's insert: it comes after the insert's result.
+      expect(order.indexOf("m2#1 call first"), order.join(" | ")).toBeGreaterThan(
+        order.indexOf("m1#1 result run"),
+      );
+    }
+  });
+
+  test("a crash injected into a nested effect crashes the invocation, it does not hang its parent", {
+    timeout: 10_000,
+  }, async () => {
+    const insertThenAck: FakeHandler = async (message, env) => {
+      await env.insert((message.body as { orderId: string }).orderId);
+      message.ack();
+    };
+    const spec: ScenarioSpec = {
+      ...raceSpec(2),
+      drive: { kind: "queue", queue: "q", messages: [{ id: "m1", body: { orderId: "o-1" } }] },
+      bounds: {
+        maxFaultsPerRun: 1,
+        maxRedeliveries: 1,
+        maxConcurrentInvocations: 2,
+        budgetMs: 5_000,
+      },
+    };
+    const platform = createFakePlatform(insertThenAck, { concurrent: true, nestedRead: true });
+    // Ordinal 0 is the insert, ordinal 1 the read made inside it.
+    const run = await replayRun(spec, platform, {
+      seed: 1,
+      faults: [
+        { invocation: "m1#1", ordinal: 1, fault: "crash_before", target: "D1:DB", op: "first" },
+      ],
+    });
+    expect(run.unsupportedReasons).toEqual([]);
+    expect(calls(run.log.entries)).toContain("m1#2 run");
   });
 
   test("timers fire when every invocation is waiting on one", async () => {
@@ -322,5 +425,98 @@ describe("attribution under concurrency", () => {
       expect(inserts.find((c) => c.includes("from-a"))).toMatch(/^a#1 /);
       expect(inserts.find((c) => c.includes("from-b"))).toMatch(/^b#1 /);
     }
+  });
+});
+
+describe("nested effects", () => {
+  test("a crash three effects deep ends every enclosing effect, without waiting for the deadline", async () => {
+    const run = new Run({
+      mode: "replay",
+      schedule: {
+        seed: 1,
+        faults: [{ invocation: "i#1", ordinal: 2, fault: "crash_before", target: "T", op: "c" }],
+      },
+      bounds: {
+        maxFaultsPerRun: 1,
+        maxRedeliveries: 0,
+        maxConcurrentInvocations: 1,
+        budgetMs: 100,
+      },
+      faultProbability: 0,
+    });
+    const inv = run.startInvocation("i#1");
+    const point = (op: string) => ({
+      invocation: "i#1",
+      target: "T",
+      op,
+      args: null,
+      allowed: ["crash_before" as const],
+    });
+    const none = () => null;
+    const outer = run.effect(
+      point("a"),
+      () => run.effect(point("b"), () => run.effect(point("c"), async () => 1, none), none),
+      none,
+    );
+    const settled = await Promise.race([
+      outer.then(() => "resolved"),
+      new Promise((resolve) => setTimeout(() => resolve("pending"), 300)),
+    ]);
+    expect(settled).toBe("pending");
+    expect(inv.isCrashed()).toBe(true);
+    expect(run.unsupportedReasons).toEqual([]);
+  });
+
+  test("user code cannot catch a crash injected into a nested effect and carry on", async () => {
+    const run = new Run({
+      mode: "replay",
+      schedule: {
+        seed: 1,
+        faults: [
+          { invocation: "i#1", ordinal: 1, fault: "crash_before", target: "T", op: "inner" },
+        ],
+      },
+      bounds: {
+        maxFaultsPerRun: 1,
+        maxRedeliveries: 0,
+        maxConcurrentInvocations: 1,
+        budgetMs: 1_000,
+      },
+      faultProbability: 0,
+    });
+    const inv = run.startInvocation("i#1");
+    const point = (op: string) => ({
+      invocation: "i#1",
+      target: "T",
+      op,
+      args: null,
+      allowed: ["crash_before" as const],
+    });
+    let continued = false;
+    const outer = run.effect(
+      point("outer"),
+      async () => {
+        try {
+          await run.effect(
+            point("inner"),
+            async () => 1,
+            () => null,
+          );
+        } catch {
+          // A handler that swallows errors must not see the crash as one.
+        }
+        continued = true;
+        return 2;
+      },
+      () => null,
+    );
+    const settled = await Promise.race([
+      outer.then(() => "resolved"),
+      new Promise((resolve) => setTimeout(() => resolve("pending"), 200)),
+    ]);
+    expect(settled).toBe("pending");
+    expect(continued).toBe(false);
+    expect(inv.isCrashed()).toBe(true);
+    expect(run.unsupportedReasons).toEqual([]);
   });
 });

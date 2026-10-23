@@ -2,7 +2,7 @@ import type { ExternalDecl, ScenarioSpec } from "@eutaxy/core";
 import { describe, expect, test } from "vitest";
 import { explore, replay } from "./explore.ts";
 import { buggyConsumer, createFakePlatform } from "./fake-platform.ts";
-import { createScriptedFetch, findResponse, hostMatches } from "./fetch.ts";
+import { createScriptedFetch, findResponse, hostMatches, withoutNetwork } from "./fetch.ts";
 import { Run } from "./run.ts";
 
 const payments: ExternalDecl = {
@@ -236,5 +236,19 @@ describe("scripted fetch as effect points", () => {
     });
     run.install();
     run.uninstall();
+  });
+});
+
+describe("withoutNetwork", () => {
+  test("fetch rejects while the work runs, the attempt is reported, and fetch is restored", async () => {
+    const before = globalThis.fetch;
+    const { value, requested } = await withoutNetwork(async () => {
+      await expect(fetch("https://example.test/")).rejects.toThrow(/blocked/);
+      return 7;
+    });
+    expect(value).toBe(7);
+    expect(requested).toBe(true);
+    expect(globalThis.fetch).toBe(before);
+    expect((await withoutNetwork(async () => 1)).requested).toBe(false);
   });
 });
