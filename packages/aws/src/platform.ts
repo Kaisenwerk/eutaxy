@@ -68,7 +68,7 @@ export function createAwsPlatform(options: AwsPlatformOptions): Platform {
     let id = platformInvocations.get(hooks);
     if (id === undefined) {
       id = "platform";
-      hooks.startInvocation(id);
+      hooks.startInvocation(id, { bookkeeping: true });
       platformInvocations.set(hooks, id);
     }
     return id;

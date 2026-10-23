@@ -115,6 +115,11 @@ export class VirtualClock {
     return earliest;
   }
 
+  /** When the next timer is due, or undefined when none is pending. */
+  nextDue(): number | undefined {
+    return this.earliest()?.due;
+  }
+
   /** Who set the timer `fireNext` would run: an invocation, null for none, undefined when no timer is pending. */
   nextOwner(): string | null | undefined {
     return this.earliest()?.owner;

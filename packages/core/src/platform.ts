@@ -15,6 +15,13 @@ export interface EventRef {
   /** 1 for the first delivery, 2 for the first redelivery, and so on. */
   readonly attempt: number;
   readonly data: JsonValue;
+  /**
+   * Virtual time (ms since the epoch) before which the event is not
+   * delivered, e.g. a resend after the caller's retry delay. Absent: as soon
+   * as possible. The engine advances the virtual clock to it once nothing
+   * else can move.
+   */
+  readonly at?: number;
 }
 
 /** What a proxy tells the engine about an effect it is about to perform. */
@@ -37,7 +44,13 @@ export interface Invocation {
 
 /** What the engine offers a platform during one run. */
 export interface RunHooks {
-  startInvocation(id: string): Invocation;
+  /**
+   * Start tracking an invocation; it becomes the running one. With
+   * `bookkeeping`, it only records the platform's own actions (a dead
+   * letter, a caller giving up) and never becomes the running one, so it
+   * cannot take over the effects of the handler it was started during.
+   */
+  startInvocation(id: string, options?: { readonly bookkeeping?: boolean }): Invocation;
   /** Perform an asynchronous effect under fault injection and record it. */
   effect<T>(
     point: EffectPoint,
@@ -54,6 +67,13 @@ export interface RunHooks {
    * invocations only one runs at a time, so this is always the caller.
    */
   running(): string;
+  /**
+   * Queue an event now, before the current delivery finishes, e.g. a resend
+   * the caller makes as soon as it gives up while the handler's background
+   * work still runs. Equivalent to returning it in `followUps`, except for
+   * when it can start.
+   */
+  enqueue(event: EventRef): void;
   /** Record a state snapshot (not an effect point; never faulted). */
   snapshot(invocation: string, target: string, payload: JsonValue): void;
   /**

@@ -66,7 +66,7 @@ export function createFakePlatform(
       rows.clear();
     },
     async finish(_spec, hooks) {
-      const inv = hooks.startInvocation("platform");
+      const inv = hooks.startInvocation("platform", { bookkeeping: true });
       const payments = [...rows.entries()].sort().map(([order_id, count]) => ({ order_id, count }));
       hooks.snapshot(inv.id, "D1:DB", { tables: { payments } });
     },

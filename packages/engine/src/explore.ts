@@ -59,13 +59,22 @@ function concurrencyAssumption(bounds: Bounds): string {
   return `up to ${bounds.maxConcurrentInvocations} invocations in flight, interleaved only at asynchronous effects (proxied bindings, fetch): code between two such effects runs without interruption (except continuations of a promise it settles for another invocation, which run then and are still attributed to their own invocation), Web Crypto calls are waited for like I/O, other non-effect awaits (body reads included) settle within one turn of the event loop, synchronous effects are not interleaving points, the next turn is a seeded pick among parked invocations, whether a new event starts while a slot is free is a seeded pick too, and timers fire only when no invocation can take a turn`;
 }
 
-/** Deliver events one at a time, each to completion. */
+/** The pending event to deliver next: the earliest by `at`, then the first queued. */
+function nextEvent(pending: readonly EventRef[]): number {
+  let best = 0;
+  for (let i = 1; i < pending.length; i++)
+    if ((pending[i]?.at ?? 0) < (pending[best]?.at ?? 0)) best = i;
+  return best;
+}
+
+/** Deliver events one at a time, each to completion; time passes until a delayed one is due. */
 async function deliverInOrder(spec: ScenarioSpec, platform: Platform, run: Run): Promise<void> {
   const pending: EventRef[] = [...platform.initialEvents(spec)];
   while (pending.length > 0) {
-    const event = pending.shift() as EventRef;
+    const [event] = pending.splice(nextEvent(pending), 1) as [EventRef];
+    if (event.at !== undefined) await run.advanceTo(event.at);
     const result = await platform.deliver(event, run, spec);
-    pending.push(...result.followUps);
+    pending.push(...run.takeQueued(), ...result.followUps);
   }
 }
 
@@ -96,11 +105,14 @@ async function deliverConcurrently(
       pending.push(...d.outcome.result.followUps);
     }
     active = active.filter((d) => !d.outcome);
+    pending.push(...run.takeQueued());
     if (active.length === 0 && pending.length === 0) return;
-    const canStart = active.length < spec.bounds.maxConcurrentInvocations && pending.length > 0;
+    const next = pending.length > 0 ? nextEvent(pending) : -1;
+    const due = next >= 0 && (pending[next]?.at ?? 0) <= run.now();
+    const canStart = active.length < spec.bounds.maxConcurrentInvocations && due;
     const turn = run.takeTurn(canStart);
     if (turn === "start") {
-      const event = pending.shift() as EventRef;
+      const [event] = pending.splice(next, 1) as [EventRef];
       const d: Delivery = {
         started: run.startDelivery(() => platform.deliver(event, run, spec)),
         outcome: null,
@@ -116,6 +128,15 @@ async function deliverConcurrently(
         },
       );
       active.push(d);
+    } else if (
+      turn === "none" &&
+      next >= 0 &&
+      !due &&
+      active.length < spec.bounds.maxConcurrentInvocations &&
+      (run.nextTimerDue() ?? Number.POSITIVE_INFINITY) > (pending[next]?.at ?? 0)
+    ) {
+      // Nothing can move before the next delayed event is due: let time pass until then.
+      await run.advanceTo(pending[next]?.at ?? 0);
     } else if (turn === "none" && !run.fireTimer()) {
       const stuck = active.flatMap((d) => d.started.invocation() ?? []);
       if (run.abandon(stuck) === 0)

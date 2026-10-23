@@ -21,6 +21,7 @@ import {
   decideFault,
   type EffectLog,
   type EffectPoint,
+  type EventRef,
   type ExternalDecl,
   emptyLog,
   type FaultDecision,
@@ -144,6 +145,8 @@ export class Run implements RunHooks {
     readonly go: () => void;
   }[] = [];
   private parkSeq = 0;
+  /** Events a platform queued during a delivery, for the run loop to pick up. */
+  private queued: EventRef[] = [];
   /** Concurrent runs only: woken whenever an invocation parks, a delivery ends or I/O completes. */
   private progressWaiters: (() => void)[] = [];
   /** Concurrent runs only: the order invocations started in, which orders the parked ones. */
@@ -235,10 +238,11 @@ export class Run implements RunHooks {
     return this.patched?.clock.pendingTimers() ?? 0;
   }
 
-  startInvocation(id: string): Invocation {
+  startInvocation(id: string, options: { readonly bookkeeping?: boolean } = {}): Invocation {
     if (this.invocations.has(id)) throw new Error(`invocation ${id} already started`);
     const inv = new InvocationState(id, () => this.patched?.clock.cancelOwner(id));
     this.invocations.set(id, inv);
+    if (options.bookkeeping) return inv;
     if (this.concurrent) {
       this.startOrder.set(id, this.startOrder.size);
       // Only a delivery's first invocation is its own; a platform's bookkeeping invocation,
@@ -252,6 +256,18 @@ export class Run implements RunHooks {
     }
     this.runAs(id);
     return inv;
+  }
+
+  enqueue(event: EventRef): void {
+    this.queued.push(event);
+    if (this.concurrent) this.progressed();
+  }
+
+  /** Events platforms queued with `enqueue` since the last call. */
+  takeQueued(): EventRef[] {
+    const queued = this.queued;
+    this.queued = [];
+    return queued;
   }
 
   running(): string {
@@ -514,6 +530,29 @@ export class Run implements RunHooks {
     this.runAs(chosen.inv.id);
     chosen.go();
     return "turn";
+  }
+
+  /**
+   * Let virtual time pass until `at`: timers due by then fire first, in due
+   * order, as the invocations that set them, each followed by the work it
+   * sets off. No-op when `at` is not ahead.
+   */
+  async advanceTo(at: number): Promise<void> {
+    const clock = this.patched?.clock;
+    if (!clock) return;
+    for (let due = clock.nextDue(); due !== undefined && due <= at; due = clock.nextDue()) {
+      this.runAs(clock.nextOwner() ?? null);
+      clock.fireNext();
+      // What the timer set off runs at its own time, before the clock moves on.
+      do await drainMicrotasks();
+      while (this.inFlight > 0);
+    }
+    clock.advance(at - clock.now());
+  }
+
+  /** When the next virtual timer is due, or undefined when none is pending. */
+  nextTimerDue(): number | undefined {
+    return this.patched?.clock.nextDue();
   }
 
   /** Concurrent runs: fire the next due timer as the invocation that set it. False when none is pending. */
