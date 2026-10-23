@@ -64,18 +64,30 @@ export type HttpRequestSpec = {
  * retry policy decides redelivery: a webhook provider resends a request it
  * got no 2xx for (`retryOn: "non-2xx"`, the default) or only on 5xx and
  * failures (`"5xx"`), up to `retries` times; a browser-like caller has
- * `retries: 0`.
+ * `retries: 0`. `delaysMs[i]` is the virtual time the caller waits before
+ * its resend number i + 1 (the last entry repeats; none means at once).
+ * `deadlineMs` is how long the caller waits for an answer: one that comes
+ * later counts as failed and is resent while the handler may still run.
  */
 export interface HttpDrive extends PlatformData {
   readonly kind: "http";
   readonly requests: readonly HttpRequestSpec[];
   readonly retries: number;
   readonly retryOn: "non-2xx" | "5xx";
+  readonly delaysMs?: readonly number[];
+  readonly deadlineMs?: number;
+}
+
+export interface HttpCallerOptions {
+  readonly retries?: number;
+  readonly retryOn?: "non-2xx" | "5xx";
+  readonly delaysMs?: readonly number[];
+  readonly deadlineMs?: number;
 }
 
 export function http(
   requests: readonly HttpRequestInput[],
-  options: { readonly retries?: number; readonly retryOn?: "non-2xx" | "5xx" } = {},
+  options: HttpCallerOptions = {},
 ): HttpDrive {
   return {
     kind: "http",
@@ -88,7 +100,15 @@ export function http(
     })),
     retries: options.retries ?? 3,
     retryOn: options.retryOn ?? "non-2xx",
+    ...(options.delaysMs === undefined ? {} : { delaysMs: [...options.delaysMs] }),
+    ...(options.deadlineMs === undefined ? {} : { deadlineMs: options.deadlineMs }),
   };
+}
+
+/** The virtual delay before resend number `resend` (1 for the first), per the drive's caller. */
+export function retryDelayMs(drive: HttpDrive, resend: number): number {
+  const delays = drive.delaysMs ?? [];
+  return delays[Math.min(resend, delays.length) - 1] ?? 0;
 }
 
 /** Apply a SQL file to a D1 binding before each run. */
@@ -291,6 +311,15 @@ function validateHttpDrive(drive: HttpDrive): readonly string[] {
   });
   if (!(Number.isInteger(drive.retries) && drive.retries >= 0))
     errors.push("http drive retries must be a non-negative integer");
+  (drive.delaysMs ?? []).forEach((d, i) => {
+    if (!(Number.isInteger(d) && d >= 0))
+      errors.push(`http drive delaysMs[${i}] must be a non-negative integer`);
+  });
+  if (
+    drive.deadlineMs !== undefined &&
+    !(Number.isInteger(drive.deadlineMs) && drive.deadlineMs > 0)
+  )
+    errors.push("http drive deadlineMs must be a positive integer");
   return errors;
 }
 

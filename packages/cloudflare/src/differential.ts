@@ -174,7 +174,7 @@ async function eutaxySide(
         decision: decision ?? null,
         ...(response ? { response: getPath(response.payload, "result.status") as number } : {}),
       });
-      pending.push(...result.followUps);
+      pending.push(...run.takeQueued(), ...result.followUps);
     }
   } finally {
     run.uninstall();
@@ -349,6 +349,9 @@ export async function runDifferential(
   spec: ScenarioSpec,
   options: CloudflarePlatformOptions,
 ): Promise<DifferentialResult> {
+  if (spec.drive.kind === "http" && ("delaysMs" in spec.drive || "deadlineMs" in spec.drive)) {
+    throw new Error("runDifferential does not model the caller's delaysMs or deadlineMs yet");
+  }
   const { unsupported, ...eutaxy } = await eutaxySide(spec, options);
   const raw = await rawSide(spec, options);
   const differences: string[] = [];

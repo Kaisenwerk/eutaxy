@@ -547,3 +547,172 @@ describe("concurrent queue consumers", () => {
     }
   });
 });
+
+describe("caller timing on the http drive", () => {
+  type Fetch = NonNullable<WorkerHandler["fetch"]>;
+  const answered: AtLeastOnce = {
+    kind: "atLeastOnce",
+    name: "answered",
+    effect: { target: "Http:/hooks/chat", op: "response", kind: "result" },
+    key: "args.requestId",
+    expected: ["req-1"],
+  };
+  const timedSpec = (drive: ReturnType<typeof http>, maxConcurrentInvocations = 1) =>
+    spec({
+      drive,
+      invariants: [answered],
+      externals: [{ name: "api", host: "api.test", guarantees: {} }],
+      bounds: {
+        maxFaultsPerRun: 1,
+        maxRedeliveries: 4,
+        maxConcurrentInvocations,
+        budgetMs: 10_000,
+      },
+    });
+  async function runOf(
+    s: ScenarioSpec,
+    fetch: Fetch,
+    faults: Run["options"]["schedule"]["faults"] = [],
+    seed = 1,
+  ): Promise<{ log: EffectLog; run: Run }> {
+    const run = new Run({
+      mode: "replay",
+      schedule: { seed, faults },
+      bounds: s.bounds,
+      faultProbability: 0,
+    });
+    const log = await runOnce(
+      s,
+      createCloudflarePlatform({ env: {}, handler: { fetch }, schemas: {} }),
+      run,
+    );
+    return { log, run };
+  }
+  /** The virtual time each attempt's response reported, in log order. */
+  const answerTimes = (log: EffectLog) =>
+    log.entries
+      .filter((e) => e.kind === "result" && e.op === "response")
+      .map((e) => (e.payload as { result: { body: { at: number } } }).result.body.at);
+
+  test("each resend waits its delaysMs entry of virtual time, and the last entry repeats", async () => {
+    const drive = http([{ path: "/hooks/chat", body: {} }], {
+      retries: 3,
+      delaysMs: [15_000, 300_000],
+    });
+    const { log } = await runOf(timedSpec(drive), async () =>
+      Response.json({ at: Date.now() }, { status: 503 }),
+    );
+    const [first, second, third, fourth] = answerTimes(log) as [number, number, number, number];
+    expect(second - first).toBe(15_000);
+    expect(third - second).toBe(300_000);
+    expect(fourth - third).toBe(300_000);
+  });
+
+  test("without delaysMs resends come at once, as before", async () => {
+    const drive = http([{ path: "/hooks/chat", body: {} }], { retries: 1 });
+    const { log } = await runOf(timedSpec(drive), async () =>
+      Response.json({ at: Date.now() }, { status: 503 }),
+    );
+    const [first, second] = answerTimes(log) as [number, number];
+    expect(second - first).toBeLessThan(10);
+  });
+
+  test("an answer later than deadlineMs in virtual time is resent, then the caller gives up", async () => {
+    const drive = http([{ path: "/hooks/chat", body: {} }], { retries: 1, deadlineMs: 3_000 });
+    const { log } = await runOf(timedSpec(drive), async () => {
+      await new Promise((resolve) => setTimeout(resolve, 5_000));
+      return Response.json({ at: Date.now() });
+    });
+    expect(ops(log)).toEqual([
+      "req-1#1 call response",
+      "req-1#1 result response",
+      // The caller gives up at its deadline, before the late answer arrives.
+      "platform call gave_up",
+      "platform result gave_up",
+      "req-1#2 call response",
+      "req-1#2 result response",
+    ]);
+  });
+
+  test("a late answer (ambiguous at the response) is resent while the first attempt's background work runs", async () => {
+    const drive = http([{ path: "/hooks/chat", body: {} }], { retries: 1, deadlineMs: 3_000 });
+    const handler: Fetch = async (_request, _env, ctx) => {
+      // The background work takes 5 s of virtual time between its two calls, longer than the
+      // caller's 3 s deadline, so the resend arrives while it runs.
+      ctx.waitUntil(
+        (async () => {
+          await fetch("https://api.test/one");
+          await new Promise((resolve) => setTimeout(resolve, 5_000));
+          await fetch("https://api.test/two");
+        })(),
+      );
+      return Response.json({ at: Date.now() });
+    };
+    const late = [
+      {
+        invocation: "req-1#1",
+        ordinal: 0,
+        fault: "ambiguous" as const,
+        target: "Http:/hooks/chat",
+        op: "response",
+      },
+    ];
+    for (const seed of [1, 2, 3, 4, 5, 6, 7, 8]) {
+      const { log, run } = await runOf(timedSpec(drive, 2), handler, late, seed);
+      expect(run.unsupportedReasons).toEqual([]);
+      const order = ops(log);
+      expect(order).toContain("req-1#1 fault response");
+      expect(order).toContain("req-1#2 result response");
+      // Both attempts' background work ran to the end.
+      expect(order.filter((o) => o.endsWith("call GET"))).toHaveLength(4);
+      // The resend's answer comes before the first attempt's second background call.
+      expect(order.indexOf("req-1#2 call response")).toBeLessThan(
+        order.lastIndexOf("req-1#1 call GET"),
+      );
+    }
+  });
+
+  test("the caller gives up at its deadline while the handler still runs, and resends then", async () => {
+    const drive = http([{ path: "/hooks/chat", body: {} }], { retries: 1, deadlineMs: 3_000 });
+    // The handler takes 5 s of virtual time; with two slots the resend starts at the 3 s deadline.
+    const { log, run } = await runOf(timedSpec(drive, 2), async () => {
+      const started = Date.now();
+      await new Promise((resolve) => setTimeout(resolve, 5_000));
+      return Response.json({ at: started });
+    });
+    expect(run.unsupportedReasons).toEqual([]);
+    const [first, second] = answerTimes(log) as [number, number];
+    expect(second - first).toBe(3_000);
+  });
+
+  test("the caller giving up mid-handler does not take over the handler's later effects", async () => {
+    const drive = http([{ path: "/hooks/chat", body: {} }], { retries: 0, deadlineMs: 100 });
+    const { log } = await runOf(timedSpec(drive), async () => {
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      await fetch("https://api.test/after-deadline");
+      return Response.json({ at: Date.now() });
+    });
+    expect(ops(log)).toEqual([
+      "platform call gave_up",
+      "platform result gave_up",
+      "req-1#1 call GET",
+      "req-1#1 result GET",
+      "req-1#1 call response",
+      "req-1#1 result response",
+    ]);
+  });
+
+  test("without deadlineMs an answer is never late", async () => {
+    const drive = http([{ path: "/hooks/chat", body: {} }], { retries: 1 });
+    const { log } = await runOf(timedSpec(drive), async () => Response.json({ at: Date.now() }), [
+      {
+        invocation: "req-1#1",
+        ordinal: 0,
+        fault: "ambiguous",
+        target: "Http:/hooks/chat",
+        op: "response",
+      },
+    ]);
+    expect(ops(log)).toEqual(["req-1#1 call response", "req-1#1 result response"]);
+  });
+});

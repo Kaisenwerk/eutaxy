@@ -27,6 +27,7 @@ export {
   everyRow,
   external,
   fetchCall,
+  type HttpCallerOptions,
   type HttpDrive,
   type HttpRequestInput,
   type HttpRequestSpec,

@@ -8,7 +8,9 @@ import {
   defineScenario,
   external,
   fetchCall,
+  http,
   queue,
+  retryDelayMs,
 } from "./scenario.ts";
 
 const payments = queue("payments", [
@@ -121,5 +123,28 @@ describe("defineScenario", () => {
         invariants: [],
       }),
     ).toThrow(/name must be lowercase[\s\S]*worker\.entry[\s\S]*at least one invariant/);
+  });
+});
+
+describe("http caller timing", () => {
+  test("delaysMs and deadlineMs are kept only when given, and the last delay repeats", () => {
+    expect(http([{ path: "/a" }])).not.toHaveProperty("delaysMs");
+    const drive = http([{ path: "/a" }], { delaysMs: [15_000, 300_000], deadlineMs: 3_000 });
+    expect(drive).toMatchObject({ delaysMs: [15_000, 300_000], deadlineMs: 3_000 });
+    expect([1, 2, 3, 4].map((n) => retryDelayMs(drive, n))).toEqual([
+      15_000, 300_000, 300_000, 300_000,
+    ]);
+    expect(retryDelayMs(http([{ path: "/a" }]), 1)).toBe(0);
+  });
+
+  test("rejects negative or fractional delays and a non-positive deadline", () => {
+    expect(() =>
+      defineScenario({
+        name: "timing",
+        worker: { entry: "./w.ts", config: "./wrangler.jsonc" },
+        drive: http([{ path: "/a" }], { delaysMs: [-1, 1.5], deadlineMs: 0 }),
+        invariants: [atMostOncePerKey("once", d1Write("DB"), d1Param(0))],
+      }),
+    ).toThrow(/delaysMs\[0\][\s\S]*delaysMs\[1\][\s\S]*deadlineMs must be a positive integer/);
   });
 });

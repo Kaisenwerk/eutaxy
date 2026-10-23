@@ -242,3 +242,30 @@ describe("runDifferential with the http drive", () => {
     expect(r.eutaxy.attempts.map((a) => a.response)).toEqual([422, 422, 422, 422]);
   });
 });
+
+describe("runDifferential and caller timing", () => {
+  test("rejects an http drive with delaysMs or deadlineMs until it models them", async () => {
+    const timed = {
+      version: 1 as const,
+      name: "timed",
+      worker: { entry: "./w.ts", config: "./wrangler.jsonc" },
+      drive: http([{ path: "/a" }], { deadlineMs: 3_000 }),
+      setup: [],
+      externals: [],
+      invariants: [],
+      bounds: {
+        maxFaultsPerRun: 0,
+        maxRedeliveries: 1,
+        maxConcurrentInvocations: 1,
+        budgetMs: 1000,
+      },
+    };
+    await expect(
+      runDifferential(timed, {
+        env: {},
+        handler: { fetch: async () => new Response("ok") },
+        schemas: {},
+      }),
+    ).rejects.toThrow(/delaysMs or deadlineMs/);
+  });
+});

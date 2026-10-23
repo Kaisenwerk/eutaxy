@@ -1,0 +1,8 @@
+{
+  "expect": {
+    "verdict": "VIOLATED",
+    "invariant": "every-event-applied"
+  },
+  "fault": "any failure after the lease is taken and before it is released: an injected error on the next D1 statement (a 500, the lease stays held), a crash after the lease's run, or an ambiguous outcome on it",
+  "description": "A webhook applies events under a per-subscription D1 lease and answers 503 while it is held. The lease outlives the caller's resend window, so a failure that leaves it held makes every resend fail and the event is lost."
+}

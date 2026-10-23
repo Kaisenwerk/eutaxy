@@ -16,14 +16,20 @@ import type {
   RunHooks,
   ScenarioSpec,
 } from "@eutaxy/core";
-import { CrashSignal } from "@eutaxy/engine";
+import { CrashSignal, InjectedEffectError } from "@eutaxy/engine";
 import { type ProxyContext, proxyD1, resetD1, snapshotD1 } from "./d1.ts";
-import type { HttpDrive, HttpRequestSpec, QueueDrive } from "./scenario.ts";
+import { type HttpDrive, type HttpRequestSpec, type QueueDrive, retryDelayMs } from "./scenario.ts";
 
 const ACK: readonly FaultKind[] = ["crash_before", "crash_after"];
 const CUT_OFF: readonly FaultKind[] = ["cut_off"];
 /** The response point: a crash before it is a response the caller never saw. */
 const RESPOND: readonly FaultKind[] = ["crash_before"];
+/**
+ * With a caller deadline the answer can also arrive too late: `ambiguous`
+ * here means it was sent, the caller counted it as failed, and the handler
+ * carried on.
+ */
+const RESPOND_WITH_DEADLINE: readonly FaultKind[] = ["crash_before", "ambiguous"];
 
 /** The Worker's default export, as far as the platform drives it. */
 export interface WorkerHandler {
@@ -109,7 +115,7 @@ const assumptions: readonly string[] = [
   "state invariants read a snapshot of every D1 binding named in setup, taken after the last event",
   "work passed to ctx.waitUntil runs after the handler returns and never affects acknowledgement or the response; a cut_off fault at that point loses work not yet started, and an effect in flight commits without its continuation",
   "concurrent invocations (maxConcurrentInvocations above 1) share one isolate's module state and bindings, and another may run while one awaits I/O (developers.cloudflare.com/workers/reference/how-workers-works/); queue consumers run concurrently up to max_concurrency (developers.cloudflare.com/queues/configuration/consumer-concurrency/)",
-  "inbound requests: one invocation per attempt; an uncaught exception is a 500 response; the drive's caller resends a request it got no acceptable response for (crash before the response, or a status its retryOn policy rejects) up to its retries",
+  "inbound requests: one invocation per attempt; an uncaught exception is a 500 response; the drive's caller resends a request it got no acceptable response for (crash before the response, an answer after its deadlineMs, or a status its retryOn policy rejects) up to its retries, each resend after its delaysMs entry of virtual time; the handler's own time is virtual, so a late answer is the ambiguous fault at the response point or an answer later than deadlineMs in virtual time",
 ];
 
 export function createCloudflarePlatform(options: CloudflarePlatformOptions): Platform {
@@ -150,7 +156,7 @@ export function createCloudflarePlatform(options: CloudflarePlatformOptions): Pl
     let id = platformInvocations.get(hooks);
     if (id === undefined) {
       id = "platform";
-      hooks.startInvocation(id);
+      hooks.startInvocation(id, { bookkeeping: true });
       platformInvocations.set(hooks, id);
     }
     return id;
@@ -278,10 +284,48 @@ export function createCloudflarePlatform(options: CloudflarePlatformOptions): Pl
     const req = event.data as unknown as HttpRequestSpec;
     const target = `Http:${req.path}`;
     const inv = hooks.startInvocation(invocation);
+    // Virtual time: when the caller sent this attempt, for its deadline.
+    const started = Date.now();
     const background: Promise<unknown>[] = [];
     const handler = options.handler.fetch;
     if (!handler) throw new Error("the Worker has no fetch() handler");
     const args: JsonValue = { requestId: event.id, method: req.method, path: req.path };
+    const deadline = drive.deadlineMs;
+    // The caller gives up at its deadline even when the answer comes later still.
+    const lateAt = deadline === undefined ? undefined : started + deadline;
+
+    /** The caller decides once: it accepts the answer, or gives up at `at` and resends or stops. */
+    let decided = false;
+    const giveUp = (at: number): void => {
+      if (decided) return;
+      decided = true;
+      const redeliveries = event.attempt - 1;
+      if (redeliveries < drive.retries && redeliveries < spec.bounds.maxRedeliveries) {
+        const resendAt = Math.max(at + retryDelayMs(drive, event.attempt), Date.now());
+        hooks.enqueue({
+          ...event,
+          attempt: event.attempt + 1,
+          ...(resendAt > Date.now() ? { at: resendAt } : {}),
+        });
+      } else {
+        hooks.effectSync(
+          {
+            invocation: platformInvocation(hooks),
+            target,
+            op: "gave_up",
+            args: { requestId: event.id, attempts: event.attempt },
+            allowed: [],
+          },
+          () => null,
+          () => null,
+        );
+      }
+    };
+    // A virtual timer: at the deadline the caller gives up, whatever the handler is doing.
+    const deadlineTimer =
+      deadline === undefined || lateAt === undefined
+        ? undefined
+        : setTimeout(() => giveUp(lateAt), deadline);
 
     let response: Response | undefined;
     const outcome = Promise.resolve()
@@ -316,18 +360,24 @@ export function createCloudflarePlatform(options: CloudflarePlatformOptions): Pl
       ]);
       if (read === "crashed" || read === "errored") status = read;
     }
+    let late = lateAt !== undefined && Date.now() > lateAt;
+    const allowed = deadline === undefined ? RESPOND : RESPOND_WITH_DEADLINE;
     if (status === "completed" && typeof read === "object") {
       const s = read;
       try {
         hooks.effectSync(
-          { invocation, target, op: "response", args, allowed: RESPOND },
+          { invocation, target, op: "response", args, allowed },
           () => s,
           (v) => v,
         );
         summary = s;
       } catch (err) {
         if (err instanceof CrashSignal) status = "crashed";
-        else throw err;
+        else if (err instanceof InjectedEffectError) {
+          // Sent, but after the caller's deadline: the handler carries on, the caller resends.
+          summary = s;
+          late = true;
+        } else throw err;
       }
     } else if (status === "errored") {
       // Cloudflare answers an uncaught exception with a 500 (workers runtime behaviour); the caller sees that.
@@ -340,30 +390,15 @@ export function createCloudflarePlatform(options: CloudflarePlatformOptions): Pl
       summary = s;
     }
 
-    if (await drainBackground(hooks, inv, invocation, target, background)) status = "crashed";
-
+    // The caller decides as soon as it has an answer or gives up, before background work ends.
+    if (deadlineTimer !== undefined) clearTimeout(deadlineTimer);
     const accepted =
-      summary !== null && (drive.retryOn === "5xx" ? summary.status < 500 : summary.ok);
-    const followUps: EventRef[] = [];
-    if (!accepted) {
-      const redeliveries = event.attempt - 1;
-      if (redeliveries < drive.retries && redeliveries < spec.bounds.maxRedeliveries) {
-        followUps.push({ ...event, attempt: event.attempt + 1 });
-      } else {
-        hooks.effectSync(
-          {
-            invocation: platformInvocation(hooks),
-            target,
-            op: "gave_up",
-            args: { requestId: event.id, attempts: event.attempt },
-            allowed: [],
-          },
-          () => null,
-          () => null,
-        );
-      }
-    }
-    return { status, followUps };
+      summary !== null && !late && (drive.retryOn === "5xx" ? summary.status < 500 : summary.ok);
+    if (accepted) decided = true;
+    else giveUp(late && lateAt !== undefined ? lateAt : Date.now());
+
+    if (await drainBackground(hooks, inv, invocation, target, background)) status = "crashed";
+    return { status, followUps: [] };
   }
 
   async function deliverMessage(

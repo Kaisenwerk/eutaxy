@@ -264,7 +264,22 @@ Faults injected at every effect boundary:
 - Inbound requests: one invocation per attempt; an uncaught exception in
   `fetch()` is answered with a 500 (Workers runtime); resends follow the
   drive's declared caller policy, since Cloudflare itself never retries an
-  inbound request.
+  inbound request. The policy has a count (`retries`), what counts as
+  failed (`retryOn`), the virtual delay before each resend (`delaysMs`) and
+  how long the caller waits for an answer (`deadlineMs`). The caller
+  decides at the response point, or at its deadline (a virtual timer set
+  when the request is sent) if the handler has not answered by then, never
+  when the handler's background work ends: the resend is queued at that
+  moment (`RunHooks.enqueue`, with the virtual time it is due), so with
+  concurrent invocations it can start while the first attempt still runs.
+  The differential runner rejects drives with caller timing until it
+  models it on both sides. Because the handler's own time is virtual, a
+  late answer is either an answer later than `deadlineMs` in virtual time
+  or the `ambiguous` fault at the response point, offered only when the
+  drive declares a deadline: sent, counted as failed by the caller, and
+  the handler carries on. A delayed event waits until the virtual clock
+  reaches it; the engine moves the clock there once nothing else can move,
+  firing timers due before it first.
 - Durable Objects (v0.5): input gates block new events during storage
   operations but not during outbound `fetch`; output gates hold responses
   _and outgoing requests_ until pending writes are confirmed; consecutive

@@ -73,7 +73,10 @@ In this order:
   while the first attempt may still run or hold a short lease. Both
   webhook targets need it: one provider gives up on an answer after a few
   seconds, the other is retried while a lease it answered 503 for is
-  still held.
+  still held. Done: `delaysMs` and `deadlineMs` on the `http` drive;
+  planted bug `webhook-lease-outlives-retries` (a lease that outlives the
+  caller's resend window). Not yet: latency on scripted externals, so
+  background work is slow in virtual time only when it waits on a timer.
 - Durable Object storage (key-value and SQL, transactions), input and
   output gates, write coalescing, alarms; KV. First real target beside the
   wallet race: a lease pool that hands out at most one lease per slot and
