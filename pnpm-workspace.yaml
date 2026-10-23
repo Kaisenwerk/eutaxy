@@ -1,0 +1,19 @@
+packages:
+  - packages/*
+  - corpus/*
+  - examples/*
+
+# Dependencies allowed to run their install scripts: workerd is the Workers
+# runtime; esbuild and classic-level (behind dynalite, the in-process DynamoDB
+# used in tests) ship prebuilt binaries their scripts check for.
+allowBuilds:
+  esbuild: true
+  workerd: true
+  classic-level: true
+
+# pnpm refuses versions published within its minimum release age; these were
+# chosen deliberately (latest at the time, per the toolchain policy).
+minimumReleaseAgeExclude:
+  - "@cloudflare/workers-types@5.20261022.1"
+  - "@aws-sdk/client-dynamodb@3.1156.0"
+  - "@aws-sdk/lib-dynamodb@3.1156.0"

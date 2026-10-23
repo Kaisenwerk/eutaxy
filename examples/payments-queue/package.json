@@ -1,0 +1,16 @@
+{
+  "name": "@eutaxy-examples/payments-queue",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "eutaxy check ./payments.sim.ts",
+    "check:fixed": "eutaxy check ./payments.fixed.sim.ts"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "1.4.6",
+    "@cloudflare/workers-types": "5.20261022.1",
+    "eutaxy": "workspace:*",
+    "vitest": "5.0.5"
+  }
+}

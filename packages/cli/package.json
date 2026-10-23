@@ -1,0 +1,22 @@
+{
+  "name": "@eutaxy/cli",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "types": "./src/index.ts",
+  "dependencies": {
+    "@eutaxy/spec": "workspace:*",
+    "@eutaxy/core": "workspace:*",
+    "@eutaxy/engine": "workspace:*",
+    "@eutaxy/cloudflare": "workspace:*",
+    "@eutaxy/prover": "workspace:*",
+    "@eutaxy/prover-lean": "workspace:*",
+    "@eutaxy/prover-thales": "workspace:*",
+    "@eutaxy/prover-lemmascript": "workspace:*",
+    "@eutaxy/report": "workspace:*",
+    "@eutaxy/aws": "workspace:*"
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "name": "@eutaxy/prover-lean",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "types": "./src/index.ts",
+  "dependencies": {
+    "@eutaxy/prover": "workspace:*",
+    "@eutaxy/spec": "workspace:*"
+  }
+}

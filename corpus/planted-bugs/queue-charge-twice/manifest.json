@@ -1,0 +1,5 @@
+{
+  "expect": { "verdict": "VIOLATED", "invariant": "charged-once" },
+  "fault": "crash_after or ambiguous on the POST to Fetch:payments, or crash_before on the ack: the charge went through, the message is redelivered, and the customer is charged again",
+  "description": "A queue consumer charges a payments API and then acks, without an idempotency key. Any crash between the charge and the ack redelivers the message and charges twice."
+}

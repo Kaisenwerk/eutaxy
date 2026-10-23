@@ -1,0 +1,5 @@
+CREATE TABLE payments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  order_id TEXT NOT NULL,
+  amount_cents INTEGER NOT NULL
+);

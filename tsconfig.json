@@ -1,0 +1,53 @@
+{
+  "files": [],
+  "references": [
+    {
+      "path": "packages/spec"
+    },
+    {
+      "path": "packages/core"
+    },
+    {
+      "path": "packages/engine"
+    },
+    {
+      "path": "packages/cloudflare"
+    },
+    {
+      "path": "packages/aws"
+    },
+    {
+      "path": "packages/prover"
+    },
+    {
+      "path": "packages/prover-lean"
+    },
+    {
+      "path": "packages/prover-thales"
+    },
+    {
+      "path": "packages/prover-lemmascript"
+    },
+    {
+      "path": "packages/report"
+    },
+    {
+      "path": "packages/cli"
+    },
+    {
+      "path": "packages/eutaxy"
+    },
+    {
+      "path": "tests"
+    },
+    {
+      "path": "corpus/planted-bugs"
+    },
+    {
+      "path": "corpus/differential"
+    },
+    {
+      "path": "examples/payments-queue"
+    }
+  ]
+}

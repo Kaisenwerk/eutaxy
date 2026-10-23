@@ -1,0 +1,64 @@
+name: release
+
+# Release-please keeps a release pull request open with the next version and
+# changelog, computed from Conventional Commits since the last tag. Merging
+# that pull request creates the GitHub release and the v* tag, and the
+# publish job then publishes eutaxy to npm through trusted
+# publishing (OIDC) with provenance. No npm token is stored anywhere.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+  id-token: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      - uses: googleapis/release-please-action@v5
+        id: release
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  publish:
+    needs: release-please
+    if: ${{ needs.release-please.outputs.release_created == 'true' }}
+    runs-on: ubuntu-latest
+    environment: npm
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.release-please.outputs.tag_name }}
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+      - name: Use an npm that supports trusted publishing (11.5.1+)
+        run: |
+          npm install -g npm@latest
+          npm --version
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm check
+      - run: pnpm build
+      - name: Pack with publishConfig applied
+        run: |
+          mkdir -p release
+          pnpm --filter eutaxy pack --pack-destination "$(pwd)/release"
+          ls -l release
+      - name: Publish with provenance
+        run: npm publish ./release/*.tgz --access public --provenance

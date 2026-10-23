@@ -1,0 +1,19 @@
+# Local, never committed
+CLAUDE.local.md
+.local/
+
+# Toolchain
+node_modules/
+dist/
+.tsc/
+*.tsbuildinfo
+# Declarations belong in dist/; a stray emit next to sources must not be committed
+packages/*/src/**/*.d.ts
+packages/*/src/**/*.d.ts.map
+.DS_Store
+
+# Test fixtures written at run time
+.layering-fixture-*/
+
+# Working files of `eutaxy check`
+.eutaxy/

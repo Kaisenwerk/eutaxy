@@ -1,0 +1,5 @@
+{
+  "expect": { "verdict": "VIOLATED", "invariant": "payment-recorded-once" },
+  "fault": "crash_before on Queue:payments ack after the insert committed; the redelivery inserts again under a new random id",
+  "description": "A queue consumer keys each payment row by crypto.randomUUID() and relies on INSERT OR IGNORE. The id never collides, so a redelivered message records the order twice. The trace is replayable only because Eutaxy virtualises randomUUID and Date.now."
+}

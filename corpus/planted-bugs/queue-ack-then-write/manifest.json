@@ -1,0 +1,8 @@
+{
+  "expect": {
+    "verdict": "VIOLATED",
+    "invariant": "every-payment-recorded"
+  },
+  "fault": "any crash after the explicit ack and before the insert: cut_off at the background point, or a crash inside the background work (the seed decides which is found first)",
+  "description": "A queue consumer acknowledges the message and records the payment in waitUntil. A cut-off after the ack loses the write, and the acknowledged message is never redelivered."
+}

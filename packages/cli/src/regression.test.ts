@@ -1,0 +1,44 @@
+import { emptyLog, type Violated } from "@eutaxy/core";
+import { describe, expect, test } from "vitest";
+import { cloudflareRegressionTest } from "./regression.ts";
+
+const verdict: Violated = {
+  kind: "VIOLATED",
+  scenario: "s",
+  seed: 1,
+  violation: { invariant: "inv", message: "m", keys: ['"k"'], evidence: [] },
+  trace: emptyLog,
+  schedule: { seed: 2, faults: [] },
+  keptEvents: ["msg-1"],
+  shrunk: { faultsRemoved: 0, eventsRemoved: 0, runs: 0 },
+  reached: { runs: 1, effectPoints: 0, faultsInjected: 0, elapsedMs: 0 },
+  assumptions: [],
+};
+
+describe("cloudflareRegressionTest", () => {
+  test("imports the scenario, worker and schemas and builds the platform", () => {
+    const src = cloudflareRegressionTest(verdict, {
+      scenarioPath: "./scenario.sim.js",
+      workerPath: "./worker.js",
+      schemaPaths: { DB: "./schema.sql", AUDIT: "./audit.sql" },
+    });
+    expect(src).toContain('import schema_AUDIT from "./audit.sql?raw";');
+    expect(src).toContain('import schema_DB from "./schema.sql?raw";');
+    expect(src).toContain(
+      "createCloudflarePlatform({ env, handler, schemas: { AUDIT: schema_AUDIT, DB: schema_DB } })",
+    );
+    expect(src).not.toContain("maxRetries");
+  });
+
+  test("reproduces a non-default retry limit", () => {
+    const src = cloudflareRegressionTest(verdict, {
+      scenarioPath: "./scenario.sim.js",
+      workerPath: "./worker.js",
+      schemaPaths: {},
+      maxRetries: 0,
+    });
+    expect(src).toContain(
+      "createCloudflarePlatform({ env, handler, schemas: {  }, maxRetries: 0 })",
+    );
+  });
+});

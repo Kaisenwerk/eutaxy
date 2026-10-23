@@ -1,0 +1,5 @@
+{
+  "expect": { "verdict": "VIOLATED", "invariant": "payment-recorded-once" },
+  "fault": "crash_before on Queue:payments ack, after the D1 insert committed",
+  "description": "A queue consumer inserts a payment row and then acks. A crash between the two redelivers the message and inserts the row again."
+}

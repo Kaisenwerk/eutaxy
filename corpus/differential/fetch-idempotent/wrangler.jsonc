@@ -1,0 +1,8 @@
+{
+  "name": "differential-fetch-idempotent",
+  "main": "worker.ts",
+  "compatibility_date": "2026-10-01",
+  "queues": {
+    "consumers": [{ "queue": "payments", "max_batch_size": 1, "max_retries": 3 }]
+  }
+}

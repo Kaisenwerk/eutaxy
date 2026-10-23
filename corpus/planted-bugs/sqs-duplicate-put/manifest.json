@@ -1,0 +1,5 @@
+{
+  "expect": { "verdict": "VIOLATED", "invariant": "payment-recorded-once" },
+  "fault": "crash_before on SQS:payments delete (the function died after the PutItem committed, before Lambda deleted the message), or crash_after on the PutItem; the redelivery writes again under a new random key",
+  "description": "An SQS-triggered Lambda writes each payment to DynamoDB under a random sort key. Any crash between the write and the message deletion redelivers the message and records the order twice."
+}

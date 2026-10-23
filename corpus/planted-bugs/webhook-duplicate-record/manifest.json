@@ -1,0 +1,8 @@
+{
+  "expect": {
+    "verdict": "VIOLATED",
+    "invariant": "event-recorded-once"
+  },
+  "fault": "a crash after the insert and before the caller sees the response: crash_after on the D1 run, or crash_before at the response point (the seed decides which is found first)",
+  "description": "A webhook handler inserts the provider event and answers 200. Providers resend a webhook they got no 2xx for, so a crash between the insert and the response makes the resend insert the event twice."
+}

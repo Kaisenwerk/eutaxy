@@ -1,0 +1,41 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist",
+    "types": ["node"]
+  },
+  "include": ["src"],
+  "references": [
+    {
+      "path": "../spec"
+    },
+    {
+      "path": "../core"
+    },
+    {
+      "path": "../engine"
+    },
+    {
+      "path": "../cloudflare"
+    },
+    {
+      "path": "../prover"
+    },
+    {
+      "path": "../prover-lean"
+    },
+    {
+      "path": "../prover-thales"
+    },
+    {
+      "path": "../prover-lemmascript"
+    },
+    {
+      "path": "../report"
+    },
+    {
+      "path": "../aws"
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "name": "payments-queue",
+  "main": "worker.ts",
+  "compatibility_date": "2026-10-01",
+  "d1_databases": [{ "binding": "DB", "database_name": "payments", "database_id": "local" }],
+  "queues": {
+    "consumers": [{ "queue": "payments", "max_batch_size": 1, "max_retries": 3 }]
+  }
+}

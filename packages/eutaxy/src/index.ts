@@ -1,0 +1,38 @@
+// eutaxy: the public API. Platform-specific entry points live under subpaths.
+export {
+  type AtLeastOnce,
+  type AtMostOncePerKey,
+  type Bounded,
+  type Bounds,
+  type BoundsReached,
+  checkInvariant,
+  checkInvariants,
+  describeVerdict,
+  type EffectLog,
+  type EffectRecord,
+  type EffectSelector,
+  type EventRef,
+  type EveryRow,
+  type FaultDecision,
+  type FaultKind,
+  type Implies,
+  type Invariant,
+  type Platform,
+  type RowCondition,
+  type ScenarioSpec,
+  type ScenarioVerdict,
+  type Schedule,
+  type StateQuery,
+  type Unsupported,
+  type Violated,
+  type Violation,
+  validateScenario,
+} from "@eutaxy/core";
+export { type ExploreOptions, explore, replay, restrictSpec } from "@eutaxy/engine";
+export {
+  emitRegressionTest,
+  type RegressionTestOptions,
+  renderJson,
+  renderText,
+  renderTrace,
+} from "@eutaxy/report";

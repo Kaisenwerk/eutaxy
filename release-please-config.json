@@ -1,0 +1,22 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "release-type": "node",
+  "include-component-in-tag": false,
+  "include-v-in-tag": true,
+  "bump-minor-pre-major": true,
+  "bump-patch-for-minor-pre-major": false,
+  "initial-version": "0.4.0",
+  "packages": {
+    ".": {
+      "package-name": "eutaxy",
+      "changelog-path": "CHANGELOG.md",
+      "extra-files": [
+        {
+          "type": "json",
+          "path": "packages/eutaxy/package.json",
+          "jsonpath": "$.version"
+        }
+      ]
+    }
+  }
+}
