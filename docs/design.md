@@ -351,8 +351,14 @@ invocation is idle, meaning no effect is in flight, in due order, so they
 never race real I/O. Platforms wait for handler and background promises
 through the engine's `settle`, which lets real I/O complete, fires due
 timers, abandons a crashed invocation, and marks the run `UNSUPPORTED` when
-user code waits on something Eutaxy cannot see. The globals are restored
-after every run, including on failure. Code that captured `Date.now` or
+user code waits on something Eutaxy cannot see. Web Crypto calls
+(`crypto.subtle`) are real work the handler waits on but not effects: the
+engine waits for them like an effect's I/O, unrecorded and never faulted,
+so timers and turns are never decided while one is running; that matters
+for webhook handlers that verify a signature. An effect whose real I/O
+outlasts the scenario's `budgetMs` is treated as hung and the run is
+`UNSUPPORTED`, naming the effect, instead of waiting forever. The globals
+are restored after every run, including on failure. Code that captured `Date.now` or
 `Math.random` at module load escapes the patch; that is a documented limit.
 
 Each run resets D1 by dropping every user table and re-applying the

@@ -82,6 +82,36 @@ describe("concurrent invocations", () => {
     expect(calls(again.log.entries)).toEqual(calls(verdict.trace.entries));
   });
 
+  test("real async work that is not an effect still gives the same turns on replay", async () => {
+    // Hashing is real asynchronous work, not an effect, before and between the effects.
+    const { subtle } = (
+      globalThis as unknown as {
+        crypto: { subtle: { digest(algorithm: string, data: Uint8Array): Promise<unknown> } };
+      }
+    ).crypto;
+    const bytes = (text: string) => Uint8Array.from(text, (c) => c.charCodeAt(0));
+    const hashing: FakeHandler = async (message, env) => {
+      const body = message.body as { orderId: string };
+      await subtle.digest("SHA-256", bytes(body.orderId));
+      if ((await env.count(body.orderId)) === 0) {
+        await subtle.digest("SHA-256", bytes(message.id));
+        await env.insert(body.orderId);
+      }
+      message.ack();
+    };
+    const platform = createFakePlatform(hashing, { concurrent: true });
+    const verdict = await explore(raceSpec(2), platform, {
+      seed: "race",
+      now: fixedClock,
+      maxRuns: 50,
+    });
+    if (verdict.kind !== "VIOLATED") throw new Error(`expected VIOLATED, got ${verdict.kind}`);
+    const digests = new Set<string>();
+    for (let i = 0; i < 5; i++)
+      digests.add(digestLog((await replayRun(raceSpec(2), platform, verdict.schedule)).log));
+    expect(digests.size).toBe(1);
+  });
+
   test("the same seed explores the same interleavings", async () => {
     const run = () => explore(raceSpec(2), concurrent(), { seed: 7, now: fixedClock, maxRuns: 20 });
     expect(JSON.stringify(await run())).toBe(JSON.stringify(await run()));
@@ -149,6 +179,37 @@ describe("concurrent invocations", () => {
       { seed: "timers", now: fixedClock, maxRuns: 5 },
     );
     expect(verdict.kind).toBe("BOUNDED");
+  });
+
+  test("an effect whose real I/O never completes ends a concurrent run UNSUPPORTED", {
+    timeout: 10_000,
+  }, async () => {
+    const insertThenAck: FakeHandler = async (message, env) => {
+      await env.insert((message.body as { orderId: string }).orderId);
+      message.ack();
+    };
+    const spec: ScenarioSpec = {
+      ...raceSpec(2),
+      drive: {
+        kind: "queue",
+        queue: "q",
+        messages: [
+          { id: "m1", body: { orderId: "o-1" } },
+          { id: "m2", body: { orderId: "o-2" } },
+        ],
+      },
+      bounds: { maxFaultsPerRun: 0, maxRedeliveries: 0, maxConcurrentInvocations: 2, budgetMs: 50 },
+    };
+    const verdict = await explore(
+      spec,
+      createFakePlatform(insertThenAck, { concurrent: true, hangInsert: "o-2" }),
+      {
+        seed: "hang",
+      },
+    );
+    expect(verdict.kind).toBe("UNSUPPORTED");
+    if (verdict.kind === "UNSUPPORTED")
+      expect(verdict.reason).toContain("D1:DB run did not complete within 50 ms");
   });
 
   test("an invocation waiting on something Eutaxy cannot see makes the run UNSUPPORTED", async () => {

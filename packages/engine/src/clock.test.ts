@@ -75,6 +75,32 @@ describe("VirtualRandom", () => {
 });
 
 describe("patchGlobals", () => {
+  test("Web Crypto calls go through trackIo during the run and are untouched after it", async () => {
+    const { subtle } = (
+      globalThis as unknown as {
+        crypto: { subtle: { digest(algorithm: string, data: Uint8Array): Promise<ArrayBuffer> } };
+      }
+    ).crypto;
+    const realDigest = subtle.digest;
+    let tracked = 0;
+    const patched = patchGlobals("crypto", {
+      trackIo: (work) => {
+        tracked++;
+        return work;
+      },
+    });
+    let digest: ArrayBuffer;
+    try {
+      digest = await subtle.digest("SHA-256", new Uint8Array([1, 2, 3]));
+    } finally {
+      patched.restore();
+    }
+    expect(tracked).toBe(1);
+    expect(digest.byteLength).toBe(32);
+    expect(subtle.digest).toBe(realDigest);
+    expect(Object.hasOwn(subtle, "digest")).toBe(false);
+  });
+
   test("replaces Date, Math.random, crypto and timers for the run and restores them", async () => {
     const realNow = Date.now;
     const realRandom = Math.random;

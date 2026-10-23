@@ -45,7 +45,13 @@ export const checkThenInsertConsumer: FakeHandler = async (message, env) => {
 
 export function createFakePlatform(
   handler: FakeHandler,
-  options: { idempotent?: boolean; maxRetries?: number; concurrent?: boolean } = {},
+  options: {
+    idempotent?: boolean;
+    maxRetries?: number;
+    concurrent?: boolean;
+    /** An order whose insert never completes, like a binding call that hangs. */
+    hangInsert?: string;
+  } = {},
 ): Platform & {
   readonly rows: Map<string, number>;
 } {
@@ -91,6 +97,7 @@ export function createFakePlatform(
               allowed: ["crash_before", "crash_after", "ambiguous", "error"],
             },
             async () => {
+              if (orderId === options.hangInsert) await new Promise(() => {});
               const before = rows.get(orderId) ?? 0;
               if (options.idempotent && before > 0) return { changes: 0 };
               rows.set(orderId, before + 1);

@@ -151,6 +151,21 @@ describe("explore", () => {
     }
   });
 
+  test("an effect whose real I/O never completes ends the run UNSUPPORTED within the budget", {
+    timeout: 10_000,
+  }, async () => {
+    const verdict = await explore(
+      { ...spec, bounds: { ...spec.bounds, budgetMs: 50 } },
+      createFakePlatform(buggyConsumer, { hangInsert: "o-1" }),
+      { seed: "hang", faultProbability: 0 },
+    );
+    expect(verdict.kind).toBe("UNSUPPORTED");
+    if (verdict.kind === "UNSUPPORTED") {
+      expect(verdict.cause).toBe("unsupported_api");
+      expect(verdict.reason).toContain("D1:DB run did not complete within 50 ms");
+    }
+  });
+
   test("stops at the time budget", async () => {
     let t = 0;
     const now = () => (t += 100);

@@ -190,16 +190,40 @@ export interface Patched {
 
 type Global = Record<string, unknown>;
 
+/** Web Crypto's asynchronous methods: real work that always finishes on its own. */
+const subtleMethods = [
+  "encrypt",
+  "decrypt",
+  "sign",
+  "verify",
+  "digest",
+  "generateKey",
+  "deriveKey",
+  "deriveBits",
+  "importKey",
+  "exportKey",
+  "wrapKey",
+  "unwrapKey",
+] as const;
+
+export interface PatchOptions {
+  /**
+   * Called with the promise of every host call that is real asynchronous
+   * work but not an effect (Web Crypto), so the run can wait for it like
+   * I/O instead of guessing when it is done.
+   */
+  readonly trackIo?: <T>(work: Promise<T>) => Promise<T>;
+}
+
 /** Replace the nondeterministic globals for one run. Returns the handle that restores them. */
-export function patchGlobals(seed: number | string): Patched {
+export function patchGlobals(seed: number | string, options: PatchOptions = {}): Patched {
   const clock = new VirtualClock();
   const random = new VirtualRandom(seed);
   const g = globalThis as unknown as Global;
-  const saved = new Map<string, PropertyDescriptor | undefined>();
+  const saved: { target: object; key: string; descriptor: PropertyDescriptor | undefined }[] = [];
   const define = (target: object, key: string, value: unknown): void => {
-    const owner = target === g ? g : target;
-    saved.set(key, Object.getOwnPropertyDescriptor(owner, key));
-    Object.defineProperty(owner, key, {
+    saved.push({ target, key, descriptor: Object.getOwnPropertyDescriptor(target, key) });
+    Object.defineProperty(target, key, {
       value,
       configurable: true,
       writable: true,
@@ -246,22 +270,20 @@ export function patchGlobals(seed: number | string): Patched {
   if (cryptoObj && typeof cryptoObj === "object") {
     define(cryptoObj, "randomUUID", () => random.uuid());
     define(cryptoObj, "getRandomValues", <T extends ArrayBufferView>(view: T) => random.fill(view));
+    const subtle = (cryptoObj as { subtle?: Record<string, unknown> }).subtle;
+    const trackIo = options.trackIo;
+    if (trackIo && subtle && typeof subtle === "object") {
+      for (const name of subtleMethods) {
+        const real = subtle[name];
+        if (typeof real !== "function") continue;
+        define(subtle, name, function (this: unknown, ...args: unknown[]) {
+          return trackIo(Promise.resolve(real.apply(this, args)));
+        });
+      }
+    }
   }
 
   let restored = false;
-  const targets: Record<string, object> = {
-    Date: g,
-    random: Math,
-    setTimeout: g,
-    setInterval: g,
-    clearTimeout: g,
-    clearInterval: g,
-  };
-  if (perf && typeof perf === "object") targets["now"] = perf;
-  if (cryptoObj && typeof cryptoObj === "object") {
-    targets["randomUUID"] = cryptoObj;
-    targets["getRandomValues"] = cryptoObj;
-  }
   return {
     clock,
     random,
@@ -271,8 +293,7 @@ export function patchGlobals(seed: number | string): Patched {
     restore() {
       if (restored) return;
       restored = true;
-      for (const [key, descriptor] of saved) {
-        const target = targets[key] as object;
+      for (const { target, key, descriptor } of saved.reverse()) {
         if (descriptor) Object.defineProperty(target, key, descriptor);
         else delete (target as Global)[key];
       }
@@ -280,9 +301,34 @@ export function patchGlobals(seed: number | string): Patched {
   };
 }
 
+/** A real-time deadline: `expired` resolves after `ms` unless cancelled first. */
+export function realDeadline(ms: number): { readonly expired: Promise<"expired">; cancel(): void } {
+  let handle: ReturnType<typeof realSetTimeout> | undefined;
+  const expired = new Promise<"expired">((resolve) => {
+    handle = realSetTimeout(() => resolve("expired"), ms);
+  });
+  return { expired, cancel: () => realClearTimeout(handle) };
+}
+
 /** Yield to the real event loop so microtasks and pending I/O can make progress. */
 export function realTick(): Promise<void> {
   return new Promise((resolve) => realSetTimeout(() => resolve(), 0));
+}
+
+// Not in every host's types (workerd has it only with Node compatibility), so looked up loosely.
+const hostSetImmediate = (globalThis as { setImmediate?: (callback: () => void) => unknown })
+  .setImmediate;
+const realSetImmediate = hostSetImmediate?.bind(globalThis);
+
+/**
+ * Let every pending microtask run, and I/O callbacks that are already due:
+ * one turn of the real event loop without a timer's delay where the host has
+ * `setImmediate`, else a zero timer.
+ */
+export function drainMicrotasks(): Promise<void> {
+  return realSetImmediate
+    ? new Promise((resolve) => realSetImmediate(() => resolve()))
+    : realTick();
 }
 
 export interface SettleContext {

@@ -46,6 +46,7 @@ const engineAssumptions: readonly string[] = [
   "faults: crash_before, crash_after, ambiguous, error at any effect point; redelivery per the platform's queue model",
   "Date, Math.random, crypto.randomUUID, crypto.getRandomValues, performance.now and timers are virtualised per run from the seed; time starts at 2026-01-01T00:00:00Z and advances 1 ms per effect and to each timer's due time",
   "timers fire only while the invocation is idle (no effect in flight), in due order; an invocation waiting on something outside Eutaxy makes the run UNSUPPORTED",
+  "an effect whose real I/O takes longer than the scenario's budgetMs is treated as hung: the run is UNSUPPORTED and names the effect",
   "while an effect performs real I/O, timers the library schedules inside that I/O are real (backoff, timeouts) and timers the handler schedules meanwhile stay virtual, told apart by async context; without async context support every timer stays virtual",
   "module-level state cannot be reset between runs; before BOUNDED the first runs are replayed in reverse order and any difference makes the run UNSUPPORTED (module_state_leak)",
   "outbound fetch never reaches the network: requests are answered from the scenario's declared externals, an external's dedupeBy guarantee is honoured by replaying the first response per key, and an undeclared host makes the run UNSUPPORTED",
@@ -55,7 +56,7 @@ const engineAssumptions: readonly string[] = [
 function concurrencyAssumption(bounds: Bounds): string {
   if (bounds.maxConcurrentInvocations === 1)
     return "one invocation at a time (maxConcurrentInvocations = 1)";
-  return `up to ${bounds.maxConcurrentInvocations} invocations in flight, interleaved only at asynchronous effects (proxied bindings, fetch): code between two such effects runs without interruption (except continuations of a promise it settles for another invocation, which run then and are still attributed to their own invocation), non-effect awaits settle within one turn of the event loop, synchronous effects are not interleaving points, the next turn is a seeded pick among parked invocations, whether a new event starts while a slot is free is a seeded pick too, and timers fire only when no invocation can take a turn`;
+  return `up to ${bounds.maxConcurrentInvocations} invocations in flight, interleaved only at asynchronous effects (proxied bindings, fetch): code between two such effects runs without interruption (except continuations of a promise it settles for another invocation, which run then and are still attributed to their own invocation), Web Crypto calls are waited for like I/O, other non-effect awaits (body reads included) settle within one turn of the event loop, synchronous effects are not interleaving points, the next turn is a seeded pick among parked invocations, whether a new event starts while a slot is free is a seeded pick too, and timers fire only when no invocation can take a turn`;
 }
 
 /** Deliver events one at a time, each to completion. */
@@ -107,9 +108,11 @@ async function deliverConcurrently(
       d.started.promise.then(
         (result) => {
           d.outcome = { result };
+          run.progressed();
         },
         (error: unknown) => {
           d.outcome = { error };
+          run.progressed();
         },
       );
       active.push(d);

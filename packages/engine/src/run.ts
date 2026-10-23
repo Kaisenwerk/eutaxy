@@ -33,7 +33,15 @@ import {
   type Schedule,
   seedPrng,
 } from "@eutaxy/core";
-import { effectLatencyMs, type Patched, patchGlobals, realTick, settleOn } from "./clock.ts";
+import {
+  drainMicrotasks,
+  effectLatencyMs,
+  type Patched,
+  patchGlobals,
+  realDeadline,
+  realTick,
+  settleOn,
+} from "./clock.ts";
 import { asyncScope } from "./context.ts";
 import { installScriptedFetch } from "./fetch.ts";
 
@@ -136,6 +144,8 @@ export class Run implements RunHooks {
     readonly go: () => void;
   }[] = [];
   private parkSeq = 0;
+  /** Concurrent runs only: woken whenever an invocation parks, a delivery ends or I/O completes. */
+  private progressWaiters: (() => void)[] = [];
   /** Concurrent runs only: the order invocations started in, which orders the parked ones. */
   private readonly startOrder = new Map<string, number>();
   /** Concurrent runs only: the picks among parked invocations, drawn apart from fault decisions. */
@@ -177,7 +187,16 @@ export class Run implements RunHooks {
   /** Replace the nondeterministic globals and `fetch` for this run. Call `uninstall` in a finally. */
   install(externals: readonly ExternalDecl[] = []): void {
     if (!this.patched) {
-      this.patched = patchGlobals(this.options.schedule.seed);
+      this.patched = patchGlobals(this.options.schedule.seed, {
+        // Web Crypto is real work the handler waits on: the run waits for it like an effect's I/O.
+        trackIo: (work) => {
+          this.inFlight++;
+          return work.finally(() => {
+            this.inFlight--;
+            if (this.concurrent) this.progressed();
+          });
+        },
+      });
       if (this.concurrent) {
         const clock = this.patched.clock;
         clock.ownerNow = () => this.running();
@@ -302,7 +321,10 @@ export class Run implements RunHooks {
     const inv = this.invocation(point.invocation);
     if (inv.isCrashed()) return hang();
     if (this.concurrent) {
-      await new Promise<void>((go) => this.parked.push({ inv, seq: this.parkSeq++, go }));
+      await new Promise<void>((go) => {
+        this.parked.push({ inv, seq: this.parkSeq++, go });
+        this.progressed();
+      });
       if (inv.isCrashed()) return hang();
     }
     const fault = this.open(point, inv);
@@ -315,18 +337,48 @@ export class Run implements RunHooks {
       this.record(point, "fault", { args: point.args, fault });
       throw new InjectedEffectError(point, fault);
     }
-    let value: T;
+    let settled:
+      | { readonly ok: true; readonly value: T }
+      | { readonly ok: false; readonly error: unknown }
+      | "expired";
+    // Real I/O that outlasts the scenario's whole budget is treated as hung, so the run ends.
+    const deadline = realDeadline(this.options.bounds.budgetMs);
     this.inFlight++;
     try {
       // The library's own timers inside the I/O are real; the handler's stay virtual.
-      value = await (this.patched ? this.patched.libraryIo(perform) : perform());
+      const io = this.patched ? this.patched.libraryIo(perform) : perform();
+      settled = await Promise.race([
+        io.then(
+          (value) => ({ ok: true as const, value }),
+          (error: unknown) => ({ ok: false as const, error }),
+        ),
+        deadline.expired,
+      ]);
     } catch (err) {
-      this.record(point, "result", { args: point.args, result: null, error: String(err) });
-      throw err;
+      // `perform` threw before returning a promise.
+      settled = { ok: false, error: err };
     } finally {
+      deadline.cancel();
       this.inFlight--;
       this.patched?.clock.advance(effectLatencyMs);
+      if (this.concurrent) this.progressed();
     }
+    if (settled === "expired") {
+      this.unsupported(
+        `${point.target} ${point.op} did not complete within ${this.options.bounds.budgetMs} ms of real time`,
+      );
+      inv.crash();
+      return hang();
+    }
+    if (!settled.ok) {
+      this.record(point, "result", {
+        args: point.args,
+        result: null,
+        error: String(settled.error),
+      });
+      throw settled.error;
+    }
+    const value = settled.value;
     this.record(point, "result", { args: point.args, result: summarize(value) });
     // The effect committed while the invocation was dying: nothing after it runs.
     if (inv.isCrashed()) return hang();
@@ -413,14 +465,29 @@ export class Run implements RunHooks {
     return { promise, invocation: () => cell.id };
   }
 
+  /** Concurrent runs: something moved (an invocation parked, a delivery ended, I/O completed). */
+  progressed(): void {
+    const waiters = this.progressWaiters;
+    this.progressWaiters = [];
+    for (const wake of waiters) wake();
+  }
+
   /**
    * Concurrent runs: wait until the running invocation has parked, finished
-   * or gone idle, that is, no effect is performing real I/O after a turn of
-   * the real event loop.
+   * or gone idle. Parking, a delivery ending and I/O completing wake the wait
+   * at once; then every pending microtask runs, so continuations the turn set
+   * off have run too. Code waiting on anything else gets one zero timer, the
+   * same allowance the sequential path gives, before it counts as idle.
    */
   async quiesce(): Promise<void> {
-    do await realTick();
-    while (this.inFlight > 0);
+    for (;;) {
+      await Promise.race([
+        new Promise<void>((wake) => this.progressWaiters.push(wake)),
+        realTick(),
+      ]);
+      await drainMicrotasks();
+      if (this.inFlight === 0) return;
+    }
   }
 
   /**
