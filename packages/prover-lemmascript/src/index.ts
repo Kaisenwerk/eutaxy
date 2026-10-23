@@ -1,2 +1,2 @@
-// @eutaxy/prover-lemmascript: see README.md. Filled in from v0.3.x.
+// @eutaxy/prover-lemmascript: see README.md. Filled in from v0.6.x.
 export {};

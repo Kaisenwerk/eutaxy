@@ -40,5 +40,5 @@ import of any other package does not resolve. The project references in
 `tsconfig.json` mirror the list; a test keeps the two in sync with the design.
 The AWS SDK packages are peer dependencies: the user's handler brings them.
 
-**Phase.** v0.1.y (second platform, pulled forward). See `docs/design.md`
+**Phase.** v0.4 (second platform). See `docs/design.md`
 and `docs/roadmap.md`.

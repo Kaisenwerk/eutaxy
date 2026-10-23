@@ -1,2 +1,2 @@
-// @eutaxy/spec: see README.md. Filled in from v0.2.
+// @eutaxy/spec: see README.md. Filled in from v0.5.
 export {};

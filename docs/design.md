@@ -107,7 +107,7 @@ runtime over a process boundary.
 | Module                                | Responsibility                                                                                                                                                                        | May import       |
 | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------- |
 | `spec`                                | `SpecIR`, Lemma annotation parser and printer                                                                                                                                         | nothing          |
-| `core`                                | Effect log, fault model, seeded PRNG, `Platform` interface, schedulers (seeded; exhaustive and partial-order reduction from v0.2), invariants including `refines`, shrinker, verdicts | `spec`           |
+| `core`                                | Effect log, fault model, seeded PRNG, `Platform` interface, schedulers (seeded; exhaustive and partial-order reduction from v0.5), invariants including `refines`, shrinker, verdicts | `spec`           |
 | `engine`                              | Run loop, virtual clock, globals patching, per-run state reset, replay                                                                                                                | `core`           |
 | `cloudflare`                          | Binding proxies, platform model, allowlist, Vitest integration                                                                                                                        | `engine`, `core` |
 | `aws`                                 | AWS SDK `send` proxy, SQS-to-Lambda delivery model, DynamoDB reset and snapshots; runs in Node                                                                                        | `engine`, `core` |
@@ -265,7 +265,7 @@ Faults injected at every effect boundary:
   `fetch()` is answered with a 500 (Workers runtime); resends follow the
   drive's declared caller policy, since Cloudflare itself never retries an
   inbound request.
-- Durable Objects (v0.2): input gates block new events during storage
+- Durable Objects (v0.5): input gates block new events during storage
   operations but not during outbound `fetch`; output gates hold responses
   _and outgoing requests_ until pending writes are confirmed; consecutive
   synchronous writes with no intervening `await` coalesce into one atomic
@@ -532,7 +532,7 @@ trips and fuzzing).
 
 ## Open questions
 
-- Which Durable Object behaviours to model first in v0.2. Working order:
+- Which Durable Object behaviours to model first in v0.5. Working order:
   storage and input gates, then `fetch` interleavings, then alarms.
 - Whether the Lemma conformance corpus is enough to pin the spec parser, or
   Eutaxy needs its own extension fixtures for loop invariants.

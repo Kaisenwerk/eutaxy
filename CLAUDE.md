@@ -68,7 +68,7 @@ every contribution.
     a future platform is a sibling package implementing `Platform`. `core`
     and `engine` never import provers. A second platform is added only
     once the first is useful end to end; AWS (Lambda, SQS, DynamoDB) came
-    after Cloudflare's v0.1 gate passed.
+    after the Cloudflare simulator gate passed.
 15. **Small modules, small context.** Every package does one thing and has
     a `README.md` of under a page stating its purpose, its public surface
     and what it may import, so that a change to it can be made by reading

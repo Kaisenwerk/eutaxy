@@ -12,4 +12,4 @@ pnpm links only declared workspace dependencies, so an import of any other
 package does not resolve. The project references in `tsconfig.json` mirror the
 list; a test keeps the two in sync with the design.
 
-**Phase.** v0.1. See `docs/design.md` and `docs/roadmap.md`.
+**Phase.** v0.4. See `docs/design.md` and `docs/roadmap.md`.

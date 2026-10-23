@@ -11,7 +11,7 @@ a Vitest regression test that runs in workerd. Specs on pure core functions
 are checked on simulated inputs, then on generated inputs, then optionally
 proved in Lean 4.
 
-**Status: 0.1, early.** The design is in
+**Status: 0.4, early.** The design is in
 [docs/design.md](docs/design.md); the phases and their gates are in
 [docs/roadmap.md](docs/roadmap.md).
 

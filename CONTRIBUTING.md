@@ -33,13 +33,18 @@ it needs more than two, say so in the pull request.
 Releases are driven by commit messages. On every push to `main`,
 [release-please](https://github.com/googleapis/release-please) keeps a
 release pull request open that bumps the version (the workspace root and
-`packages/eutaxy/package.json` together) and adds the next `CHANGELOG.md` section from the Conventional Commits since
-the last tag (`feat` is a minor bump before 1.0, `fix` a patch, `feat!` or a
-`BREAKING CHANGE:` footer a major). Merging that pull request creates the
-GitHub release and the `vx.y.z` tag, and the `publish` job of the same
-workflow publishes `eutaxy` to npm through trusted publishing
-with provenance. No npm token is stored anywhere, and nothing is published
-by hand after the first version.
+`packages/eutaxy/package.json` together) and adds the next `CHANGELOG.md`
+section from the Conventional Commits since the last tag. Before 1.0,
+`feat` and `fix` are patch bumps; the minor version follows the
+[roadmap](docs/roadmap.md): the commit that passes a phase gate carries a
+`Release-As: 0.N.0` footer, so phase v0.N is released as `0.N.0`. A
+breaking change (`feat!` or a `BREAKING CHANGE:` footer) also bumps the
+minor version before 1.0, so it lands with a gate commit.
+
+Merging the release pull request creates the GitHub release and the
+`vx.y.z` tag, and the `publish` job of the same workflow publishes `eutaxy`
+to npm through trusted publishing with provenance. No npm token is stored
+anywhere, and nothing is published by hand after the first version.
 
 The publish job runs `pnpm check` before it builds and publishes.
 

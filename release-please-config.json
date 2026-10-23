@@ -4,8 +4,7 @@
   "include-component-in-tag": false,
   "include-v-in-tag": true,
   "bump-minor-pre-major": true,
-  "bump-patch-for-minor-pre-major": false,
-  "initial-version": "0.4.0",
+  "bump-patch-for-minor-pre-major": true,
   "packages": {
     ".": {
       "package-name": "eutaxy",

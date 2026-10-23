@@ -1,81 +1,61 @@
 # Roadmap
 
-Four phases, each closed by a gate that must pass before the next starts.
-A gate is a test the corpora run in CI; a phase is done when its gate
-passes, not on a date. The planted-bug and differential corpora start in
-v0.1 and grow with every phase. The JSON report schema is versioned from
-v0.1 so CI and coding agents can rely on it early.
+Phases are numbered after the release that closes them: phase v0.N ships
+as `0.N.0` once its gate passes, and work toward it ships before that as
+patch releases of the previous phase (work toward v0.5 ships as `0.4.x`).
+Each phase is closed by a gate that must pass before the next starts. A
+gate is a test the corpora run in CI; a phase is done when its gate
+passes, not on a date. The planted-bug and differential corpora grow with
+every phase. The JSON report schema is versioned, so CI and coding agents
+can rely on it.
 
-## v0.0 — Scaffold (done 2026-10-22)
+## v0.4 — Simulator (released as 0.4.0, 2026-10-23)
 
-pnpm workspace with the eleven packages, declared dependencies mirrored by
-project references and checked against the design, `pnpm check` green, a
-`core` seeded PRNG and effect log with a test proving the same seed yields a
-byte-identical log, per-package READMEs, and the public hygiene files:
-README, LICENSE, CONTRIBUTING, CHANGELOG, code of conduct.
-
-## v0.1 — Simulator (current)
-
+- Scaffold: pnpm workspace with the eleven packages, declared dependencies
+  mirrored by project references and checked against the design,
+  `pnpm check` green, per-package READMEs, and the public hygiene files:
+  README, LICENSE, CONTRIBUTING, CHANGELOG, code of conduct.
 - Scenario spec format (`*.sim.ts`): Worker, scenario, declared externals,
   invariants and bounds, designed with the first planted bug as its first
-  user. (done)
-- Bindings: D1 and Queues. (done)
-- Faults: crash before, crash after, ambiguous outcome, error, redelivery
-  cut-off of `waitUntil` work (all done).
-- Scheduler: seeded exploration with a time-based budget. (done)
-- Invariants: `atMostOncePerKey`, `atLeastOnce`, `implies`, `everyRow`
-  (all done).
-- Shrinker (done); text and versioned JSON report (done); Vitest regression
-  emitter (done); `expectHolds` and `check` for use from a user's test
-  suite (done); `eutaxy check` CLI with `--json` (done).
-- Virtual clock and globals patching (done); module-state leak detection
-  (done); published-package build and publish dry run (done).
-- `examples/payments-queue`: the README quick start, runnable (done).
-- Planted bugs so far: `queue-duplicate-write` (crash before ack),
+  user.
+- Bindings: D1 and Queues; outbound `fetch` with declared externals
+  (`dedupeBy`, scripted replies).
+- Drives: queue messages and inbound HTTP requests. An HTTP request is an
+  event like a queue message: delivered with the same faults, redelivered
+  on the caller's declared retry policy (webhook providers retry, a
+  browser does not), concurrent requests as the scheduler's interleavings,
+  the response recorded as an effect. It is in this phase because the
+  first real Workers to check enter through `fetch` handlers (payment and
+  chat-platform webhooks, a sign-in endpoint with rate limits).
+- Faults: crash before, crash after, ambiguous outcome, error, redelivery,
+  cut-off of `waitUntil` work.
+- Scheduler: seeded exploration with a time-based budget.
+- Invariants: `atMostOncePerKey`, `atLeastOnce`, `implies`, `everyRow`.
+- Shrinker; text and versioned JSON report; Vitest regression emitter;
+  `expectHolds` and `check` for use from a user's test suite; `eutaxy
+  check` CLI with `--json`.
+- Virtual clock and globals patching; module-state leak detection;
+  published-package build and publish dry run.
+- AWS platform spike: Lambda with an SQS event source and DynamoDB through
+  the SDK `send` proxy, the differential runner. It is in this phase, not
+  the self-check phase, because the Cloudflare path was useful end to end
+  and the engine already had everything a second platform needs, so the
+  spike doubles as the test that the layering holds. Not in scope yet: the
+  `eutaxy check` command for AWS scenarios, other services (S3, SNS,
+  EventBridge), SQS batches larger than one record.
+- `examples/payments-queue`: the README quick start, runnable.
+- Planted bugs: `queue-duplicate-write` (crash before ack),
   `queue-ack-then-write` (ack then write in `waitUntil`),
   `queue-random-id` (random row ids with `INSERT OR IGNORE`),
-  `queue-charge-twice` (a charge without an idempotency key).
-- First planted bug: a queue consumer writes to D1, crashes after the write
-  and before ack, and redelivery duplicates the row. (done: runs in workerd
-  and reaches `VIOLATED`)
+  `queue-charge-twice` (a charge without an idempotency key),
+  `webhook-duplicate-record` (a webhook recorded twice on redelivery),
+  `sqs-duplicate-put` (AWS).
 
 **Gate:** every planted bug is caught, shrunk, replayed and emitted as a
 regression test; the differential corpus shows no divergence from workerd;
-the same seed produces a byte-identical trace twice. (Gate passed in CI on
-2026-10-23. Polish landed the same day: module-state leak detection and
-the published-package build with a publish dry run. v0.1 is complete apart
-from the actual release.)
+the same seed produces a byte-identical trace twice. (Passed in CI.)
 
-### v0.1.x
-
-Outbound `fetch` with declared externals (`dedupeBy`, scripted replies) and
-the `module_state_leak` detection pass. (done 2026-10-23)
-
-### v0.1.y — AWS platform spike, pulled forward
-
-The second-platform spike was planned for v0.4. It was brought forward on
-2026-10-23 because the Cloudflare path is useful end to end and the engine
-had just gained everything a second platform needs (platform-neutral
-scenario data, scripted fetch, virtual globals, leak detection), so the
-spike doubles as the test that the layering holds. Scope: Lambda with an
-SQS event source and DynamoDB through the SDK `send` proxy, a planted bug
-(`sqs-duplicate-put`), the differential runner. Not in scope yet: the
-`eutaxy check` command for AWS scenarios, other services (S3, SNS,
-EventBridge), SQS batches larger than one record.
-
-### v0.1.z — Inbound HTTP drive, pulled forward
-
-The maintainer's next Workers enter through `fetch` handlers (payment and
-chat-platform webhooks with redelivery, a sign-in endpoint with rate
-limits), and those are the first scenarios they want to write, before any
-Durable Object is involved. An HTTP drive is small: a request is an event
-like a queue message, delivered with the same faults, redelivered on the
-caller's retry policy, and concurrent requests are the scheduler's
-interleavings. Scope: `http` drive (method, path, headers, body, retries),
-the `fetch` handler as the entry point, response recording, `waitUntil`
-as today. Invariants stay the existing ones over D1 and `fetch` effects.
-
-## v0.2 — Durable Objects and specs
+## v0.5 — Durable Objects and specs (current)
 
 - Durable Object storage (key-value and SQL, transactions), input and
   output gates, write coalescing, alarms; KV. First real target beside the
@@ -90,11 +70,11 @@ as today. Invariants stay the existing ones over D1 and `fetch` effects.
 corpus; the exhaustive enumerator's schedule count matches its closed-form
 formula.
 
-### v0.2.x
+### v0.5.x
 
 R2 and Workflows models.
 
-## v0.3 — Provers
+## v0.6 — Provers
 
 - `TESTED` rung; `Prover` interface, ladder and aggregation.
 - First-party `prover-lean` engine on the initial subset (immutable data,
@@ -106,16 +86,15 @@ R2 and Workflows models.
 **Gate:** the first-party contract corpus passes against the pinned Lean
 toolchain; the refund example reaches `PROVEN` with the first-party engine.
 
-### v0.3.x
+### v0.6.x
 
 Optional Thales and LemmaScript adapters with their own contract corpora;
 `CONFLICT` detection across engines.
 
-## v0.4 — Self-check
+## v0.7 — Self-check
 
 Enumerator proven through a prover adapter; invariant checkers verified
-against reference implementations; `eutaxy report`; a spike on a second
-platform behind `Platform`.
+against reference implementations; `eutaxy report`.
 
 **Gate:** Eutaxy's own `eutaxy report` on its core shows `PROVEN` for the
 enumerator and `CHECKED` or better for every invariant checker.
