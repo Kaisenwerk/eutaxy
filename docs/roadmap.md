@@ -61,7 +61,10 @@ the same seed produces a byte-identical trace twice. (Passed in CI.)
 
 In this order:
 - Concurrent invocations (`maxConcurrentInvocations` above 1) for every
-  drive, interleaved at effect points by the seeded scheduler. First,
+  drive, interleaved at asynchronous effects by a seeded pick; planted
+  bug `signin-code-rate-limit` (a limit checked with a read and then an
+  insert). Done on the Cloudflare platform; the AWS platform still
+  delivers one event at a time. First,
   because Durable Object gates only mean something with interleaved
   events, and the first real HTTP target (rate limits and an attempt cap
   on a sign-in endpoint) fails only under concurrent requests.

@@ -1,0 +1,8 @@
+{
+  "expect": {
+    "verdict": "VIOLATED",
+    "invariant": "one-code-per-window"
+  },
+  "fault": "no fault: two concurrent requests for the same address, both reading before either inserts",
+  "description": "A sign-in endpoint allows one code per address per minute by reading for a recent code and then inserting one. Two requests in flight at once both see no recent code and both insert."
+}
