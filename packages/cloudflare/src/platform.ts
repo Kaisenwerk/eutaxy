@@ -108,13 +108,13 @@ const assumptions: readonly string[] = [
   "only D1 bindings are proxied; touching any other binding makes the run UNSUPPORTED",
   "state invariants read a snapshot of every D1 binding named in setup, taken after the last event",
   "work passed to ctx.waitUntil runs after the handler returns and never affects acknowledgement or the response; a cut_off fault at that point loses work not yet started, and an effect in flight commits without its continuation",
+  "concurrent invocations (maxConcurrentInvocations above 1) share one isolate's module state and bindings, and another may run while one awaits I/O (developers.cloudflare.com/workers/reference/how-workers-works/); queue consumers run concurrently up to max_concurrency (developers.cloudflare.com/queues/configuration/consumer-concurrency/)",
   "inbound requests: one invocation per attempt; an uncaught exception is a 500 response; the drive's caller resends a request it got no acceptable response for (crash before the response, or a status its retryOn policy rejects) up to its retries",
 ];
 
 export function createCloudflarePlatform(options: CloudflarePlatformOptions): Platform {
   const env = options.env as Record<string, unknown>;
   const maxRetries = options.maxRetries ?? 3;
-  let currentInvocation = "";
   let hooksRef: RunHooks | null = null;
 
   const ctx: ProxyContext = {
@@ -122,7 +122,8 @@ export function createCloudflarePlatform(options: CloudflarePlatformOptions): Pl
       if (!hooksRef) throw new Error("no run in progress");
       return hooksRef;
     },
-    currentInvocation: () => currentInvocation,
+    // Bindings are shared by every invocation in flight; the engine knows which one is running.
+    currentInvocation: () => ctx.hooks.running(),
   };
 
   const d1Proxies = new Map<string, D1Database>();
@@ -158,6 +159,7 @@ export function createCloudflarePlatform(options: CloudflarePlatformOptions): Pl
   return {
     name: "cloudflare",
     assumptions,
+    concurrent: true,
 
     async reset(spec: ScenarioSpec): Promise<void> {
       for (const step of spec.setup) {
@@ -212,14 +214,9 @@ export function createCloudflarePlatform(options: CloudflarePlatformOptions): Pl
       const drive = spec.drive as QueueDrive | HttpDrive;
       const invocation = `${event.id}#${event.attempt}`;
       hooksRef = hooks;
-      currentInvocation = invocation;
-      try {
-        return drive.kind === "http"
-          ? await deliverRequest(event, hooks, spec, drive, invocation)
-          : await deliverMessage(event, hooks, spec, drive, invocation);
-      } finally {
-        currentInvocation = "";
-      }
+      return drive.kind === "http"
+        ? await deliverRequest(event, hooks, spec, drive, invocation)
+        : await deliverMessage(event, hooks, spec, drive, invocation);
     },
   };
 

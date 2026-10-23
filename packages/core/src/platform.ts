@@ -48,6 +48,12 @@ export interface RunHooks {
   effectSync<T>(point: EffectPoint, perform: () => T, summarize: (value: T) => JsonValue): T;
   /** Declare that the run touched something Eutaxy cannot control. */
   unsupported(reason: string): void;
+  /**
+   * The invocation whose code is running now. Proxies that cannot tell which
+   * invocation called them attribute their effects to it; with concurrent
+   * invocations only one runs at a time, so this is always the caller.
+   */
+  running(): string;
   /** Record a state snapshot (not an effect point; never faulted). */
   snapshot(invocation: string, target: string, payload: JsonValue): void;
   /**
@@ -69,6 +75,13 @@ export interface Platform {
   readonly name: string;
   /** What a verdict rests on that this platform decides, one line each. */
   readonly assumptions: readonly string[];
+  /**
+   * True when `deliver` may be called again before an earlier delivery has
+   * finished, which `maxConcurrentInvocations` above 1 needs. Such a
+   * platform attributes effects per delivery or through `RunHooks.running`,
+   * never through state shared between deliveries.
+   */
+  readonly concurrent?: boolean;
   /** Establish the scenario's initial state. Called before every run. */
   reset(spec: ScenarioSpec): Promise<void>;
   /** The events the scenario's drive produces, in order. */

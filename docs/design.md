@@ -308,6 +308,31 @@ and by the effect's ordinal within that invocation (not by a global index),
 so a schedule stays valid when other invocations are removed. Replay follows
 a schedule exactly; exploration records one.
 
+**Concurrent invocations.** With `maxConcurrentInvocations` above 1, up to
+that many invocations are in flight, as concurrent requests are in one
+isolate ("other requests may (or may not) be processed during awaiting any
+`async` tasks", Cloudflare, How Workers works) and concurrent queue
+consumers are up to `max_concurrency` (Cloudflare, Consumer concurrency).
+Each
+asynchronous effect is a turn: the invocation parks there, and once every
+invocation in flight has parked, finished or gone idle, the engine lets
+one parked invocation perform its effect and run to its next one, or,
+while a slot is free, starts the next event; timers fire only when nothing
+else can move; an invocation that waits
+on nothing Eutaxy can see makes the run `UNSUPPORTED`. The pick among
+parked invocations comes from a stream seeded by the run's seed, separate
+from fault decisions, so replay makes the same picks and the schedule
+needs no record of them. Synchronous effects (an ack, the response point)
+are not turns. Each delivery runs in its own async context
+(AsyncLocalStorage), so `RunHooks.running` names the invocation whose code
+is executing even when a promise shared between invocations resumes one
+during another's turn; a host without it gets `UNSUPPORTED`. A platform
+declares `concurrent` once nothing it shares between deliveries depends
+on which invocation is running; the Cloudflare
+platform does, the AWS platform does not yet. A shrunk schedule keeps the
+seed, so removing a fault can change later picks; the shrinker keeps a
+candidate only when replay still violates, as for any other change.
+
 The _shrinker_ takes a replayed violation and tries, smallest change first,
 removing one fault and then removing one input event, keeping a candidate
 only when replay still violates the same invariant for the same keys.

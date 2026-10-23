@@ -5,8 +5,10 @@
  */
 
 import {
+  type Bounds,
   type BoundsReached,
   checkInvariants,
+  type DeliveryResult,
   digestLog,
   type EffectLog,
   type EventRef,
@@ -18,7 +20,7 @@ import {
   type Schedule,
   seedPrng,
 } from "@eutaxy/core";
-import { Run } from "./run.ts";
+import { concurrencySupported, Run, type StartedDelivery } from "./run.ts";
 import { shrink } from "./shrink.ts";
 
 export interface ExploreOptions {
@@ -42,13 +44,85 @@ export interface ExploreOptions {
 const engineAssumptions: readonly string[] = [
   "schedule points are effect boundaries: proxied bindings, patched timers and fetch; other awaits run in program order",
   "faults: crash_before, crash_after, ambiguous, error at any effect point; redelivery per the platform's queue model",
-  "one invocation at a time (maxConcurrentInvocations = 1)",
   "Date, Math.random, crypto.randomUUID, crypto.getRandomValues, performance.now and timers are virtualised per run from the seed; time starts at 2026-01-01T00:00:00Z and advances 1 ms per effect and to each timer's due time",
   "timers fire only while the invocation is idle (no effect in flight), in due order; an invocation waiting on something outside Eutaxy makes the run UNSUPPORTED",
   "while an effect performs real I/O, timers the library schedules inside that I/O are real (backoff, timeouts) and timers the handler schedules meanwhile stay virtual, told apart by async context; without async context support every timer stays virtual",
   "module-level state cannot be reset between runs; before BOUNDED the first runs are replayed in reverse order and any difference makes the run UNSUPPORTED (module_state_leak)",
   "outbound fetch never reaches the network: requests are answered from the scenario's declared externals, an external's dedupeBy guarantee is honoured by replaying the first response per key, and an undeclared host makes the run UNSUPPORTED",
 ];
+
+/** What a verdict rests on about concurrency, for these bounds. */
+function concurrencyAssumption(bounds: Bounds): string {
+  if (bounds.maxConcurrentInvocations === 1)
+    return "one invocation at a time (maxConcurrentInvocations = 1)";
+  return `up to ${bounds.maxConcurrentInvocations} invocations in flight, interleaved only at asynchronous effects (proxied bindings, fetch): code between two such effects runs without interruption (except continuations of a promise it settles for another invocation, which run then and are still attributed to their own invocation), non-effect awaits settle within one turn of the event loop, synchronous effects are not interleaving points, the next turn is a seeded pick among parked invocations, whether a new event starts while a slot is free is a seeded pick too, and timers fire only when no invocation can take a turn`;
+}
+
+/** Deliver events one at a time, each to completion. */
+async function deliverInOrder(spec: ScenarioSpec, platform: Platform, run: Run): Promise<void> {
+  const pending: EventRef[] = [...platform.initialEvents(spec)];
+  while (pending.length > 0) {
+    const event = pending.shift() as EventRef;
+    const result = await platform.deliver(event, run, spec);
+    pending.push(...result.followUps);
+  }
+}
+
+interface Delivery {
+  readonly started: StartedDelivery<DeliveryResult>;
+  outcome: { readonly result: DeliveryResult } | { readonly error: unknown } | null;
+}
+
+/**
+ * Deliver events with up to `maxConcurrentInvocations` in flight. Each turn
+ * is a seeded pick: one parked invocation performs its effect and runs to
+ * its next one, or, while a slot is free, the next event starts. When
+ * nothing is parked and no event can start a timer fires, and when nothing
+ * can move the remaining invocations are abandoned.
+ */
+async function deliverConcurrently(
+  spec: ScenarioSpec,
+  platform: Platform,
+  run: Run,
+): Promise<void> {
+  const pending: EventRef[] = [...platform.initialEvents(spec)];
+  let active: Delivery[] = [];
+  for (;;) {
+    // Finished deliveries leave in the order they started; their follow-ups queue behind the rest.
+    for (const d of active) {
+      if (!d.outcome) continue;
+      if ("error" in d.outcome) throw d.outcome.error;
+      pending.push(...d.outcome.result.followUps);
+    }
+    active = active.filter((d) => !d.outcome);
+    if (active.length === 0 && pending.length === 0) return;
+    const canStart = active.length < spec.bounds.maxConcurrentInvocations && pending.length > 0;
+    const turn = run.takeTurn(canStart);
+    if (turn === "start") {
+      const event = pending.shift() as EventRef;
+      const d: Delivery = {
+        started: run.startDelivery(() => platform.deliver(event, run, spec)),
+        outcome: null,
+      };
+      d.started.promise.then(
+        (result) => {
+          d.outcome = { result };
+        },
+        (error: unknown) => {
+          d.outcome = { error };
+        },
+      );
+      active.push(d);
+    } else if (turn === "none" && !run.fireTimer()) {
+      const stuck = active.flatMap((d) => d.started.invocation() ?? []);
+      if (run.abandon(stuck) === 0)
+        throw new Error(
+          `the ${platform.name} platform's delivery made no progress and cannot be abandoned`,
+        );
+    }
+    await run.quiesce();
+  }
+}
 
 /** Run the scenario once under the given run's fault decisions and return its log. */
 export async function runOnce(
@@ -62,12 +136,9 @@ export async function runOnce(
   run.install(spec.externals);
   try {
     try {
-      const pending: EventRef[] = [...platform.initialEvents(spec)];
-      while (pending.length > 0) {
-        const event = pending.shift() as EventRef;
-        const result = await platform.deliver(event, run, spec);
-        pending.push(...result.followUps);
-      }
+      if (!run.concurrent) await deliverInOrder(spec, platform, run);
+      else if (platform.concurrent) await deliverConcurrently(spec, platform, run);
+      else throw new Error(`the ${platform.name} platform delivers one event at a time`);
     } finally {
       run.uninstall();
     }
@@ -107,18 +178,32 @@ export async function explore(
   const now = options.now ?? (() => Date.now());
   const maxRuns = options.maxRuns ?? 100;
   const faultProbability = options.faultProbability ?? 0.5;
-  const assumptions = [...engineAssumptions, ...platform.assumptions];
+  const assumptions = [
+    ...engineAssumptions,
+    concurrencyAssumption(spec.bounds),
+    ...platform.assumptions,
+  ];
   const start = now();
   const reached = { runs: 0, effectPoints: 0, faultsInjected: 0 };
   const done = (): BoundsReached => ({ ...reached, elapsedMs: now() - start });
   const base = { scenario: spec.name, seed: options.seed, assumptions };
 
-  if (spec.bounds.maxConcurrentInvocations !== 1) {
+  if (spec.bounds.maxConcurrentInvocations > 1 && !concurrencySupported) {
     return {
       ...base,
       kind: "UNSUPPORTED",
       cause: "unsupported_bounds",
-      reason: "maxConcurrentInvocations above 1 is not supported yet",
+      reason:
+        "maxConcurrentInvocations above 1 needs AsyncLocalStorage (Node, or workerd with nodejs_compat or nodejs_als)",
+      reached: done(),
+    };
+  }
+  if (spec.bounds.maxConcurrentInvocations > 1 && !platform.concurrent) {
+    return {
+      ...base,
+      kind: "UNSUPPORTED",
+      cause: "unsupported_bounds",
+      reason: `maxConcurrentInvocations above 1 is not supported on the ${platform.name} platform yet`,
       reached: done(),
     };
   }

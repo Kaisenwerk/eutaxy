@@ -1,6 +1,6 @@
 # @eutaxy/engine
 
-**Purpose.** The platform-neutral run loop: virtual clock, globals patching, per-run state reset, replay.
+**Purpose.** The platform-neutral run loop: virtual clock, globals patching, per-run state reset, replay, and the turns of concurrent invocations.
 
 **Public surface.** `explore` (seeded exploration, replay, shrink, verdict), `replay` and `replayRun` (re-run a schedule exactly), `shrink` and `restrictSpec`, `runOnce`, `Run` (the per-run hooks proxies call), `CrashSignal`, `InjectedEffectError`. `patchGlobals`, `VirtualClock`, `VirtualRandom`, `settleOn` (the virtual clock and the globals patch; `Run.install`/`uninstall` apply them per run and `Run.settle` waits under them).
 

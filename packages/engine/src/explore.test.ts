@@ -138,13 +138,17 @@ describe("explore", () => {
     if (verdict.kind === "UNSUPPORTED") expect(verdict.cause).toBe("unsupported_api");
   });
 
-  test("more than one concurrent invocation is UNSUPPORTED for now", async () => {
+  test("more than one concurrent invocation is UNSUPPORTED on a platform that delivers one at a time", async () => {
     const verdict = await explore(
       { ...spec, bounds: { ...spec.bounds, maxConcurrentInvocations: 2 } },
       createFakePlatform(buggyConsumer),
       { seed: 1, now: fixedClock() },
     );
     expect(verdict.kind).toBe("UNSUPPORTED");
+    if (verdict.kind === "UNSUPPORTED") {
+      expect(verdict.cause).toBe("unsupported_bounds");
+      expect(verdict.reason).toContain("fake platform");
+    }
   });
 
   test("stops at the time budget", async () => {

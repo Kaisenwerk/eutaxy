@@ -145,7 +145,8 @@ async function eutaxySide(
   const run = new Run({
     mode: "replay",
     schedule: { seed: 0, faults: [] },
-    bounds: spec.bounds,
+    // The comparison delivers one event at a time on both sides, whatever the scenario's bound.
+    bounds: { ...spec.bounds, maxConcurrentInvocations: 1 },
     faultProbability: 0,
   });
   const attempts: AttemptRecord[] = [];

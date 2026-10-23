@@ -1,0 +1,265 @@
+import { type AtMostOncePerKey, digestLog, type ScenarioSpec } from "@eutaxy/core";
+import { describe, expect, test } from "vitest";
+import { explore, replayRun } from "./explore.ts";
+import { checkThenInsertConsumer, createFakePlatform, type FakeHandler } from "./fake-platform.ts";
+
+const once: AtMostOncePerKey = {
+  kind: "atMostOncePerKey",
+  name: "recorded-once",
+  effect: { target: "D1:DB", op: "run", kind: "result", atLeast: { "result.changes": 1 } },
+  key: "args.params.0",
+};
+
+/** Two deliveries for the same order, no faults: only an interleaving can break `recorded-once`. */
+function raceSpec(maxConcurrentInvocations: number): ScenarioSpec {
+  return {
+    version: 1,
+    name: "fake-check-then-insert",
+    worker: { entry: "./worker.ts", config: "./wrangler.jsonc" },
+    drive: {
+      kind: "queue",
+      queue: "q",
+      messages: [
+        { id: "m1", body: { orderId: "o-1" } },
+        { id: "m2", body: { orderId: "o-1" } },
+      ],
+    },
+    setup: [],
+    externals: [],
+    invariants: [once],
+    bounds: { maxFaultsPerRun: 0, maxRedeliveries: 2, maxConcurrentInvocations, budgetMs: 10_000 },
+  };
+}
+
+const fixedClock = () => 0;
+const concurrent = () => createFakePlatform(checkThenInsertConsumer, { concurrent: true });
+
+/** The effect calls of a log as "invocation op", in log order. */
+function calls(entries: readonly { kind: string; invocation: string; op: string }[]): string[] {
+  return entries.filter((e) => e.kind === "call").map((e) => `${e.invocation} ${e.op}`);
+}
+
+describe("concurrent invocations", () => {
+  test("check-then-insert holds one at a time", async () => {
+    const verdict = await explore(raceSpec(1), concurrent(), {
+      seed: "race",
+      now: fixedClock,
+      maxRuns: 20,
+    });
+    expect(verdict.kind).toBe("BOUNDED");
+  });
+
+  test("two in flight interleave the reads before the inserts and record the order twice", async () => {
+    const verdict = await explore(raceSpec(2), concurrent(), {
+      seed: "race",
+      now: fixedClock,
+      maxRuns: 20,
+    });
+    expect(verdict.kind).toBe("VIOLATED");
+    if (verdict.kind !== "VIOLATED") return;
+    expect(verdict.violation.invariant).toBe("recorded-once");
+    expect(verdict.schedule.faults).toEqual([]);
+    const order = calls(verdict.trace.entries);
+    // Both reads come before either insert: each saw no row.
+    const firstInsert = order.findIndex((c) => c.endsWith(" run"));
+    expect(order.slice(0, firstInsert).sort()).toEqual(["m1#1 first", "m2#1 first"]);
+    expect(verdict.assumptions.some((a) => a.startsWith("up to 2 invocations in flight"))).toBe(
+      true,
+    );
+  });
+
+  test("replay picks the same turns, so the log is byte-identical", async () => {
+    const platform = concurrent();
+    const verdict = await explore(raceSpec(2), platform, {
+      seed: "race",
+      now: fixedClock,
+      maxRuns: 20,
+    });
+    if (verdict.kind !== "VIOLATED") throw new Error(`expected VIOLATED, got ${verdict.kind}`);
+    const again = await replayRun(raceSpec(2), platform, verdict.schedule);
+    const twice = await replayRun(raceSpec(2), platform, verdict.schedule);
+    expect(digestLog(again.log)).toBe(digestLog(twice.log));
+    expect(calls(again.log.entries)).toEqual(calls(verdict.trace.entries));
+  });
+
+  test("the same seed explores the same interleavings", async () => {
+    const run = () => explore(raceSpec(2), concurrent(), { seed: 7, now: fixedClock, maxRuns: 20 });
+    expect(JSON.stringify(await run())).toBe(JSON.stringify(await run()));
+  });
+
+  test("redeliveries take a free slot and every delivery still finishes", async () => {
+    const insertThenAck: FakeHandler = async (message, env) => {
+      await env.insert((message.body as { orderId: string }).orderId);
+      message.ack();
+    };
+    const spec: ScenarioSpec = {
+      ...raceSpec(2),
+      drive: {
+        kind: "queue",
+        queue: "q",
+        messages: [
+          { id: "m1", body: { orderId: "o-1" } },
+          { id: "m2", body: { orderId: "o-2" } },
+          { id: "m3", body: { orderId: "o-3" } },
+        ],
+      },
+      bounds: {
+        maxFaultsPerRun: 1,
+        maxRedeliveries: 2,
+        maxConcurrentInvocations: 2,
+        budgetMs: 10_000,
+      },
+    };
+    const platform = createFakePlatform(insertThenAck, { concurrent: true });
+    // m2's insert crashes before it commits; its redelivery runs once a slot is free.
+    const run = await replayRun(spec, platform, {
+      seed: 1,
+      faults: [
+        { invocation: "m2#1", ordinal: 0, fault: "crash_before", target: "D1:DB", op: "run" },
+      ],
+    });
+    expect(run.unsupportedReasons).toEqual([]);
+    expect([...platform.rows.entries()].sort()).toEqual([
+      ["o-1", 1],
+      ["o-2", 1],
+      ["o-3", 1],
+    ]);
+    expect(calls(run.log.entries)).toContain("m2#2 run");
+  });
+
+  test("timers fire when every invocation is waiting on one", async () => {
+    const sleepy: FakeHandler = async (message, env) => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      await env.insert((message.body as { orderId: string }).orderId);
+      message.ack();
+    };
+    const verdict = await explore(
+      {
+        ...raceSpec(2),
+        drive: {
+          kind: "queue",
+          queue: "q",
+          messages: [
+            { id: "m1", body: { orderId: "o-1" } },
+            { id: "m2", body: { orderId: "o-2" } },
+          ],
+        },
+      },
+      createFakePlatform(sleepy, { concurrent: true }),
+      { seed: "timers", now: fixedClock, maxRuns: 5 },
+    );
+    expect(verdict.kind).toBe("BOUNDED");
+  });
+
+  test("an invocation waiting on something Eutaxy cannot see makes the run UNSUPPORTED", async () => {
+    const waitsForever: FakeHandler = async (message) => {
+      if (message.id === "m2") await new Promise(() => {});
+      message.ack();
+    };
+    const verdict = await explore(
+      raceSpec(2),
+      createFakePlatform(waitsForever, { concurrent: true }),
+      {
+        seed: "stuck",
+        now: fixedClock,
+        maxRuns: 5,
+      },
+    );
+    expect(verdict.kind).toBe("UNSUPPORTED");
+    if (verdict.kind === "UNSUPPORTED") expect(verdict.reason).toContain("m2#1 is waiting");
+  });
+});
+
+describe("attribution under concurrency", () => {
+  test("an effect made after a promise shared between invocations is attributed to its own invocation", async () => {
+    let resolveShared: () => void = () => {};
+    const shared = new Promise<void>((resolve) => {
+      resolveShared = resolve;
+    });
+    // "a" waits on state "b" settles during its own turn, then makes its effects.
+    const sharing: FakeHandler = async (message, env) => {
+      if (message.id === "a") {
+        await shared;
+        await env.insert("from-a");
+      } else {
+        await env.count("x");
+        resolveShared();
+        await env.insert("from-b");
+      }
+      message.ack();
+    };
+    const spec: ScenarioSpec = {
+      ...raceSpec(2),
+      drive: {
+        kind: "queue",
+        queue: "q",
+        messages: [
+          { id: "a", body: {} },
+          { id: "b", body: {} },
+        ],
+      },
+    };
+    for (const seed of [1, 2, 3, 4, 5]) {
+      const run = await replayRun(spec, createFakePlatform(sharing, { concurrent: true }), {
+        seed,
+        faults: [],
+      });
+      const inserts = run.log.entries
+        .filter((e) => e.kind === "call" && e.op === "run")
+        .map((e) => `${e.invocation} ${JSON.stringify(e.payload)}`);
+      expect(inserts.find((c) => c.includes("from-a"))).toMatch(/^a#1 /);
+      expect(inserts.find((c) => c.includes("from-b"))).toMatch(/^b#1 /);
+    }
+  });
+
+  test("an effect made in a timer callback after a promise another timer settles stays its own", async () => {
+    let resolveShared: () => void = () => {};
+    const shared = new Promise<void>((resolve) => {
+      resolveShared = resolve;
+    });
+    // "a" sets a timer whose callback waits on state that "b"'s later timer settles.
+    const timers: FakeHandler = async (message, env) => {
+      if (message.id === "a") {
+        await new Promise<void>((done) =>
+          setTimeout(async () => {
+            await shared;
+            await env.insert("from-a");
+            done();
+          }, 10),
+        );
+      } else {
+        await new Promise<void>((done) =>
+          setTimeout(() => {
+            resolveShared();
+            done();
+          }, 20),
+        );
+        await env.insert("from-b");
+      }
+      message.ack();
+    };
+    const spec: ScenarioSpec = {
+      ...raceSpec(2),
+      drive: {
+        kind: "queue",
+        queue: "q",
+        messages: [
+          { id: "a", body: {} },
+          { id: "b", body: {} },
+        ],
+      },
+    };
+    for (const seed of [1, 2, 3, 4, 5]) {
+      const run = await replayRun(spec, createFakePlatform(timers, { concurrent: true }), {
+        seed,
+        faults: [],
+      });
+      expect(run.unsupportedReasons).toEqual([]);
+      const inserts = run.log.entries
+        .filter((e) => e.kind === "call" && e.op === "run")
+        .map((e) => `${e.invocation} ${JSON.stringify(e.payload)}`);
+      expect(inserts.find((c) => c.includes("from-a"))).toMatch(/^a#1 /);
+      expect(inserts.find((c) => c.includes("from-b"))).toMatch(/^b#1 /);
+    }
+  });
+});

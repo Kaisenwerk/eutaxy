@@ -23,6 +23,8 @@ export interface FakeMessage {
 
 export interface FakeEnv {
   insert(orderId: string): Promise<{ changes: number }>;
+  /** How many rows the order has; a read, so it is an effect point too. */
+  count(orderId: string): Promise<number>;
 }
 
 export type FakeHandler = (message: FakeMessage, env: FakeEnv) => Promise<void>;
@@ -34,9 +36,16 @@ export const buggyConsumer: FakeHandler = async (message, env) => {
   message.ack();
 };
 
+/** Check, then insert: correct one at a time, a duplicate when two deliveries interleave. */
+export const checkThenInsertConsumer: FakeHandler = async (message, env) => {
+  const body = message.body as { orderId: string };
+  if ((await env.count(body.orderId)) === 0) await env.insert(body.orderId);
+  message.ack();
+};
+
 export function createFakePlatform(
   handler: FakeHandler,
-  options: { idempotent?: boolean; maxRetries?: number } = {},
+  options: { idempotent?: boolean; maxRetries?: number; concurrent?: boolean } = {},
 ): Platform & {
   readonly rows: Map<string, number>;
 } {
@@ -45,6 +54,7 @@ export function createFakePlatform(
   return {
     name: "fake",
     assumptions: ["fake in-memory platform"],
+    concurrent: options.concurrent ?? false,
     rows,
     async reset() {
       rows.clear();
@@ -73,7 +83,8 @@ export function createFakePlatform(
         insert: (orderId) =>
           hooks.effect(
             {
-              invocation,
+              // Like a binding proxy shared by every invocation: the engine says whose code called.
+              invocation: hooks.running(),
               target: "D1:DB",
               op: "run",
               args: { sql: "INSERT", params: [orderId] },
@@ -86,6 +97,19 @@ export function createFakePlatform(
               return { changes: 1 };
             },
             (r) => ({ changes: r.changes }),
+          ),
+        count: (orderId) =>
+          hooks.effect(
+            {
+              // Like a binding proxy shared by every invocation: the engine says whose code called.
+              invocation: hooks.running(),
+              target: "D1:DB",
+              op: "first",
+              args: { sql: "SELECT", params: [orderId] },
+              allowed: ["crash_before", "crash_after", "error"],
+            },
+            async () => rows.get(orderId) ?? 0,
+            (n) => n,
           ),
       };
       const message: FakeMessage = {

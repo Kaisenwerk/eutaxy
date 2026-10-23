@@ -9,6 +9,7 @@
  */
 
 import { nextFloat, nextU32, type PrngState, seedPrng } from "@eutaxy/core";
+import { asyncScope } from "./context.ts";
 
 /** 2026-01-01T00:00:00.000Z. Every run starts here. */
 export const virtualEpoch = Date.UTC(2026, 0, 1);
@@ -30,19 +31,7 @@ const realClearInterval = globalThis.clearInterval.bind(globalThis);
  * continuations. Where it is unavailable (workerd without Node compatibility)
  * every timer stays virtual; the Cloudflare bindings do not use timers.
  */
-interface LibraryScope {
-  run<R>(store: true, fn: () => R): R;
-  getStore(): true | undefined;
-}
-const libraryScope: LibraryScope | null = (() => {
-  const mod =
-    typeof process !== "undefined"
-      ? (process?.getBuiltinModule?.("node:async_hooks") as
-          | { AsyncLocalStorage?: new () => LibraryScope }
-          | undefined)
-      : undefined;
-  return mod?.AsyncLocalStorage ? new mod.AsyncLocalStorage() : null;
-})();
+const libraryScope = asyncScope<true>();
 
 interface Timer {
   readonly id: number;
@@ -60,6 +49,10 @@ export class VirtualClock {
   private nextId = 1;
   /** The invocation whose code is running; timers scheduled now belong to it. */
   owner: string | null = null;
+  /** Set by a concurrent run: who is running, asked when a timer is scheduled (overrides `owner`). */
+  ownerNow: (() => string | null) | null = null;
+  /** Set by a concurrent run: binds a callback to the async context it was scheduled in. */
+  bind: ((callback: (...args: unknown[]) => void) => (...args: unknown[]) => void) | null = null;
 
   now(): number {
     return this.time;
@@ -79,10 +72,10 @@ export class VirtualClock {
     const timer: Timer = {
       id: this.nextId++,
       due: this.time + ms,
-      callback,
+      callback: this.bind ? this.bind(callback) : callback,
       args,
       interval,
-      owner: this.owner,
+      owner: this.ownerNow ? this.ownerNow() : this.owner,
     };
     this.timers.push(timer);
     return timer.id;
@@ -114,12 +107,23 @@ export class VirtualClock {
     this.timers = this.timers.filter((t) => t.owner !== owner);
   }
 
+  private earliest(): Timer | undefined {
+    let earliest = this.timers[0];
+    for (const t of this.timers)
+      if (earliest && (t.due < earliest.due || (t.due === earliest.due && t.id < earliest.id)))
+        earliest = t;
+    return earliest;
+  }
+
+  /** Who set the timer `fireNext` would run: an invocation, null for none, undefined when no timer is pending. */
+  nextOwner(): string | null | undefined {
+    return this.earliest()?.owner;
+  }
+
   /** Advance to the earliest due timer and run it. False when none is pending. */
   fireNext(): boolean {
-    if (this.timers.length === 0) return false;
-    let earliest = this.timers[0] as Timer;
-    for (const t of this.timers)
-      if (t.due < earliest.due || (t.due === earliest.due && t.id < earliest.id)) earliest = t;
+    const earliest = this.earliest();
+    if (!earliest) return false;
     if (earliest.due > this.time) this.time = earliest.due;
     if (earliest.interval === null) this.timers = this.timers.filter((t) => t !== earliest);
     else earliest.due = this.time + earliest.interval;

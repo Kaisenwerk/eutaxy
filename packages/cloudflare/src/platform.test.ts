@@ -501,3 +501,49 @@ describe("inbound requests", () => {
     if (verdict.kind === "VIOLATED") expect(verdict.violation.invariant).toBe("once");
   });
 });
+
+describe("concurrent queue consumers", () => {
+  test("each consumer's effects stay its own, through retries and dead-lettering", async () => {
+    // m1 always asks for a retry until it is dead-lettered; m2 and m3 call out, then ack.
+    const handler: Handler = async (batch) => {
+      for (const message of batch.messages) {
+        const id = (message.body as { id: string }).id;
+        await fetch(`https://api.test/${id}/before`);
+        if (id === "m1") {
+          message.retry();
+          continue;
+        }
+        await fetch(`https://api.test/${id}/after`);
+        message.ack();
+      }
+    };
+    const s = spec({
+      drive: queue("q", [{ body: { id: "m1" } }, { body: { id: "m2" } }, { body: { id: "m3" } }]),
+      externals: [{ name: "api", host: "api.test", guarantees: {} }],
+      bounds: {
+        maxFaultsPerRun: 0,
+        maxRedeliveries: 1,
+        maxConcurrentInvocations: 2,
+        budgetMs: 10_000,
+      },
+    });
+    for (const seed of [1, 2, 3, 4]) {
+      const run = new Run({
+        mode: "replay",
+        schedule: { seed, faults: [] },
+        bounds: s.bounds,
+        faultProbability: 0,
+      });
+      const log = await runOnce(s, platformFor(handler), run);
+      expect(run.unsupportedReasons).toEqual([]);
+      const fetches = log.entries.filter((e) => e.kind === "call" && e.target === "Fetch:api");
+      expect(fetches.length).toBe(2 + 2 + 2);
+      for (const f of fetches) {
+        const url = String((f.payload as { args: { url: string } }).args.url);
+        const n = /api\.test\/m(\d)\//.exec(url)?.[1];
+        expect(f.invocation.startsWith(`msg-${n}#`), `${f.invocation} made ${url}`).toBe(true);
+      }
+      expect(ops(log)).toContain("platform result dead_letter");
+    }
+  });
+});

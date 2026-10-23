@@ -18,7 +18,7 @@ const READ: readonly FaultKind[] = ["crash_before", "crash_after", "error"];
 
 export interface ProxyContext {
   readonly hooks: RunHooks;
-  /** The invocation currently running; one at a time for now. */
+  /** The invocation currently running; only one runs at a time, even with several in flight. */
   readonly currentInvocation: () => string;
 }
 
