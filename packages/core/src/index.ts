@@ -37,6 +37,7 @@ export {
   type StateQuery,
   sameViolation,
   selectEffects,
+  type Unique,
   type Violation,
 } from "./invariants.ts";
 export type {

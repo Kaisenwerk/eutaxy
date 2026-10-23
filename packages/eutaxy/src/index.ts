@@ -23,6 +23,7 @@ export {
   type ScenarioVerdict,
   type Schedule,
   type StateQuery,
+  type Unique,
   type Unsupported,
   type Violated,
   type Violation,

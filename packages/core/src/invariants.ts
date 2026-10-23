@@ -93,7 +93,20 @@ export interface Implies {
   readonly column: string;
 }
 
-export type Invariant = AtMostOncePerKey | AtLeastOnce | EveryRow | Implies;
+/**
+ * No two rows the query returns share the value at `path`, a dot path into
+ * the row (a column name for flat rows). Rows where it is absent or null are
+ * skipped. Catches a resource handed out twice, e.g. "no project holds two
+ * slots".
+ */
+export interface Unique {
+  readonly kind: "unique";
+  readonly name: string;
+  readonly query: StateQuery;
+  readonly path: string;
+}
+
+export type Invariant = AtMostOncePerKey | AtLeastOnce | EveryRow | Implies | Unique;
 
 export type Row = { readonly [column: string]: JsonValue };
 
@@ -240,6 +253,8 @@ export function checkInvariant(log: EffectLog, inv: Invariant): Violation | null
       return checkEveryRow(log, inv);
     case "implies":
       return checkImplies(log, inv);
+    case "unique":
+      return checkUnique(log, inv);
     case "atMostOncePerKey": {
       const seen = new Map<string, number>();
       for (const e of selectEffects(log, inv.effect)) {
@@ -295,6 +310,36 @@ function checkEveryRow(log: EffectLog, inv: EveryRow): Violation | null {
     invariant: inv.name,
     message: `${failing.length} row(s) of ${inv.query.table} in ${inv.query.target} violate the condition: ${shown}`,
     keys,
+    evidence: snapshotSeq(log, inv.query.target),
+  };
+}
+
+function checkUnique(log: EffectLog, inv: Unique): Violation | null {
+  const rows = queryRows(log, inv.query);
+  if (rows === undefined) {
+    return {
+      invariant: inv.name,
+      message: `no snapshot of ${inv.query.target} was recorded`,
+      keys: [],
+      evidence: [],
+    };
+  }
+  const counts = new Map<string, number>();
+  for (const r of rows) {
+    const v = getPath(r as JsonValue, inv.path);
+    if (v === undefined || v === null) continue;
+    const k = canonicalJson(v);
+    counts.set(k, (counts.get(k) ?? 0) + 1);
+  }
+  const shared = [...counts].filter(([, n]) => n > 1);
+  if (shared.length === 0) return null;
+  const shown = shared.map(
+    ([k, n]) => `${n} rows of ${inv.query.table} in ${inv.query.target} share ${inv.path} = ${k}`,
+  );
+  return {
+    invariant: inv.name,
+    message: shown.join("; "),
+    keys: shared.map(([k]) => k),
     evidence: snapshotSeq(log, inv.query.target),
   };
 }

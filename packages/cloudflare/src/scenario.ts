@@ -22,6 +22,7 @@ import {
   type ScenarioSpec,
   type ScriptedResponse,
   type StateQuery,
+  type Unique,
   validateScenario,
   type WorkerRef,
 } from "@eutaxy/core";
@@ -242,6 +243,11 @@ export function everyRow(
   holds: readonly RowCondition[],
 ): EveryRow {
   return { kind: "everyRow", name, query, holds };
+}
+
+/** No two rows the query selects share the value at `path` (a column, or a dot path into the row). */
+export function unique(name: string, query: StateQuery, path: string): Unique {
+  return { kind: "unique", name, query, path };
 }
 
 /** Every selected effect has a row whose column equals the effect's key. */

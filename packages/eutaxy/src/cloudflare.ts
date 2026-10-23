@@ -34,5 +34,6 @@ export {
   queueAck,
   runDifferential,
   snapshotD1,
+  unique,
   type WorkerHandler,
 } from "@eutaxy/cloudflare";

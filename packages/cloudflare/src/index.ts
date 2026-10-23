@@ -38,4 +38,5 @@ export {
   type QueueMessage,
   queue,
   queueAck,
+  unique,
 } from "./scenario.ts";

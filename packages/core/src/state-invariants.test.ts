@@ -7,6 +7,7 @@ import {
   lastSnapshot,
   queryRows,
   rowMatches,
+  type Unique,
 } from "./invariants.ts";
 
 function withSnapshot(log: EffectLog, tables: Record<string, unknown[]>): EffectLog {
@@ -133,5 +134,54 @@ describe("implies", () => {
   test("a missing snapshot is a violation", () => {
     const log = ackResult(emptyLog, "msg-1", "o-1");
     expect(checkInvariant(log, ackedHasRow)?.message).toContain("no snapshot");
+  });
+});
+
+describe("unique", () => {
+  const oneSlotPerProject: Unique = {
+    kind: "unique",
+    name: "one-slot-per-project",
+    query: { target: "D1:DB", table: "slots" },
+    path: "value.lease.project",
+  };
+
+  test("holds when no two rows share the value, and ignores rows where it is absent or null", () => {
+    const log = withSnapshot(emptyLog, {
+      slots: [
+        { key: "slot:01", value: { lease: { project: "p-1" } } },
+        { key: "slot:02", value: { lease: { project: "p-2" } } },
+        { key: "slot:03", value: { lease: null } },
+        { key: "slot:04", value: {} },
+      ],
+    });
+    expect(checkInvariant(log, oneSlotPerProject)).toBeNull();
+  });
+
+  test("reports each shared value once, with the rows that share it", () => {
+    const log = withSnapshot(emptyLog, {
+      slots: [
+        { key: "slot:01", value: { lease: { project: "p-1" } } },
+        { key: "slot:02", value: { lease: { project: "p-1" } } },
+        { key: "slot:03", value: { lease: { project: "p-1" } } },
+      ],
+    });
+    const v = checkInvariant(log, oneSlotPerProject);
+    expect(v?.keys).toEqual(['"p-1"']);
+    expect(v?.message).toContain("3 rows of slots in D1:DB share value.lease.project");
+  });
+
+  test("a flat column works as a path too", () => {
+    const log = withSnapshot(emptyLog, { leases: [{ slot: 1 }, { slot: 1 }] });
+    expect(
+      checkInvariant(log, {
+        ...oneSlotPerProject,
+        query: { target: "D1:DB", table: "leases" },
+        path: "slot",
+      })?.keys,
+    ).toEqual(["1"]);
+  });
+
+  test("without a snapshot it is a violation, as for everyRow", () => {
+    expect(checkInvariant(emptyLog, oneSlotPerProject)?.message).toContain("no snapshot");
   });
 });

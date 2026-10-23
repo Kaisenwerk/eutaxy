@@ -104,6 +104,7 @@ describe("planted-bug corpus", () => {
               case "atLeastOnce":
                 return [inv.effect.target];
               case "everyRow":
+              case "unique":
                 return [inv.query.target];
               case "implies":
                 return [inv.when.target, inv.state.target];
