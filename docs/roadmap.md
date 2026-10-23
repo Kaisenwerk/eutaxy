@@ -22,11 +22,13 @@ can rely on it.
   (`dedupeBy`, scripted replies).
 - Drives: queue messages and inbound HTTP requests. An HTTP request is an
   event like a queue message: delivered with the same faults, redelivered
-  on the caller's declared retry policy (webhook providers retry, a
-  browser does not), concurrent requests as the scheduler's interleavings,
-  the response recorded as an effect. It is in this phase because the
-  first real Workers to check enter through `fetch` handlers (payment and
-  chat-platform webhooks, a sign-in endpoint with rate limits).
+  on the caller's declared retry count (webhook providers retry, a
+  browser does not), the response recorded as an effect. A crash at the
+  response point is the case of a handler that committed but whose answer
+  the caller never got. It is in this phase because the first real Workers
+  to check enter through `fetch` handlers (payment and chat-platform
+  webhooks, a sign-in endpoint with rate limits). One invocation runs at a
+  time; concurrent requests come with v0.5.
 - Faults: crash before, crash after, ambiguous outcome, error, redelivery,
   cut-off of `waitUntil` work.
 - Scheduler: seeded exploration with a time-based budget.
@@ -57,17 +59,32 @@ the same seed produces a byte-identical trace twice. (Passed in CI.)
 
 ## v0.5 — Durable Objects and specs (current)
 
+In this order:
+- Concurrent invocations (`maxConcurrentInvocations` above 1) for every
+  drive, interleaved at effect points by the seeded scheduler. First,
+  because Durable Object gates only mean something with interleaved
+  events, and the first real HTTP target (rate limits and an attempt cap
+  on a sign-in endpoint) fails only under concurrent requests.
+- HTTP caller timing: retry delays on the virtual clock and a response
+  deadline, so a handler that commits but answers too late is redelivered
+  while the first attempt may still run or hold a short lease. Both
+  webhook targets need it: one provider gives up on an answer after a few
+  seconds, the other is retried while a lease it answered 503 for is
+  still held.
 - Durable Object storage (key-value and SQL, transactions), input and
   output gates, write coalescing, alarms; KV. First real target beside the
   wallet race: a lease pool that hands out at most one lease per slot and
-  recovers a lease whose RPC response was lost; and an object that
-  multiplexes several schedules over its one alarm (the pattern the
-  Agents SDK uses), so alarm-driven state machines survive eviction.
+  recovers a lease whose stub-call response was lost after the object
+  committed (a call inside one Worker; service-binding RPC between Workers
+  is not needed for it); and an object that multiplexes several schedules
+  over its one alarm (the pattern the Agents SDK uses), so alarm-driven
+  state machines survive eviction.
 - Exhaustive scheduler and partial-order reduction.
 - Lemma spec parser, `SpecIR`, the `CHECKED` rung, `refines`.
 
-**Gate:** the wallet race is caught; no false alarms on the Durable Object
-corpus; the exhaustive enumerator's schedule count matches its closed-form
+**Gate:** a planted rate-limit race under concurrent requests is caught;
+the wallet race is caught; no false alarms on the Durable Object corpus;
+the exhaustive enumerator's schedule count matches its closed-form
 formula.
 
 ### v0.5.x
