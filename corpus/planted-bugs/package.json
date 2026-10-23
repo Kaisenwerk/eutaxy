@@ -9,8 +9,9 @@
     "eutaxy": "workspace:*"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "5.20261022.1",
     "@aws-sdk/client-dynamodb": "3.1156.0",
+    "@cloudflare/vitest-plugin": "1.4.6",
+    "@cloudflare/workers-types": "5.20261022.1",
     "@types/aws-lambda": "8.10.164",
     "dynalite": "4.0.0"
   }

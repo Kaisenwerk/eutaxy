@@ -84,7 +84,12 @@ In this order:
   committed (a call inside one Worker; service-binding RPC between Workers
   is not needed for it); and an object that multiplexes several schedules
   over its one alarm (the pattern the Agents SDK uses), so alarm-driven
-  state machines survive eviction.
+  state machines survive eviction. Done so far: the real objects behind a
+  proxied stub boundary (faults at each call, reset and seed per run,
+  storage snapshots, the `unique` invariant), planted bug
+  `lease-pool-lost-response`. Next: alarms in virtual time; KV and SQL
+  storage when a target needs them (the first target uses key-value
+  storage only).
 - Exhaustive scheduler and partial-order reduction.
 - Lemma spec parser, `SpecIR`, the `CHECKED` rung, `refines`.
 

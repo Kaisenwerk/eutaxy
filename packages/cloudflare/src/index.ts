@@ -7,6 +7,7 @@ export {
   runDifferential,
   type Side,
 } from "./differential.ts";
+export type { DurableObjectTestHelpers } from "./durable-objects.ts";
 export {
   type CloudflarePlatformOptions,
   createCloudflarePlatform,
@@ -19,11 +20,14 @@ export {
   atMostOncePerKey,
   type CloudflareScenarioInput,
   type D1Setup,
+  type DurableObjectSetup,
   d1Param,
   d1Rows,
   d1Schema,
   d1Write,
   defineScenario,
+  durableObject,
+  durableObjectRows,
   everyRow,
   external,
   fetchCall,

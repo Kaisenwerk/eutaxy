@@ -10,6 +10,8 @@ export interface CloudflareRegressionOptions {
   readonly schemaPaths: Readonly<Record<string, string>>;
   /** The platform's retry limit, when the scenario was checked with a non-default one. */
   readonly maxRetries?: number;
+  /** The scenario sets up Durable Objects: pass the Cloudflare test helpers to the platform. */
+  readonly durableObjects?: boolean;
   readonly expect?: "holds" | "violates";
   readonly engineModule?: string;
 }
@@ -23,6 +25,7 @@ export function cloudflareRegressionTest(
   const imports = [
     'import { createCloudflarePlatform } from "eutaxy/cloudflare";',
     'import { env } from "cloudflare:workers";',
+    ...(options.durableObjects ? ['import * as cloudflareTest from "cloudflare:test";'] : []),
     `import scenario from ${JSON.stringify(options.scenarioPath)};`,
     ...bindings.map(
       (b) => `import schema_${b} from ${JSON.stringify(`${options.schemaPaths[b]}?raw`)};`,
@@ -31,9 +34,10 @@ export function cloudflareRegressionTest(
   ];
   const schemas = `{ ${bindings.map((b) => `${b}: schema_${b}`).join(", ")} }`;
   const retries = options.maxRetries === undefined ? "" : `, maxRetries: ${options.maxRetries}`;
+  const objects = options.durableObjects ? ", durableObjects: cloudflareTest" : "";
   return emitRegressionTest(verdict, {
     imports,
-    platform: `createCloudflarePlatform({ env, handler, schemas: ${schemas}${retries} })`,
+    platform: `createCloudflarePlatform({ env, handler, schemas: ${schemas}${retries}${objects} })`,
     scenario: "scenario",
     ...(options.expect ? { expect: options.expect } : {}),
     ...(options.engineModule ? { engineModule: options.engineModule } : {}),

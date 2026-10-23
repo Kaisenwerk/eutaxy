@@ -1,0 +1,8 @@
+{
+  "expect": {
+    "verdict": "VIOLATED",
+    "invariant": "one-slot-per-project"
+  },
+  "fault": "ambiguous on the acquire call: the pool committed the lease, the Worker lost the answer and retried",
+  "description": "A Worker takes a lease for a project from a Durable Object pool and retries a failed call. The pool hands out the first free slot without checking the project's existing lease, so a lost answer and the retry give one project two slots."
+}

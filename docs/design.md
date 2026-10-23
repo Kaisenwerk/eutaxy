@@ -286,6 +286,35 @@ Faults injected at every effect boundary:
   synchronous writes with no intervening `await` coalesce into one atomic
   transaction; `blockConcurrencyWhile` is honoured; the SQLite storage API
   is synchronous; an alarm whose handler throws is re-run from the start.
+  Eutaxy does not re-implement any of this. The objects are the real ones
+  workerd runs, as D1 is Miniflare's real SQLite, so storage, transactions
+  and gates are the runtime's own; workerd also refuses to construct a
+  `DurableObject` subclass outside the runtime, which rules out running
+  the class against a model. Eutaxy proxies the boundary a Worker crosses:
+  each stub call is one effect, where `crash_before` and `error` mean the
+  call never reached the object, `ambiguous` that the object committed and
+  the answer was lost, and `crash_after` that the caller died after the
+  call. Through the Cloudflare Vitest plugin's test helpers each object is
+  cleared, seeded from the scenario's `durableObject` setup and evicted
+  before a run, so it starts from storage alone, and its storage is
+  snapshotted after it (rows `{ key, value }` per object name). Alarms are
+  taken over on each object's storage, inside transactions too, so none is
+  scheduled on the real clock, whose time is far ahead of the virtual one;
+  an object that sets one makes the run `UNSUPPORTED` until alarms fire in
+  virtual time. Current limits: calls run one at a time, so races between
+  an object's own outbound I/O and another call into it are not explored;
+  the object's own binding calls are not recorded, and an object reached
+  only through another object's binding makes the run `UNSUPPORTED`, as do
+  `newUniqueId` (random), `jurisdiction()` namespaces and a namespace the
+  scenario does not reset (no `durableObject` setup). An object no call
+  reached is snapshotted from its seed without being constructed. Reset
+  constructs each object outside the simulation, with the network blocked:
+  a constructor that makes a request fails the reset. A stub property can
+  be called (a method) or awaited (an RPC getter); either is one effect.
+  A result that is not plain data (an RPC capability) makes the run
+  `UNSUPPORTED`, since calls on it would bypass the proxy; an effect the
+  object makes during a call (its own `fetch`) runs within that call's
+  turn in a concurrent run.
 
 **Fidelity rules:**
 - Proxies intercept calls but execute them against the real local
@@ -566,19 +595,20 @@ trips and fuzzing).
 
 ## Risks
 
-| Risk                                                                            | Mitigation                                                                            |
-| ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| Platform model is wrong or goes stale (Cloudflare documents semantics in prose) | Differential corpus against workerd; assumptions listed in every verdict              |
-| False `BOUNDED` from module-level state leaking between runs                    | Two-order detection, downgrade on mismatch                                            |
-| State explosion once Durable Objects and multiple messages arrive               | Partial-order reduction (independent keys commute); explicit bounds in every verdict  |
-| False alarms from impossible Durable Object interleavings                       | Model input and output gates exactly; every violation replayed before reporting       |
-| Prover engines are young and churn                                              | Optional adapters, pinned versions, contract corpus, graceful `UNKNOWN`               |
-| Numeric semantics differ between engines and JavaScript                         | Engine-level number model recorded as an assumption; `CONFLICT` when engines disagree |
-| Cloudflare Vitest integration changes its API again                             | Peer-dep pinned to a tested major; the three assumptions above are tested in CI       |
+| Risk                                                                            | Mitigation                                                                                |
+| ------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| Platform model is wrong or goes stale (Cloudflare documents semantics in prose) | Differential corpus against workerd; assumptions listed in every verdict                  |
+| False `BOUNDED` from module-level state leaking between runs                    | Two-order detection, downgrade on mismatch                                                |
+| State explosion once Durable Objects and multiple messages arrive               | Partial-order reduction (independent keys commute); explicit bounds in every verdict      |
+| False alarms from impossible Durable Object interleavings                       | Real objects, so the runtime's own gates apply; every violation replayed before reporting |
+| Prover engines are young and churn                                              | Optional adapters, pinned versions, contract corpus, graceful `UNKNOWN`                   |
+| Numeric semantics differ between engines and JavaScript                         | Engine-level number model recorded as an assumption; `CONFLICT` when engines disagree     |
+| Cloudflare Vitest integration changes its API again                             | Peer-dep pinned to a tested major; the three assumptions above are tested in CI           |
 
 ## Open questions
 
-- Which Durable Object behaviours to model first in v0.5. Working order:
-  storage and input gates, then `fetch` interleavings, then alarms.
+- Durable Objects beyond the stub boundary, in order: alarms in virtual
+  time, then interleaving at an object's own outbound I/O, then recording
+  the object's own binding calls.
 - Whether the Lemma conformance corpus is enough to pin the spec parser, or
   Eutaxy needs its own extension fixtures for loop invariants.

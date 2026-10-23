@@ -213,6 +213,9 @@ importers:
       '@aws-sdk/client-dynamodb':
         specifier: 3.1156.0
         version: 3.1156.0
+      '@cloudflare/vitest-plugin':
+        specifier: 1.4.6
+        version: 1.4.6(@cloudflare/workers-types@5.20261022.1)(@types/node@24.19.2)(vitest@5.0.5(@types/node@24.19.2)(vite@8.3.5(@types/node@24.19.2)(esbuild@0.28.2)))
       '@cloudflare/workers-types':
         specifier: 5.20261022.1
         version: 5.20261022.1

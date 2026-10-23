@@ -28,6 +28,7 @@ export function checkTestSource(g: GeneratedCheck): string {
 import { renderJson } from "eutaxy";
 import { check, createCloudflarePlatform, type QueueHandler } from "eutaxy/cloudflare";
 import { env } from "cloudflare:workers";
+import * as cloudflareTest from "cloudflare:test";
 import { test } from "vitest";
 import scenario from ${JSON.stringify(g.scenarioImport)};
 
@@ -49,7 +50,7 @@ test("eutaxy check", async ({ task }) => {
   const load = modules[key(scenario.worker.entry)];
   if (!load) throw new Error(\`worker entry \${scenario.worker.entry} not found next to the scenario\`);
   const handler = (await load()).default;
-  const platform = createCloudflarePlatform({ env, handler, schemas });
+  const platform = createCloudflarePlatform({ env, handler, schemas, durableObjects: cloudflareTest });
   const verdict = await check(scenario, platform, { seed: ${JSON.stringify(g.seed)}${maxRuns} });
   task.meta[${JSON.stringify(metaKey)}] = { report: JSON.parse(renderJson(verdict)), worker: scenario.worker, setup: scenario.setup };
 });

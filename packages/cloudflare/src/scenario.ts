@@ -119,6 +119,37 @@ export interface D1Setup extends PlatformData {
   readonly schemaFile: string;
 }
 
+/**
+ * Clear a Durable Object namespace before each run and seed the named
+ * objects' storage with these entries; its storage is snapshotted after the
+ * run for state invariants (see `durableObjectRows`).
+ */
+export interface DurableObjectSetup extends PlatformData {
+  readonly kind: "durable_object";
+  readonly binding: string;
+  readonly objects: { readonly [name: string]: { readonly [key: string]: JsonValue } };
+}
+
+export function durableObject(
+  binding: string,
+  objects: { readonly [name: string]: { readonly [key: string]: JsonValue } } = {},
+): DurableObjectSetup {
+  return { kind: "durable_object", binding, objects };
+}
+
+/**
+ * The storage of one object (by the name its id was made from) as rows
+ * `{ key, value }`, for state invariants.
+ */
+export function durableObjectRows(
+  binding: string,
+  object: string,
+  where?: readonly RowCondition[],
+): StateQuery {
+  const target = `DO:${binding}`;
+  return where ? { target, table: object, where } : { target, table: object };
+}
+
 export interface CloudflareScenarioInput {
   readonly name: string;
   readonly worker: WorkerRef;
@@ -130,7 +161,7 @@ export interface CloudflareScenarioInput {
         readonly queue: string;
         readonly messages: readonly QueueMessage[];
       };
-  readonly setup?: readonly D1Setup[];
+  readonly setup?: readonly (D1Setup | DurableObjectSetup)[];
   readonly externals?: readonly ExternalDecl[];
   readonly invariants: readonly Invariant[];
   readonly bounds?: Partial<Bounds>;

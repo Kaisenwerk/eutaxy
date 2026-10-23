@@ -3,7 +3,7 @@
   "compilerOptions": {
     "rootDir": ".",
     "outDir": "dist",
-    "types": ["@cloudflare/workers-types", "node"]
+    "types": ["@cloudflare/workers-types", "@cloudflare/vitest-plugin/types", "node"]
   },
   "include": ["**/*.ts", "**/manifest.json"],
   "exclude": ["dist"],

@@ -146,6 +146,9 @@ export async function runCheck(o: CheckOptions): Promise<number> {
         scenarioPath: toPosix(relative(outDir, scenarioPath)),
         workerPath: toPosix(relative(outDir, resolve(dir, transport.worker.entry))),
         schemaPaths,
+        ...(transport.setup.some((s) => s.kind === "durable_object")
+          ? { durableObjects: true }
+          : {}),
         ...(o.expectViolation ? { expect: "violates" as const } : {}),
       });
       mkdirSync(outDir, { recursive: true });
