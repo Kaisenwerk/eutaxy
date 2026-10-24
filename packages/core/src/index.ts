@@ -42,6 +42,7 @@ export {
 } from "./invariants.ts";
 export type {
   DeliveryResult,
+  EffectOptions,
   EffectPoint,
   EventRef,
   Invocation,

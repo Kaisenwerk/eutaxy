@@ -20,6 +20,7 @@ import {
   type Bounds,
   decideFault,
   type EffectLog,
+  type EffectOptions,
   type EffectPoint,
   type EventRef,
   type ExternalDecl,
@@ -118,12 +119,31 @@ const deliveryScope = asyncScope<DeliveryCell>();
  * never sees the crash as an error it could catch.
  */
 class Frame {
+  /** The invocation whose effect this is. */
+  readonly invocation: string;
+  /** False once the effect's perform has ended. */
+  active = true;
+  /** The effect's `onAbandon`, called where the crash happens (inside the hosted code's context). */
+  private readonly onAbandon: (() => void) | undefined;
+  private abandoned = false;
   private wake: () => void = () => {};
   readonly crashed = new Promise<"nested_crash">((resolve) => {
     this.wake = () => resolve("nested_crash");
   });
+  constructor(invocation: string, onAbandon: (() => void) | undefined) {
+    this.invocation = invocation;
+    this.onAbandon = onAbandon;
+  }
+
   crash(): void {
+    this.abandon();
     this.wake();
+  }
+
+  abandon(): void {
+    if (this.abandoned) return;
+    this.abandoned = true;
+    this.onAbandon?.();
   }
 }
 
@@ -365,6 +385,7 @@ export class Run implements RunHooks {
     point: EffectPoint,
     perform: () => Promise<T>,
     summarize: (value: T) => JsonValue,
+    options: EffectOptions = {},
   ): Promise<T> {
     const inv = this.invocation(point.invocation);
     if (inv.isCrashed()) return hang();
@@ -372,8 +393,13 @@ export class Run implements RunHooks {
     // that effect's turn: parking it would wait for the outer one, which waits for it. Async
     // context tells exactly which code is inside; an invocation merely woken meanwhile is not.
     // A hosting effect's own effects are attributed to its invocation: only those count as nested.
+    // Async context can be stale (code resumed in the context of an effect that has ended, as
+    // an object's code may run in the context it was built in): trust only a live frame of the
+    // same invocation (the innermost), else the invocation's own hosting effect.
+    const store = effectScope?.getStore();
+    const live = store?.active && store.invocation === point.invocation ? store : undefined;
     const enclosing = effectScope
-      ? (effectScope.getStore() ?? this.hosting.get(point.invocation)?.at(-1))
+      ? (live ?? this.hosting.get(point.invocation)?.at(-1))
       : this.frames.at(-1);
     const nested = enclosing !== undefined;
     if (this.concurrent && !nested) {
@@ -405,7 +431,7 @@ export class Run implements RunHooks {
       | "nested_crash";
     // Real I/O that outlasts the scenario's whole budget is treated as hung, so the run ends.
     const deadline = realDeadline(this.options.bounds.budgetMs);
-    const frame = new Frame();
+    const frame = new Frame(point.invocation, options.onAbandon);
     const hosted = point.hostsEffects ? this.hostingFrames(point.invocation) : undefined;
     this.inFlight++;
     this.frames.push(frame);
@@ -427,6 +453,7 @@ export class Run implements RunHooks {
       settled = { ok: false, error: err };
     } finally {
       deadline.cancel();
+      frame.active = false;
       hosted?.splice(hosted.lastIndexOf(frame), 1);
       this.frames.splice(this.frames.lastIndexOf(frame), 1);
       this.inFlight--;
@@ -438,9 +465,11 @@ export class Run implements RunHooks {
         `${point.target} ${point.op} did not complete within ${this.options.bounds.budgetMs} ms of real time`,
       );
       inv.crash();
+      frame.abandon();
       return hang();
     }
     // A crash injected into an effect made during this one: it ends this one too, and outwards.
+    // The frame already told the effect's onAbandon, from where the crash happened.
     if (settled === "nested_crash") return dead();
     if (!settled.ok) {
       this.record(point, "result", {

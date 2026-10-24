@@ -22,6 +22,11 @@ export interface EventRef {
    * else can move.
    */
   readonly at?: number;
+  /**
+   * What produced the event when it is not the scenario's drive, e.g. a
+   * Durable Object alarm, so the platform knows how to deliver it.
+   */
+  readonly source?: string;
 }
 
 /** What a proxy tells the engine about an effect it is about to perform. */
@@ -38,6 +43,17 @@ export interface EffectPoint {
    * the runtime does not carry async context into that code.
    */
   readonly hostsEffects?: boolean;
+}
+
+export interface EffectOptions {
+  /**
+   * Called when the effect is abandoned while its `perform` is still
+   * running, because its invocation crashed inside it or its I/O hung: the
+   * place to reset whatever the perform left busy (a Durable Object). For a
+   * crash inside, it is called synchronously where the crash happens, in the
+   * async context of the code the perform runs.
+   */
+  readonly onAbandon?: () => void;
 }
 
 /** One invocation of the Worker, as the engine tracks it. */
@@ -62,6 +78,7 @@ export interface RunHooks {
     point: EffectPoint,
     perform: () => Promise<T>,
     summarize: (value: T) => JsonValue,
+    options?: EffectOptions,
   ): Promise<T>;
   /** Perform a synchronous effect under fault injection and record it. */
   effectSync<T>(point: EffectPoint, perform: () => T, summarize: (value: T) => JsonValue): T;

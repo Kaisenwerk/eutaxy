@@ -519,4 +519,64 @@ describe("nested effects", () => {
     expect(inv.isCrashed()).toBe(true);
     expect(run.unsupportedReasons).toEqual([]);
   });
+
+  test("an async context left over from a finished effect does not count as the enclosing one", async () => {
+    const run = new Run({
+      mode: "replay",
+      schedule: {
+        seed: 1,
+        faults: [{ invocation: "i#2", ordinal: 1, fault: "crash_after", target: "T", op: "inner" }],
+      },
+      bounds: {
+        maxFaultsPerRun: 1,
+        maxRedeliveries: 0,
+        maxConcurrentInvocations: 1,
+        budgetMs: 1_000,
+      },
+      faultProbability: 0,
+    });
+    const point = (invocation: string, op: string, hostsEffects = false) => ({
+      invocation,
+      target: "T",
+      op,
+      args: null,
+      allowed: ["crash_after" as const],
+      hostsEffects,
+    });
+    const none = () => null;
+    // A continuation registered during a first effect's perform runs in that effect's async
+    // context whenever it is resumed, as an object's code can run in the context it was built in.
+    let resume: () => void = () => {};
+    let work: () => Promise<unknown> = async () => undefined;
+    let resumed: Promise<unknown> = Promise.resolve();
+    run.startInvocation("i#1");
+    await run.effect(
+      point("i#1", "first"),
+      async () => {
+        const gate = new Promise<void>((resolve) => {
+          resume = resolve;
+        });
+        resumed = gate.then(() => work());
+        return 1;
+      },
+      none,
+    );
+    const later = (next: () => Promise<unknown>) => {
+      work = next;
+      resume();
+      return resumed;
+    };
+    // A second invocation hosts an effect whose inner effect runs in that stale context.
+    let abandoned = false;
+    const inv = run.startInvocation("i#2");
+    const outer = run.effect(
+      point("i#2", "outer", true),
+      () => later(() => run.effect(point("i#2", "inner"), async () => 2, none)) as Promise<number>,
+      none,
+      { onAbandon: () => (abandoned = true) },
+    );
+    await Promise.race([outer, new Promise((resolve) => setTimeout(resolve, 200))]);
+    expect(inv.isCrashed()).toBe(true);
+    expect(abandoned).toBe(true);
+  });
 });
