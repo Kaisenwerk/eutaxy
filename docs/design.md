@@ -143,16 +143,55 @@ differential scenarios, prover contracts; never published), `examples/` and
 Users write one spec per pure function and one spec file per scenario;
 Eutaxy derives every check from those two sources.
 
-**Function specs** live in JSDoc on pure core functions in the Lemma dialect:
-`@requires`, `@ensures`, `@total`, `forall` binders and `==>`, with opaque
-TypeScript expressions at the leaves. Eutaxy parses them into its own
-`SpecIR`, which can also carry loop invariants for engines that need them.
+**Function specs** are Lemma annotations in JSDoc on exported pure core
+functions, tracked exactly from lemma-lang's normative grammar and held to
+its conformance fixtures (copied, with their license, into
+`corpus/lemma-conformance`): `@ensures{name}` followed by a universally
+quantified property, `@total`, and `@throws`. A property binds variables
+over Lemma's domains (`int`, `nat`, `number`, `boolean`, `string`,
+`bigint`), optionally guarded by an interval or a whole-string regex, and
+its body is a formula: `¬ ∧ ∨ → ↔` (with ASCII spellings), `≡`/`≢` for
+SameValue, and TypeScript expressions verbatim at the leaves. An
+implication at the root is the property's preconditions: assignments
+failing them are outside the claim. Eutaxy parses annotations into its own
+`SpecIR` with a hand-written parser (no TypeScript compiler API, which
+TypeScript 7 does not offer to JavaScript), prints them back canonically,
+and compiles each property to a TypeScript predicate for code generation,
+since workerd runs no `eval`. Lemma has no `@requires`; a precondition is a
+root implication.
 
 ```ts
-/** @total
- *  @ensures result.kind === "reject" || result.newBalance === w.balance - amount */
-export function decideWithdraw(w: Wallet, amount: Natural): Decision { ... }
+/**
+ * @ensures{within-captured} forall (captured refunded amount: int) {
+ *   0 <= refunded ∧ refunded <= captured ==>
+ *   decideRefund(captured, refunded, amount).refunded <= captured
+ * }
+ */
+export function decideRefund(captured: number, refunded: number, amount: number): RefundDecision { ... }
 ```
+
+**`CHECKED`** evaluates a property on the inputs the simulator actually
+passed. A scenario lists the modules of its pure core (`specs`); while it
+is explored, calls into those modules' annotated functions from outside
+the module are observed through the module's namespace (Vite gives it
+configurable exports, which is what Vitest's own spies rely on) and their
+arguments recorded. Core functions are synchronous; one that returns a
+promise makes the run `UNSUPPORTED`. Binders are matched to the function's parameters by
+name, so each distinct recorded call is one assignment; a value outside
+its binder's domain or guard, or one failing a precondition, is discarded.
+A false claim, or an exception other than a malformed property (an atom
+that is not a boolean, or a name that neither the module nor the globals
+define; any `ReferenceError` counts as one, since compiled TypeScript under
+test practically never throws it and a missed binding would), is `REFUTED`
+with the call it came from. A property's free names are found by a token
+scan that knows arrow and function parameters, object keys and type
+positions; where it errs, the result is `UNKNOWN`, never a verdict. Holding on at least one assignment is
+`CHECKED`, and the verdict says on how many; none is `UNKNOWN`
+(`gave_up`). A binder that is not a parameter, `@total` (termination is not
+observable on samples) and `@throws` (its semantics are not fixed in Lemma
+yet) are `UNKNOWN` (`unsupported`) at this rung. Exploration stops at a
+scenario's first violation, so a run that ends `VIOLATED` passes fewer
+inputs than one that ends `BOUNDED`.
 
 **Scenario specs** (`*.sim.ts`) are TypeScript files whose default export is
 a `ScenarioSpec`: plain data naming the Worker (entry and wrangler config),
@@ -216,12 +255,22 @@ a path into its payload, has a row whose column equals that key). A missing
 snapshot is a violation, never a silent pass. Effect payload conventions per
 binding are documented in the `cloudflare` package README.
 
-**`refines(core, { state })`** is the bridge between the two. It checks that
-each effect the shell performs matches a decision the core returned, and that
-the decision was made on the state that was current when the effect
-committed, which catches stale reads. It does not replace system invariants:
-a shell can follow the core faithfully and still break a system property, so
-both are always checked.
+**`refines`** is the bridge between the two. The observed calls are also
+recorded in the effect log as decisions (`Core:<function>`, payload
+`{ args, result }`) of the invocation that made them. `refines(name,
+decision, effect, { follows, state })` checks that every selected effect
+carries out the latest decision of its invocation (an effect with none is
+a violation, so forgetting to list the module never passes quietly),
+agrees with it on `follows` (pairs of payload paths), and, with `state`,
+rests on a `read` its invocation made before the decision and was not made
+stale: no other invocation's `write` to the same `key` committed between
+that read and the effect. A call that threw is not a decision, and a
+function name observed in two spec modules is an error, since decisions
+are logged by name.
+That last check is what catches a lost update, where every decision is
+right for the state it saw. It does not replace system invariants: a shell
+can follow the core faithfully and still break a system property, so both
+are always checked.
 
 **Externals declare their guarantees and script their replies.** Outbound
 `fetch` never reaches the network. A scenario declares each external the

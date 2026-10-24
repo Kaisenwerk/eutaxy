@@ -101,7 +101,15 @@ In this order:
   the exploration once a turn shares more than its effect's target),
   `eutaxy check --exhaustive`. Next, if real scenarios lose the reduction
   too often: dynamic partial-order reduction from observed dependences.
-- Lemma spec parser, `SpecIR`, the `CHECKED` rung, `refines`.
+- Lemma spec parser, `SpecIR`, the `CHECKED` rung, `refines`. Done: a
+  hand-written Lemma parser and printer held to the lemma-lang conformance
+  fixtures, annotations extracted from modules and compiled to predicates;
+  a scenario's `specs` modules observed during exploration, their calls
+  logged as decisions and their properties evaluated on the inputs seen
+  (`CHECKED`, `REFUTED` with the call, or `UNKNOWN`); `refines` over the
+  decisions (followed, and not made stale by another invocation's write);
+  planted bug `refund-lost-update` (a lost update caught by `refines`, an
+  off-by-one in the core refuted at `CHECKED`).
 
 **Gate:** a planted rate-limit race under concurrent requests is caught;
 the wallet race is caught; no false alarms on the Durable Object corpus;

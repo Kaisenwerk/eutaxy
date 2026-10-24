@@ -1,0 +1,8 @@
+{
+  "expect": {
+    "verdict": "VIOLATED",
+    "invariant": "refund-follows-decision"
+  },
+  "fault": "no fault: two concurrent refunds of one order, both deciding on the same read",
+  "description": "A refund endpoint reads the order, lets a pure core decide, and writes the refunded total the core computed. Two refunds in flight at once both decide on the same read, and the second write overwrites the first."
+}

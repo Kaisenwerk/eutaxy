@@ -14,6 +14,7 @@ Each entry is a directory with:
 | `scenario.sim.ts` | The scenario: how to drive the Worker, what must hold, bounds        |
 | `manifest.json`   | The verdict and invariant Eutaxy must report                         |
 | `README.md`       | The bug, why it matters, and the fix                                 |
+| `domain.ts`       | Optional: the Worker's pure core, with Lemma specs, named in `specs` |
 
 `harness.test.ts` checks every entry is complete and consistent; each
 entry's `scenario.test.ts` runs it for real.

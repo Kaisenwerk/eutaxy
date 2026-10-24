@@ -1,6 +1,6 @@
 /** End to end: the eutaxy command runs a scenario in workerd through Vitest and reports. */
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -89,5 +89,77 @@ describe("eutaxy check", () => {
     expect(eutaxy(["check", "nope.sim.ts"]).status).toBe(3);
     expect(eutaxy(["nope"]).status).toBe(3);
     expect(eutaxy(["help"]).stdout).toContain("Usage:");
+  });
+
+  describe("specs", () => {
+    const entry = "corpus/planted-bugs/refund-lost-update";
+    interface SpecJson {
+      kind: string;
+      property: string;
+      counterexample?: { call: string; binders: { name: string; value: string }[] };
+    }
+
+    test("observes the core: refines catches the lost update, the specs are CHECKED on the inputs seen", () => {
+      const out = mkdtempSync(join(tmpdir(), "eutaxy-cli-"));
+      try {
+        const outFile = join(out, "refund.regression.test.ts");
+        const r = eutaxy([
+          "check",
+          `${entry}/scenario.sim.ts`,
+          "--json",
+          "--seed",
+          "corpus",
+          "--out",
+          outFile,
+        ]);
+        expect(r.status, r.stderr).toBe(1);
+        const report = JSON.parse(r.stdout) as {
+          verdict: { kind: string; violation: { invariant: string; keys: string[] } };
+          specs: SpecJson[];
+        };
+        expect(report.verdict.kind).toBe("VIOLATED");
+        expect(report.verdict.violation.keys[0]).toBe("stale_read");
+        expect(report.specs.map((s) => [s.property, s.kind])).toEqual([
+          ["within-captured", "CHECKED"],
+          ["adds-the-amount", "CHECKED"],
+          ["full-refund-allowed", "UNKNOWN"],
+        ]);
+        // The regression test observes the core during its replay, so refines sees the decisions.
+        expect(readFileSync(outFile, "utf8")).toContain('observeCore(core_0, ["decideRefund"])');
+      } finally {
+        rmSync(out, { recursive: true, force: true });
+      }
+    }, 180_000);
+
+    test("a property false on an input the simulator passed is REFUTED, and fails the check", () => {
+      const r = eutaxy([
+        "check",
+        `${entry}/sequential.sim.ts`,
+        "--seed",
+        "corpus",
+        "--no-regression",
+      ]);
+      expect(r.status, r.stderr).toBe(1);
+      expect(r.stdout).toContain("BOUNDED  refund-lost-update");
+      expect(r.stdout).toContain(
+        "REFUTED  decideRefund full-refund-allowed: false at decideRefund(1000, 600, 400)",
+      );
+      expect(r.stdout).toContain("captured = 1000, refunded = 600, amount = 400");
+    }, 180_000);
+
+    test("a specs module that does not exist is an error, not a pass", () => {
+      const path = join(root, entry, "missing-spec.tmp.sim.ts");
+      writeFileSync(
+        path,
+        'import scenario from "./scenario.sim.ts";\nexport default { ...scenario, specs: ["./nope.ts"] };\n',
+      );
+      try {
+        const r = eutaxy(["check", path, "--seed", "corpus", "--no-regression"]);
+        expect(r.status).toBe(3);
+        expect(r.stderr).toContain("./nope.ts: no such module next to the scenario");
+      } finally {
+        rmSync(path, { force: true });
+      }
+    }, 180_000);
   });
 });
