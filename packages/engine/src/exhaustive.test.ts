@@ -342,6 +342,8 @@ describe("partial-order reduction", () => {
       1,
     );
     expect(verdict.kind).toBe("VIOLATED");
+    // It ran a schedule, so the verdict counts it.
+    expect(verdict.reached.exhaustive).toEqual({ complete: false, schedules: 1, reduction: true });
   });
 });
 

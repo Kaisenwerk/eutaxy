@@ -302,8 +302,8 @@ export async function explore(
         more = enumerator.advance();
         // A run the reduction had already covered is not a new schedule; its checks repeat others'.
         if (enumerator.blocked) continue;
-        schedules++;
       }
+      schedules++;
     }
     reached.effectPoints += run.effectPoints;
     reached.faultsInjected += run.faultsInjected;
