@@ -8,10 +8,17 @@ import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { basename, dirname, join, relative, resolve } from "node:path";
-import { canonicalJson, type JsonValue, type ScenarioVerdict, type Violated } from "@eutaxy/core";
-import { renderText } from "@eutaxy/report";
+import {
+  canonicalJson,
+  type JsonValue,
+  type ScenarioVerdict,
+  type SpecVerdict,
+  type Violated,
+} from "@eutaxy/core";
+import { renderSpecs, renderText } from "@eutaxy/report";
 import { type CheckTransport, checkTestSource, metaKey, vitestConfigSource } from "./generate.ts";
 import { cloudflareRegressionTest } from "./regression.ts";
+import { findSpecModules, specFiles } from "./specs.ts";
 
 export interface CheckOptions {
   readonly scenario: string;
@@ -120,6 +127,10 @@ export async function runCheck(o: CheckOptions): Promise<number> {
         scenarioImport: `../${basename(scenarioPath)}`,
       }),
     );
+    for (const f of specFiles(findSpecModules(dir))) {
+      mkdirSync(dirname(join(workDir, f.name)), { recursive: true });
+      writeFileSync(join(workDir, f.name), f.source);
+    }
     const reportPath = join(workDir, "vitest-report.json");
     rmSync(reportPath, { force: true }); // never read a report left by an earlier --keep run
     writeFileSync(configPath, vitestConfigSource(wrangler, testPath, reportPath));
@@ -129,10 +140,16 @@ export async function runCheck(o: CheckOptions): Promise<number> {
       o.stderr(`eutaxy check could not read a verdict from Vitest (exit ${code}):\n${output}\n`);
       return exitCodes.error;
     }
-    const report = transport.report as { verdict: ScenarioVerdict };
+    if (transport.specErrors && transport.specErrors.length > 0) {
+      for (const e of transport.specErrors)
+        o.stderr(`${e.module}${e.line > 0 ? `:${e.line}` : ""}: ${e.message}\n`);
+      return exitCodes.error;
+    }
+    const report = transport.report as { verdict: ScenarioVerdict; specs?: readonly SpecVerdict[] };
     const verdict = report.verdict;
+    const specs = report.specs ?? [];
     if (o.json) o.stdout(`${canonicalJson(transport.report as JsonValue)}\n`);
-    else o.stdout(`${renderText(verdict)}\n`);
+    else o.stdout(`${renderText(verdict)}\n${specs.length > 0 ? `\n${renderSpecs(specs)}\n` : ""}`);
 
     if (verdict.kind === "VIOLATED" && !o.noRegression) {
       const outPath = o.out ? resolve(o.cwd, o.out) : join(dir, `${name}.regression.test.ts`);
@@ -153,12 +170,23 @@ export async function runCheck(o: CheckOptions): Promise<number> {
           ? { durableObjects: true }
           : {}),
         ...(o.expectViolation ? { expect: "violates" as const } : {}),
+        ...((transport.observed ?? []).length > 0
+          ? {
+              specModules: (transport.observed ?? []).map((m) => ({
+                path: toPosix(relative(outDir, resolve(dir, m.module))),
+                functions: m.functions,
+              })),
+            }
+          : {}),
       });
       mkdirSync(outDir, { recursive: true });
       writeFileSync(outPath, source);
       if (!o.json)
         o.stdout(`\nRegression test written to ${relative(o.cwd, outPath) || outPath}\n`);
     }
+    // A refuted spec fails the check like a violation does.
+    if (verdict.kind !== "VIOLATED" && specs.some((v) => v.kind === "REFUTED"))
+      return exitCodes.VIOLATED;
     return exitCodes[verdict.kind];
   } finally {
     if (!o.keep) rmSync(workDir, { recursive: true, force: true });

@@ -14,6 +14,11 @@ export interface CloudflareRegressionOptions {
   readonly durableObjects?: boolean;
   readonly expect?: "holds" | "violates";
   readonly engineModule?: string;
+  /** Core modules to observe during the replay (import path, functions), for `refines`. */
+  readonly specModules?: readonly {
+    readonly path: string;
+    readonly functions: readonly string[];
+  }[];
 }
 
 /** A Vitest regression test for a Cloudflare scenario, to run under the Cloudflare Vitest plugin. */
@@ -31,6 +36,9 @@ export function cloudflareRegressionTest(
       (b) => `import schema_${b} from ${JSON.stringify(`${options.schemaPaths[b]}?raw`)};`,
     ),
     `import handler from ${JSON.stringify(options.workerPath)};`,
+    ...(options.specModules ?? []).map(
+      (m, i) => `import * as core_${i} from ${JSON.stringify(m.path)};`,
+    ),
   ];
   const schemas = `{ ${bindings.map((b) => `${b}: schema_${b}`).join(", ")} }`;
   const retries = options.maxRetries === undefined ? "" : `, maxRetries: ${options.maxRetries}`;
@@ -41,5 +49,13 @@ export function cloudflareRegressionTest(
     scenario: "scenario",
     ...(options.expect ? { expect: options.expect } : {}),
     ...(options.engineModule ? { engineModule: options.engineModule } : {}),
+    ...(options.specModules && options.specModules.length > 0
+      ? {
+          observe: options.specModules.map((m, i) => ({
+            namespace: `core_${i}`,
+            functions: m.functions,
+          })),
+        }
+      : {}),
   });
 }

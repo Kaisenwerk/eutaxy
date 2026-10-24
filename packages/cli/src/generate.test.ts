@@ -23,6 +23,11 @@ describe("generated check test", () => {
     expect(src).toContain('outputFile: "/p/.eutaxy/r.json"');
   });
 
+  test("a function observed in two spec modules is an error: its decisions would be ambiguous", () => {
+    const src = checkTestSource({ seed: "s", scenarioImport: "../x.sim.ts" });
+    expect(src).toContain("is observed in both");
+  });
+
   test("an exhaustive check asks explore for every schedule", () => {
     const src = checkTestSource({ seed: "s", exhaustive: true, scenarioImport: "../x.sim.ts" });
     expect(src).toContain('check(scenario, platform, { seed: "s", exhaustive: true })');
