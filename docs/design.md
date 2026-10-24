@@ -299,9 +299,30 @@ Faults injected at every effect boundary:
   before a run, so it starts from storage alone, and its storage is
   snapshotted after it (rows `{ key, value }` per object name). Alarms are
   taken over on each object's storage, inside transactions too, so none is
-  scheduled on the real clock, whose time is far ahead of the virtual one;
-  an object that sets one makes the run `UNSUPPORTED` until alarms fire in
-  virtual time. Current limits: calls run one at a time, so races between
+  scheduled on the real clock, whose time is far ahead of the virtual one,
+  and they fire in virtual time: Eutaxy keeps one alarm per object (a later
+  `setAlarm` replaces it, a transaction's applies on commit of the attempt
+  that commits, an alarm set in the constructor is moved over unless one
+  is still pending, which makes the run `UNSUPPORTED` because natively the
+  constructor would have seen it, as does a rebuilt constructor that reads
+  the alarm while one is pending (reads before the takeover are recorded
+  on the storage prototype); each change starts a new generation, so
+  an alarm or retry it supersedes is dropped before any fault applies),
+  it survives eviction, and when the
+  run reaches its time the object's `alarm()` runs as one effect. Alarms
+  run at least once (Cloudflare, Durable Object Base API): `crash_before`
+  means it never ran, `crash_after` that it ran and committed but counts
+  as failed (either crash also drops the instance, so in-memory state is
+  lost as in a real crash), `error` that it threw, and a failed alarm is
+  retried after
+  2 s, 4 s, 8 s, up to six retries and `maxRedeliveries`, with
+  `retryCount` and `isRetry`. Several schedules over one alarm (the
+  pattern the Agents SDK uses) work as written. An object that keeps
+  re-arming fires at most `alarmsPerObject` times per run (default 3). A
+  `setAlarm` inside `transactionSync()` makes the run `UNSUPPORTED`. A
+  crash injected inside an object's own work resets the object with
+  `ctx.abort()`, as a crash does, called where the crash happens because
+  abort() works only from inside the object. Current limits: calls run one at a time, so races between
   an object's own outbound I/O and another call into it are not explored;
   the object's own binding calls are not recorded, and an object reached
   only through another object's binding makes the run `UNSUPPORTED`, as do
@@ -607,8 +628,8 @@ trips and fuzzing).
 
 ## Open questions
 
-- Durable Objects beyond the stub boundary, in order: alarms in virtual
-  time, then interleaving at an object's own outbound I/O, then recording
-  the object's own binding calls.
+- Durable Objects beyond the stub boundary, in order: interleaving at an
+  object's own outbound I/O (and alarms concurrent with calls, which
+  Cloudflare allows), then recording the object's own binding calls.
 - Whether the Lemma conformance corpus is enough to pin the spec parser, or
   Eutaxy needs its own extension fixtures for loop invariants.

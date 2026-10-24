@@ -9,13 +9,13 @@
  * Between runs every object is cleared, seeded from the scenario's setup
  * and evicted, so it starts from storage alone; after a run its storage is
  * snapshotted for state invariants. Both go through the Cloudflare Vitest
- * plugin's test helpers. Alarms are taken over on each object's storage so
- * the runtime never schedules one on the real clock; until alarms fire in
- * virtual time, an object that sets one makes the run UNSUPPORTED.
+ * plugin's test helpers. Alarms are taken over on each object's storage and
+ * fire in virtual time (see alarms.ts).
  */
 
 import type { FaultKind, JsonValue } from "@eutaxy/core";
 import { withoutNetwork } from "@eutaxy/engine";
+import { AlarmBook, alarmControl, takenOver, takeOverAlarms } from "./alarms.ts";
 import type { ProxyContext } from "./d1.ts";
 import { toJson } from "./json.ts";
 
@@ -56,8 +56,40 @@ export function isDurableObjectNamespace(value: unknown): value is DurableObject
 /** Object names by id, so snapshots and the log name objects as the Worker does. */
 export type ObjectNames = Map<string, string>;
 
-/** Storage objects whose alarm methods Eutaxy has taken over (one per live instance). */
-const takenOver = new WeakSet<object>();
+/** What Eutaxy keeps about one namespace during a run; the platform clears it before each run. */
+export class BindingState {
+  /** Names learned this run (seeded ones come back with the setup), so traces never depend on earlier runs. */
+  readonly names: ObjectNames = new Map();
+  /** Ids of the objects a call or an alarm reached this run. */
+  readonly touched = new Set<string>();
+  /** The objects' alarms in virtual time. */
+  readonly alarms = new AlarmBook();
+  /** Each reached object's live state, so an invocation that crashes inside it can reset it. */
+  readonly states = new Map<string, DurableObjectState>();
+
+  clear(): void {
+    this.names.clear();
+    this.touched.clear();
+    this.alarms.clear();
+    this.states.clear();
+  }
+
+  /**
+   * Reset an object the way a crash does, with `ctx.abort()`, which
+   * application code cannot catch: the runtime ends the requests inside it.
+   * Called where an injected crash happens inside the object's own work,
+   * which is the one place abort() works (from outside, workerd refuses).
+   */
+  abort(id: string): void {
+    const state = this.states.get(id);
+    this.states.delete(id);
+    try {
+      state?.abort("Eutaxy: the invocation crashed inside this object");
+    } catch {
+      // abort() throws to unwind the object's code; the reset has happened.
+    }
+  }
+}
 
 /** The storage's own alarm deletion, even after Eutaxy replaced the method on it. */
 async function deleteRealAlarm(storage: DurableObjectStorage): Promise<void> {
@@ -65,51 +97,6 @@ async function deleteRealAlarm(storage: DurableObjectStorage): Promise<void> {
   const own = Object.hasOwn(storage, "deleteAlarm");
   const deleteAlarm = own ? proto.deleteAlarm : storage.deleteAlarm;
   await deleteAlarm?.call(storage);
-}
-
-/**
- * Replace an object's alarm methods, on its storage and inside transactions,
- * so no real alarm is ever scheduled. `onSet` is told about every attempt,
- * including an alarm the object scheduled before the takeover (in its
- * constructor), which is cancelled.
- */
-async function takeOverAlarms(storage: DurableObjectStorage, onSet: () => void): Promise<void> {
-  if (takenOver.has(storage)) return;
-  takenOver.add(storage);
-  if ((await storage.getAlarm()) !== null) {
-    await storage.deleteAlarm();
-    onSet();
-  }
-  const s = storage as unknown as Record<string, unknown>;
-  let alarm: number | null = null;
-  const alarms = {
-    setAlarm: async (time: number | Date) => {
-      onSet();
-      alarm = typeof time === "number" ? time : time.getTime();
-    },
-    getAlarm: async () => alarm,
-    deleteAlarm: async () => {
-      alarm = null;
-    },
-  };
-  Object.assign(s, alarms);
-  const transaction = (
-    s["transaction"] as (cb: (txn: unknown) => unknown) => Promise<unknown>
-  ).bind(storage);
-  s["transaction"] = (callback: (txn: unknown) => unknown) =>
-    transaction((txn) =>
-      callback(
-        new Proxy(txn as Record<string, unknown>, {
-          get(target, prop) {
-            if (typeof prop === "string" && prop in alarms)
-              return alarms[prop as keyof typeof alarms];
-            const value = target[prop as string];
-            // Native methods check their receiver: call them on the real transaction.
-            return typeof value === "function" ? value.bind(target) : value;
-          },
-        }),
-      ),
-    );
 }
 
 /** An RPC argument as effect-log data; a Request becomes its method and URL. */
@@ -147,14 +134,13 @@ export function proxyNamespace(
   real: DurableObjectNamespace,
   binding: string,
   ctx: ProxyContext,
-  names: ObjectNames,
+  state: BindingState,
   helpers: DurableObjectTestHelpers | undefined,
   /** Whether the running scenario resets this namespace (has a `durableObject` setup for it). */
   isReset: () => boolean,
-  /** Ids of the objects a call reached this run; the platform clears it before each run. */
-  touched: Set<string>,
 ): DurableObjectNamespace {
   const target = `DO:${binding}`;
+  const { names, touched, alarms: book } = state;
   const nameOf = (id: DurableObjectId) => names.get(id.toString()) ?? id.toString();
 
   function stubFor(stub: DurableObjectStub, id: string, object: string): DurableObjectStub {
@@ -170,13 +156,13 @@ export function proxyNamespace(
         );
       } else {
         touched.add(id);
-        await typed(helpers).runInDurableObject(real, (_instance, state) =>
-          takeOverAlarms(state.storage, () =>
-            ctx.hooks.unsupported(
-              `Durable Object ${binding} ${object} set an alarm; alarms are not modelled yet`,
-            ),
-          ),
-        );
+        await typed(helpers).runInDurableObject(real, (_instance, live) => {
+          state.states.set(id, live);
+          return takeOverAlarms(
+            live.storage,
+            alarmControl(book, binding, id, object, () => ctx.hooks),
+          );
+        });
       }
     }
 
@@ -229,6 +215,8 @@ export function proxyNamespace(
         },
         perform,
         summarize,
+        // A crash inside the object's own work leaves its request pending: reset the object.
+        { onAbandon: () => state.abort(id) },
       );
     }
 
@@ -319,6 +307,66 @@ export function proxyNamespace(
       }
     },
   });
+}
+
+/**
+ * Run an object's `alarm()` handler inside it, after taking over its alarms
+ * (the instance may be new since the alarm was set).
+ */
+/** Drop an object's instance from outside it; one that is not running has nothing to drop. */
+export async function evictObject(
+  real: DurableObjectNamespace,
+  helpers: DurableObjectTestHelpers | undefined,
+  id: string,
+): Promise<void> {
+  if (!helpers) return;
+  await typed(helpers)
+    .evictDurableObject(real.get(real.idFromString(id)))
+    .catch(() => {});
+}
+
+export function alarmRunner(
+  real: DurableObjectNamespace,
+  binding: string,
+  ctx: ProxyContext,
+  helpers: DurableObjectTestHelpers | undefined,
+  state: BindingState,
+): (
+  id: string,
+  object: string,
+  info: { readonly retryCount: number; readonly isRetry: boolean },
+  gen: number,
+) => Promise<void> {
+  return async (id, object, info, gen) => {
+    if (!helpers) {
+      ctx.hooks.unsupported(`Durable Object binding ${binding} needs the Cloudflare test helpers`);
+      return;
+    }
+    state.touched.add(id);
+    await typed(helpers).runInDurableObject(
+      real.get(real.idFromString(id)),
+      async (instance, live) => {
+        state.states.set(id, live);
+        await takeOverAlarms(
+          live.storage,
+          alarmControl(state.alarms, binding, id, object, () => ctx.hooks),
+        );
+        // Superseded while the effect waited for its turn: the handler of a cancelled alarm never runs.
+        const entry = state.alarms.entry(id);
+        if (entry.gen !== gen) return;
+        // The alarm is consumed as its handler starts: from here getAlarm() returns null.
+        entry.time = null;
+        const handler = (instance as { alarm?: (info: unknown) => unknown }).alarm;
+        if (typeof handler !== "function") {
+          ctx.hooks.unsupported(
+            `Durable Object ${binding} ${object} set an alarm but has no alarm() handler`,
+          );
+          return;
+        }
+        await handler.call(instance, info);
+      },
+    );
+  };
 }
 
 /** The objects to reset: every id the namespace has created, plus the setup's named ones. */

@@ -17,17 +17,21 @@ import type {
   ScenarioSpec,
 } from "@eutaxy/core";
 import { CrashSignal, InjectedEffectError } from "@eutaxy/engine";
+import { alarmSource, deliverAlarm } from "./alarms.ts";
 import { type ProxyContext, proxyD1, resetD1, snapshotD1 } from "./d1.ts";
 import {
+  alarmRunner,
+  BindingState,
   type DurableObjectTestHelpers,
+  evictObject,
   isDurableObjectNamespace,
-  type ObjectNames,
   proxyNamespace,
   resetNamespace,
   snapshotNamespace,
 } from "./durable-objects.ts";
 import {
   type DurableObjectSetup,
+  defaultAlarmsPerObject,
   type HttpDrive,
   type HttpRequestSpec,
   type QueueDrive,
@@ -133,7 +137,7 @@ const assumptions: readonly string[] = [
   "message.timestamp is the virtual clock's time at delivery",
   "only D1 and Durable Object bindings are proxied; touching any other binding makes the run UNSUPPORTED",
   "Durable Objects are the real objects workerd runs (storage, transactions, input and output gates are the runtime's own); each stub call is one effect: crash_before or error means it never reached the object, ambiguous means the object committed and the caller lost the answer, crash_after means the caller died after it; calls run one at a time, so races between an object's own outbound I/O and another call are not explored; the object's own binding calls are not recorded; objects are cleared, seeded and evicted before each run and their storage is snapshotted after it (developers.cloudflare.com/durable-objects/api/storage-api/)",
-  "Durable Object alarms are taken over so none is scheduled on the real clock; an object that sets one makes the run UNSUPPORTED until alarms fire in virtual time",
+  "Durable Object alarms are taken over so none is scheduled on the real clock and fire in virtual time: one alarm per object, a later setAlarm replaces it, setAlarm in a transaction applies on commit, the alarm survives eviction, alarm() is one effect (crash_before: it never ran; crash_after: it ran and counts as failed; error: it threw), and a failed alarm is retried after 2 s, 4 s, 8 s ... up to six retries and maxRedeliveries, with retryCount and isRetry (developers.cloudflare.com/durable-objects/api/base/#alarm); each object's alarm fires at most alarmsPerObject times per run (default 3)",
   "state invariants read a snapshot of every D1 binding named in setup, taken after the last event",
   "work passed to ctx.waitUntil runs after the handler returns and never affects acknowledgement or the response; a cut_off fault at that point loses work not yet started, and an effect in flight commits without its continuation",
   "concurrent invocations (maxConcurrentInvocations above 1) share one isolate's module state and bindings, and another may run while one awaits I/O (developers.cloudflare.com/workers/reference/how-workers-works/); queue consumers run concurrently up to max_concurrency (developers.cloudflare.com/queues/configuration/consumer-concurrency/)",
@@ -158,25 +162,18 @@ export function createCloudflarePlatform(options: CloudflarePlatformOptions): Pl
   const doProxies = new Map<string, DurableObjectNamespace>();
   /** The Durable Object bindings the current scenario's setup resets before each run. */
   let resetBindings = new Set<string>();
-  /** Per binding, the objects a call reached in the current run. */
-  const touched = new Map<string, Set<string>>();
-  const touchedFor = (binding: string): Set<string> => {
-    let t = touched.get(binding);
-    if (!t) {
-      t = new Set();
-      touched.set(binding, t);
+  /** Per binding, what the current run knows about its objects. */
+  const bindingStates = new Map<string, BindingState>();
+  const stateFor = (binding: string): BindingState => {
+    let state = bindingStates.get(binding);
+    if (!state) {
+      state = new BindingState();
+      bindingStates.set(binding, state);
     }
-    return t;
+    return state;
   };
-  const objectNames = new Map<string, ObjectNames>();
-  const namesFor = (binding: string): ObjectNames => {
-    let names = objectNames.get(binding);
-    if (!names) {
-      names = new Map();
-      objectNames.set(binding, names);
-    }
-    return names;
-  };
+  /** Per binding, alarm firings allowed per object in the current run. */
+  let alarmLimits = new Map<string, number>();
   const namespace = (binding: string): DurableObjectNamespace => {
     const real = env[binding];
     if (!isDurableObjectNamespace(real))
@@ -205,14 +202,8 @@ export function createCloudflarePlatform(options: CloudflarePlatformOptions): Pl
       if (isDurableObjectNamespace(value)) {
         let p = doProxies.get(prop);
         if (!p) {
-          p = proxyNamespace(
-            value,
-            prop,
-            ctx,
-            namesFor(prop),
-            options.durableObjects,
-            () => resetBindings.has(prop),
-            touchedFor(prop),
+          p = proxyNamespace(value, prop, ctx, stateFor(prop), options.durableObjects, () =>
+            resetBindings.has(prop),
           );
           doProxies.set(prop, p);
         }
@@ -244,16 +235,22 @@ export function createCloudflarePlatform(options: CloudflarePlatformOptions): Pl
       resetBindings = new Set(
         spec.setup.filter((s) => s.kind === "durable_object").map((s) => String(s["binding"])),
       );
-      for (const t of touched.values()) t.clear();
-      // Names are learned per run (seeded ones come back with the setup), so traces never depend on earlier runs.
-      for (const n of objectNames.values()) n.clear();
+      for (const state of bindingStates.values()) state.clear();
+      alarmLimits = new Map(
+        spec.setup
+          .filter((s) => s.kind === "durable_object")
+          .map((s) => [
+            String(s["binding"]),
+            (s as DurableObjectSetup).alarmsPerObject ?? defaultAlarmsPerObject,
+          ]),
+      );
       for (const step of spec.setup) {
         if (step.kind === "durable_object") {
           const setup = step as DurableObjectSetup;
           await resetNamespace(
             namespace(setup.binding),
             helpers(),
-            namesFor(setup.binding),
+            stateFor(setup.binding).names,
             setup.objects,
           );
           continue;
@@ -290,8 +287,8 @@ export function createCloudflarePlatform(options: CloudflarePlatformOptions): Pl
           const tables = await snapshotNamespace(
             namespace(binding),
             helpers(),
-            namesFor(binding),
-            touchedFor(binding),
+            stateFor(binding).names,
+            stateFor(binding).touched,
             setup.objects,
             (object) =>
               hooks.unsupported(
@@ -327,6 +324,35 @@ export function createCloudflarePlatform(options: CloudflarePlatformOptions): Pl
       const drive = spec.drive as QueueDrive | HttpDrive;
       const invocation = `${event.id}#${event.attempt}`;
       hooksRef = hooks;
+      if (event.source === alarmSource) {
+        const binding = String((event.data as { binding?: unknown }).binding ?? "");
+        return deliverAlarm(event, hooks, spec.bounds.maxRedeliveries, {
+          binding,
+          book: stateFor(binding).alarms,
+          limit: alarmLimits.get(binding) ?? defaultAlarmsPerObject,
+          runAlarm: alarmRunner(
+            namespace(binding),
+            binding,
+            ctx,
+            options.durableObjects,
+            stateFor(binding),
+          ),
+          abort: (id) => stateFor(binding).abort(id),
+          evict: (id) => evictObject(namespace(binding), options.durableObjects, id),
+          bookkeep: (op, args) =>
+            hooks.effectSync(
+              {
+                invocation: platformInvocation(hooks),
+                target: `DO:${binding}`,
+                op,
+                args,
+                allowed: [],
+              },
+              () => null,
+              () => null,
+            ),
+        });
+      }
       return drive.kind === "http"
         ? await deliverRequest(event, hooks, spec, drive, invocation)
         : await deliverMessage(event, hooks, spec, drive, invocation);

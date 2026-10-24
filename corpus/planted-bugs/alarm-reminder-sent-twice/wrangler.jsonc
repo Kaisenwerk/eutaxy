@@ -1,0 +1,12 @@
+{
+  "name": "planted-alarm-reminder-sent-twice",
+  "main": "worker.ts",
+  "compatibility_date": "2026-10-01",
+  "durable_objects": {
+    "bindings": [
+      { "name": "REMINDERS", "class_name": "Reminders" },
+      { "name": "FIXED_REMINDERS", "class_name": "FixedReminders" }
+    ]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Reminders", "FixedReminders"] }]
+}

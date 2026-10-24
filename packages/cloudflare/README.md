@@ -5,7 +5,7 @@
 **Public surface.** Scenario construction: `defineScenario`, `queue`,
 `http`, `d1Schema`, `d1Write`, `d1Param`, `atMostOncePerKey`, `atLeastOnce`,
 `atLeastOncePerMessage`, `external`, `fetchCall`, `httpResponse`,
-`durableObject`. Running: `createCloudflarePlatform` (D1 proxy, Durable
+`durableObject` (with `alarmsPerObject`). Running: `createCloudflarePlatform` (D1 proxy, Durable
 Object stub proxy with the `durableObjects` test helpers from
 `cloudflare:test`, queue delivery with at-least-once semantics, inbound
 request delivery under the caller's retry policy, end-of-run D1 and

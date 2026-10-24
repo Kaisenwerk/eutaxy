@@ -128,14 +128,28 @@ export interface DurableObjectSetup extends PlatformData {
   readonly kind: "durable_object";
   readonly binding: string;
   readonly objects: { readonly [name: string]: { readonly [key: string]: JsonValue } };
+  /**
+   * How many times each object's alarm may fire in one run (retries not
+   * counted); an object that keeps re-arming stops there. Default 3.
+   */
+  readonly alarmsPerObject?: number;
 }
 
 export function durableObject(
   binding: string,
   objects: { readonly [name: string]: { readonly [key: string]: JsonValue } } = {},
+  options: { readonly alarmsPerObject?: number } = {},
 ): DurableObjectSetup {
-  return { kind: "durable_object", binding, objects };
+  return {
+    kind: "durable_object",
+    binding,
+    objects,
+    ...(options.alarmsPerObject === undefined ? {} : { alarmsPerObject: options.alarmsPerObject }),
+  };
 }
+
+/** Alarm firings per object per run when the setup does not say. */
+export const defaultAlarmsPerObject = 3;
 
 /**
  * The storage of one object (by the name its id was made from) as rows

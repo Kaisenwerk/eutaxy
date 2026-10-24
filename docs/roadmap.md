@@ -87,9 +87,11 @@ In this order:
   state machines survive eviction. Done so far: the real objects behind a
   proxied stub boundary (faults at each call, reset and seed per run,
   storage snapshots, the `unique` invariant), planted bug
-  `lease-pool-lost-response`. Next: alarms in virtual time; KV and SQL
-  storage when a target needs them (the first target uses key-value
-  storage only).
+  `lease-pool-lost-response`; alarms in virtual time (one per object,
+  at-least-once with the documented retries, several schedules over one
+  alarm), planted bug `alarm-reminder-sent-twice`. Next: the wallet race;
+  KV and SQL storage when a target needs them (the first target uses
+  key-value storage only).
 - Exhaustive scheduler and partial-order reduction.
 - Lemma spec parser, `SpecIR`, the `CHECKED` rung, `refines`.
 

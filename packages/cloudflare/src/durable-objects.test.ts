@@ -7,6 +7,7 @@
 import type { EffectLog, ScenarioSpec } from "@eutaxy/core";
 import { Run, runOnce } from "@eutaxy/engine";
 import { describe, expect, test } from "vitest";
+import { Backing, FakeStorage } from "./fake-durable-objects.ts";
 import { createCloudflarePlatform, type WorkerHandler } from "./platform.ts";
 import { durableObject, http } from "./scenario.ts";
 
@@ -25,50 +26,6 @@ let constructorFetches = false;
 
 /** When set, evicting an object fails, as when eviction is prevented. */
 let evictionFails = false;
-
-/** An object's durable state, shared by every instance of it, like the runtime's storage. */
-class Backing {
-  readonly data = new Map<string, unknown>();
-  realAlarmSets = 0;
-  realAlarm: number | null = null;
-}
-
-/**
- * A minimal stand-in for DurableObjectStorage: one per instance (a new
- * instance gets a new storage object, as in workerd), over shared backing.
- */
-class FakeStorage {
-  readonly backing: Backing;
-  constructor(backing: Backing) {
-    this.backing = backing;
-  }
-  async get(key: string) {
-    return structuredClone(this.backing.data.get(key));
-  }
-  async put(key: string | Record<string, unknown>, value?: unknown) {
-    if (typeof key === "string") this.backing.data.set(key, structuredClone(value));
-    else for (const [k, v] of Object.entries(key)) this.backing.data.set(k, structuredClone(v));
-  }
-  async list() {
-    return new Map([...this.backing.data].sort(([a], [b]) => (a < b ? -1 : 1)));
-  }
-  async deleteAll() {
-    this.backing.data.clear();
-  }
-  async setAlarm(time: number) {
-    this.backing.realAlarmSets++;
-    this.backing.realAlarm = time;
-  }
-  async getAlarm() {
-    return this.backing.realAlarm;
-  }
-  async deleteAlarm() {
-    this.backing.realAlarm = null;
-  }
-  async transaction<T>(callback: (txn: FakeStorage) => Promise<T>) {
-    return callback(this);
-  }
-}
 
 /** The object under test: counts calls and leases, and sets an alarm when asked to. */
 class Counter {
@@ -308,10 +265,10 @@ describe("Durable Object stub calls", () => {
     expect(lines(log)).not.toContain("req-1#1 result Http:/bump response");
   });
 
-  test("an alarm is taken over, never set on the object, and makes the run UNSUPPORTED", async () => {
+  test("an alarm is taken over and never set on the object; one without alarm() is UNSUPPORTED", async () => {
     const { run, storages } = await runWith(null, { path: "/remind" });
     expect(storages.get("id-c")?.realAlarmSets).toBe(0);
-    expect(run.unsupportedReasons.join()).toContain("set an alarm; alarms are not modelled yet");
+    expect(run.unsupportedReasons.join()).toContain("has no alarm() handler");
   });
 
   test("without the test helpers a call makes the run UNSUPPORTED", async () => {
@@ -340,12 +297,13 @@ describe("Durable Object stub calls", () => {
     }
   });
 
-  test("an alarm set in the constructor, before the takeover, is cancelled and makes the run UNSUPPORTED", async () => {
+  test("an alarm set in the constructor, before the takeover, moves off the runtime and is adopted", async () => {
     constructorAlarms = true;
     try {
       const { run, storages } = await runWith(null);
       expect(storages.get("id-c")?.realAlarm).toBeNull();
-      expect(run.unsupportedReasons.join()).toContain("set an alarm");
+      // Adopted, it fires; this object has no alarm() handler.
+      expect(run.unsupportedReasons.join()).toContain("has no alarm() handler");
     } finally {
       constructorAlarms = false;
     }

@@ -1,0 +1,8 @@
+{
+  "expect": {
+    "verdict": "VIOLATED",
+    "invariant": "reminder-sent-once"
+  },
+  "fault": "a failure after the mail API accepted the send and before the reminder was marked sent (crash_after or ambiguous on the send), so the alarm is retried and sends again",
+  "description": "A Durable Object sends due reminders from its alarm, then marks them sent. Alarms run at least once, so a failure between the send and the mark makes the retried alarm send the reminder twice."
+}
