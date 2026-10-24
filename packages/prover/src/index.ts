@@ -1,2 +1,14 @@
-// @eutaxy/prover: see README.md. Filled in from v0.6.
-export {};
+// @eutaxy/prover: the spec ladder. See README.md.
+export {
+  AtomNotBoolean,
+  type CheckedInput,
+  checkedRung,
+  checkSpecModule,
+  inDomain,
+  lemmaBool,
+  lemmaUnresolved,
+  type ModulePredicates,
+  markerVerdicts,
+  render,
+  UnresolvedName,
+} from "./checked.ts";
