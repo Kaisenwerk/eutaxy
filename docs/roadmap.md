@@ -9,118 +9,48 @@ passes, not on a date. The planted-bug and differential corpora grow with
 every phase. The JSON report schema is versioned, so CI and coding agents
 can rely on it.
 
-## v0.4 — Simulator (released as 0.4.0, 2026-10-23)
+## v0.5.x (current)
 
-- Scaffold: pnpm workspace with the eleven packages, declared dependencies
-  mirrored by project references and checked against the design,
-  `pnpm check` green, per-package READMEs, and the public hygiene files:
-  README, LICENSE, CONTRIBUTING, CHANGELOG, code of conduct.
-- Scenario spec format (`*.sim.ts`): Worker, scenario, declared externals,
-  invariants and bounds, designed with the first planted bug as its first
-  user.
-- Bindings: D1 and Queues; outbound `fetch` with declared externals
-  (`dedupeBy`, scripted replies).
-- Drives: queue messages and inbound HTTP requests. An HTTP request is an
-  event like a queue message: delivered with the same faults, redelivered
-  on the caller's declared retry count (webhook providers retry, a
-  browser does not), the response recorded as an effect. A crash at the
-  response point is the case of a handler that committed but whose answer
-  the caller never got. It is in this phase because the first real Workers
-  to check enter through `fetch` handlers (payment and chat-platform
-  webhooks, a sign-in endpoint with rate limits). One invocation runs at a
-  time; concurrent requests come with v0.5.
-- Faults: crash before, crash after, ambiguous outcome, error, redelivery,
-  cut-off of `waitUntil` work.
-- Scheduler: seeded exploration with a time-based budget.
-- Invariants: `atMostOncePerKey`, `atLeastOnce`, `implies`, `everyRow`.
-- Shrinker; text and versioned JSON report; Vitest regression emitter;
-  `expectHolds` and `check` for use from a user's test suite; `eutaxy
-  check` CLI with `--json`.
-- Virtual clock and globals patching; module-state leak detection;
-  published-package build and publish dry run.
-- AWS platform spike: Lambda with an SQS event source and DynamoDB through
-  the SDK `send` proxy, the differential runner. It is in this phase, not
-  the self-check phase, because the Cloudflare path was useful end to end
-  and the engine already had everything a second platform needs, so the
-  spike doubles as the test that the layering holds. Not in scope yet: the
-  `eutaxy check` command for AWS scenarios, other services (S3, SNS,
-  EventBridge), SQS batches larger than one record.
-- `examples/payments-queue`: the README quick start, runnable.
-- Planted bugs: `queue-duplicate-write` (crash before ack),
-  `queue-ack-then-write` (ack then write in `waitUntil`),
-  `queue-random-id` (random row ids with `INSERT OR IGNORE`),
-  `queue-charge-twice` (a charge without an idempotency key),
-  `webhook-duplicate-record` (a webhook recorded twice on redelivery),
-  `sqs-duplicate-put` (AWS).
+v0.4 (the simulator) and v0.5 (Durable Objects and specs) are done; the
+design describes what they built. Patch work has no gate of its own: each
+item ships as a `0.5.x` release once `pnpm check` and the corpora pass,
+and v0.6's gate closes the next phase.
 
-**Gate:** every planted bug is caught, shrunk, replayed and emitted as a
-regression test; the differential corpus shows no divergence from workerd;
-the same seed produces a byte-identical trace twice. (Passed in CI.)
+In this order. The first five came out of a full review before 0.5.0 and
+go before the provers, because the prover phase builds on the engine's run
+loop and the public facade, which are cheaper to reshape now than after.
+- Every exhaustive verdict says it was exhaustive: the report prints the
+  `Exhaustive:` line for `VIOLATED` and `UNSUPPORTED` too, not only
+  `BOUNDED`.
+- Platform-neutral code moves down: the `atMostOncePerKey` and
+  `atLeastOncePerMessage` constructors and the JSON summary to `core` (one
+  summarizer, platform extras wrapping it), the platform's bookkeeping
+  invocation to `RunHooks`, the differential's two-sided comparison to
+  `engine`. Both platforms carry copies today, so the second use has
+  arrived. One `patchProperty` in `engine` replaces the four ways globals
+  are saved and restored.
+- The generated check test shrinks to its globs and one typed call: the
+  orchestration it holds as a template string (schemas, module loading,
+  spec modules, observers, verdict, transport) moves into a function in
+  `cloudflare`, so it is typed and unit-tested, and `checkSpecModule`,
+  `lemmaBool`, `lemmaUnresolved` and `observeCore` leave the public
+  facade. Pre-1.0 is the time to shrink the semver'd surface.
+- Oversized modules split along their seams: `engine/run.ts` into the
+  effect protocol, frames and the concurrent scheduler;
+  `cloudflare/platform.ts` into HTTP and queue delivery beside `alarms.ts`;
+  `core/invariants.ts` into selectors, state invariants and `refines`.
+- Smaller simplifications: one token check shared by the spec parser's
+  atoms and template substitutions; unused core exports dropped; per-package
+  nits.
+- Left over from v0.5, when a target needs them: concurrent delivery on
+  the AWS platform (it still delivers one event at a time); latency on
+  scripted externals; Workers KV, and Durable Object SQL storage (objects
+  use key-value storage so far);
+  dynamic partial-order reduction if real scenarios lose the sleep-set
+  reduction too often.
+- R2 and Workflows models.
 
-## v0.5 — Durable Objects and specs (current)
-
-In this order:
-- Concurrent invocations (`maxConcurrentInvocations` above 1) for every
-  drive, interleaved at asynchronous effects by a seeded pick; planted
-  bug `signin-code-rate-limit` (a limit checked with a read and then an
-  insert). Done on the Cloudflare platform; the AWS platform still
-  delivers one event at a time. First,
-  because Durable Object gates only mean something with interleaved
-  events, and the first real HTTP target (rate limits and an attempt cap
-  on a sign-in endpoint) fails only under concurrent requests.
-- HTTP caller timing: retry delays on the virtual clock and a response
-  deadline, so a handler that commits but answers too late is redelivered
-  while the first attempt may still run or hold a short lease. Both
-  webhook targets need it: one provider gives up on an answer after a few
-  seconds, the other is retried while a lease it answered 503 for is
-  still held. Done: `delaysMs` and `deadlineMs` on the `http` drive;
-  planted bug `webhook-lease-outlives-retries` (a lease that outlives the
-  caller's resend window). Not yet: latency on scripted externals, so
-  background work is slow in virtual time only when it waits on a timer.
-- Durable Object storage (key-value and SQL, transactions), input and
-  output gates, write coalescing, alarms; KV. First real target beside the
-  wallet race: a lease pool that hands out at most one lease per slot and
-  recovers a lease whose stub-call response was lost after the object
-  committed (a call inside one Worker; service-binding RPC between Workers
-  is not needed for it); and an object that multiplexes several schedules
-  over its one alarm (the pattern the Agents SDK uses), so alarm-driven
-  state machines survive eviction. Done so far: the real objects behind a
-  proxied stub boundary (faults at each call, reset and seed per run,
-  storage snapshots, the `unique` invariant), planted bug
-  `lease-pool-lost-response`; alarms in virtual time (one per object,
-  at-least-once with the documented retries, several schedules over one
-  alarm), planted bug `alarm-reminder-sent-twice`; interleaving at an
-  object's own outbound I/O, planted bug `wallet-overdraft-race` (the
-  wallet race of the gate: a withdrawal checks, pays out, then debits, and
-  a second runs while the first awaits its payout). Next: KV and SQL
-  storage when a target needs them (the first target uses key-value
-  storage only).
-- Exhaustive scheduler and partial-order reduction. Done: depth-first
-  enumeration of fault and turn choices with recorded turns, its count
-  checked against closed forms, sleep-set reduction (off for the rest of
-  the exploration once a turn shares more than its effect's target),
-  `eutaxy check --exhaustive`. Next, if real scenarios lose the reduction
-  too often: dynamic partial-order reduction from observed dependences.
-- Lemma spec parser, `SpecIR`, the `CHECKED` rung, `refines`. Done: a
-  hand-written Lemma parser and printer held to the lemma-lang conformance
-  fixtures, annotations extracted from modules and compiled to predicates;
-  a scenario's `specs` modules observed during exploration, their calls
-  logged as decisions and their properties evaluated on the inputs seen
-  (`CHECKED`, `REFUTED` with the call, or `UNKNOWN`); `refines` over the
-  decisions (followed, and not made stale by another invocation's write);
-  planted bug `refund-lost-update` (a lost update caught by `refines`, an
-  off-by-one in the core refuted at `CHECKED`).
-
-**Gate:** a planted rate-limit race under concurrent requests is caught;
-the wallet race is caught; no false alarms on the Durable Object corpus;
-the exhaustive enumerator's schedule count matches its closed-form
-formula.
-
-### v0.5.x
-
-R2 and Workflows models.
-
-## v0.6 — Provers
+## v0.6 — Provers (next)
 
 - `TESTED` rung; `Prover` interface, ladder and aggregation.
 - First-party `prover-lean` engine on the initial subset (immutable data,
