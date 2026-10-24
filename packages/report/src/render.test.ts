@@ -137,6 +137,26 @@ describe("renderText", () => {
     );
   });
 
+  test("an exhaustive VIOLATED or UNSUPPORTED says it was exhaustive and where it stopped", () => {
+    const exhaustive = { complete: false, schedules: 4, reduction: true };
+    expect(renderText({ ...violated, reached: { ...violated.reached, exhaustive } })).toMatch(
+      /\nExplored: .*\nExhaustive: stopped at the first violation \(4 schedules, partial-order reduction\)\n/,
+    );
+    const u: Unsupported = {
+      kind: "UNSUPPORTED",
+      scenario: "s",
+      seed: 1,
+      cause: "not_replayable",
+      reason: "exhaustive exploration needs deterministic runs",
+      reached: { runs: 2, effectPoints: 2, faultsInjected: 0, elapsedMs: 5, exhaustive },
+      assumptions: [],
+    };
+    expect(renderText(u)).toContain(
+      "Exhaustive: stopped where the scenario could not be decided (4 schedules, partial-order reduction)",
+    );
+    expect(renderText(violated)).not.toContain("Exhaustive:");
+  });
+
   test("UNSUPPORTED names the cause", () => {
     const u: Unsupported = {
       kind: "UNSUPPORTED",

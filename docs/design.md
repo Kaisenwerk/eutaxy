@@ -461,8 +461,9 @@ so such code can tell two orders apart). The run notes any of these in a
 turn other than an event's start (an effect's own I/O included),
 and once a run has, it is checked as usual and the enumeration starts
 again over every order with the reduction off. Dependence learned while
-running would need dynamic partial-order reduction to stay sound. Every exhaustive verdict reports whether
-enumeration completed before the budget, how many schedules ran, and
+running would need dynamic partial-order reduction to stay sound. Every exhaustive verdict, of any kind and in the
+text report as in the JSON, reports whether enumeration completed, how many
+schedules ran (the run that turned the reduction off among them), and
 whether the reduction stayed on.
 
 **Concurrent invocations.** With `maxConcurrentInvocations` above 1, up to

@@ -16,12 +16,9 @@ design describes what they built. Patch work has no gate of its own: each
 item ships as a `0.5.x` release once `pnpm check` and the corpora pass,
 and v0.6's gate closes the next phase.
 
-In this order. The first five came out of a full review before 0.5.0 and
+In this order. The first four came out of a full review before 0.5.0 and
 go before the provers, because the prover phase builds on the engine's run
 loop and the public facade, which are cheaper to reshape now than after.
-- Every exhaustive verdict says it was exhaustive: the report prints the
-  `Exhaustive:` line for `VIOLATED` and `UNSUPPORTED` too, not only
-  `BOUNDED`.
 - Platform-neutral code moves down: the `atMostOncePerKey` and
   `atLeastOncePerMessage` constructors and the JSON summary to `core` (one
   summarizer, platform extras wrapping it), the platform's bookkeeping
