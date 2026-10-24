@@ -6,6 +6,6 @@
     "types": ["@cloudflare/workers-types"]
   },
   "include": ["**/*.ts"],
-  "exclude": ["dist", ".eutaxy"],
+  "exclude": ["dist", ".eutaxy", "*.regression.test.ts"],
   "references": [{ "path": "../../packages/eutaxy" }]
 }
