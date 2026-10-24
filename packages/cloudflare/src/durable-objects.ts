@@ -13,11 +13,10 @@
  * fire in virtual time (see alarms.ts).
  */
 
-import type { FaultKind, JsonValue } from "@eutaxy/core";
+import { type FaultKind, type JsonValue, toJson } from "@eutaxy/core";
 import { withoutNetwork } from "@eutaxy/engine";
 import { AlarmBook, alarmControl, takenOver, takeOverAlarms } from "./alarms.ts";
 import type { ProxyContext } from "./d1.ts";
-import { toJson } from "./json.ts";
 
 const CALL: readonly FaultKind[] = ["crash_before", "crash_after", "ambiguous", "error"];
 

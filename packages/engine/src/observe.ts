@@ -12,7 +12,7 @@
  * native ESM namespace is frozen, and the function is reported unobservable.
  */
 
-import type { JsonValue } from "@eutaxy/core";
+import { type JsonValue, toJson } from "@eutaxy/core";
 import { installedRun } from "./run.ts";
 
 export interface ObservedCall {
@@ -28,45 +28,6 @@ export interface CoreObserver {
   readonly unobservable: { readonly [fn: string]: string };
   /** Put the original exports back. Safe to call twice. */
   restore(): void;
-}
-
-/** A JSON summary of a value for the log: exact for JSON, a readable string otherwise. */
-export function summarize(value: unknown, depth = 0, seen = new Set<unknown>()): JsonValue {
-  if (value === null || value === undefined) return null;
-  switch (typeof value) {
-    case "string":
-    case "boolean":
-      return value;
-    case "number":
-      return Number.isFinite(value) && !Object.is(value, -0)
-        ? value
-        : String(Object.is(value, -0) ? "-0" : value);
-    case "bigint":
-      return `${value}n`;
-    case "function":
-      return "[function]";
-    case "symbol":
-      return String(value);
-  }
-  if (depth > 8 || seen.has(value)) return "[…]";
-  seen.add(value);
-  try {
-    if (Array.isArray(value)) return value.map((v) => summarize(v, depth + 1, seen));
-    const proto = Object.getPrototypeOf(value);
-    if (proto !== Object.prototype && proto !== null) return String(value);
-    const out: { [k: string]: JsonValue } = {};
-    // Defined, not assigned: an own `__proto__` key stays a key.
-    for (const [k, v] of Object.entries(value as object))
-      Object.defineProperty(out, k, {
-        value: summarize(v, depth + 1, seen),
-        enumerable: true,
-        writable: true,
-        configurable: true,
-      });
-    return out;
-  } finally {
-    seen.delete(value);
-  }
 }
 
 export function observeCore(namespace: object, functions: readonly string[]): CoreObserver {
@@ -86,7 +47,7 @@ export function observeCore(namespace: object, functions: readonly string[]): Co
       if (!run) return Reflect.apply(original, this, args);
       const record = (threw: boolean, payload: { result: JsonValue } | { error: string }) => {
         calls.push({ function: name, args: [...args], threw });
-        run.decision(name, { args: summarize(args), ...payload });
+        run.decision(name, { args: toJson(args), ...payload });
       };
       let value: unknown;
       try {
@@ -102,7 +63,7 @@ export function observeCore(namespace: object, functions: readonly string[]): Co
         );
         return value;
       }
-      record(false, { result: summarize(value) });
+      record(false, { result: toJson(value) });
       return value;
     };
     const descriptor = Object.getOwnPropertyDescriptor(target, name);

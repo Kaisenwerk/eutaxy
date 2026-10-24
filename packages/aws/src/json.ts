@@ -1,28 +1,13 @@
-import type { JsonValue } from "@eutaxy/core";
+import { toJson as coreToJson, type JsonValue } from "@eutaxy/core";
 
-/** Reduce any runtime value to JSON data for the effect log; never throws. */
-export function toJson(value: unknown, depth = 0): JsonValue {
-  if (value === null || value === undefined) return null;
-  switch (typeof value) {
-    case "boolean":
-    case "string":
-      return value;
-    case "number":
-      return Number.isFinite(value) ? value : String(value);
-    case "bigint":
-      return value.toString();
-    case "object": {
-      if (depth > 10) return "<nested>";
-      if (Array.isArray(value)) return value.map((v) => toJson(v, depth + 1));
-      if (value instanceof Uint8Array) return `base64:${Buffer.from(value).toString("base64")}`;
-      if (value instanceof Date) return value.toISOString();
-      if (value instanceof Set) return [...value].map((v) => toJson(v, depth + 1));
-      const out: Record<string, JsonValue> = {};
-      for (const k of Object.keys(value).sort())
-        out[k] = toJson((value as Record<string, unknown>)[k], depth + 1);
-      return out;
-    }
-    default:
-      return `<${typeof value}>`;
-  }
+/** Binary DynamoDB values keep their contents, so two different binary keys stay distinct. */
+function bytesAsBase64(value: object): JsonValue | undefined {
+  return value instanceof Uint8Array
+    ? `base64:${Buffer.from(value).toString("base64")}`
+    : undefined;
+}
+
+/** Core's `toJson`, with bytes in base64. */
+export function toJson(value: unknown): JsonValue {
+  return coreToJson(value, bytesAsBase64);
 }

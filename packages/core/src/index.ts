@@ -73,6 +73,7 @@ export {
   type SpecUnknownCause,
   type SpecVerdict,
 } from "./spec-verdict.ts";
+export { type JsonExtra, toJson } from "./to-json.ts";
 export { bytesEqual, utf8Encode } from "./utf8.ts";
 export {
   type Bounded,

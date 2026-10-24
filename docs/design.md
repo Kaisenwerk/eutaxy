@@ -253,7 +253,12 @@ recorded into the log: `everyRow` (every row a state query selects satisfies
 a list of column conditions) and `implies` (every selected effect, keyed by
 a path into its payload, has a row whose column equals that key). A missing
 snapshot is a violation, never a silent pass. Effect payload conventions per
-binding are documented in the `cloudflare` package README.
+binding are documented in the `cloudflare` package README. Every payload
+value goes through one summarizer, core's `toJson`, which is exact for JSON
+data and writes everything else the same way on every machine (bigints as
+their digits, Dates in ISO form, Sets and Maps as arrays, cycles as `<nested>`); a
+platform adds its own encodings in front of it (AWS keeps binary values in
+base64, so two binary keys stay distinct).
 
 **`refines`** is the bridge between the two. The observed calls are also
 recorded in the effect log as decisions (`Core:<function>`, payload

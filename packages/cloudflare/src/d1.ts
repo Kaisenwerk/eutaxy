@@ -10,8 +10,8 @@ import {
   type FaultKind,
   type JsonValue,
   type RunHooks,
+  toJson,
 } from "@eutaxy/core";
-import { toJson } from "./json.ts";
 
 const WRITE: readonly FaultKind[] = ["crash_before", "crash_after", "ambiguous", "error"];
 const READ: readonly FaultKind[] = ["crash_before", "crash_after", "error"];

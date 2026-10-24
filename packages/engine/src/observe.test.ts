@@ -3,7 +3,7 @@ import type { Refines, ScenarioSpec } from "@eutaxy/core";
 import { describe, expect, test } from "vitest";
 import { explore } from "./explore.ts";
 import { createFakePlatform, type FakeHandler } from "./fake-platform.ts";
-import { observeCore, summarize } from "./observe.ts";
+import { observeCore } from "./observe.ts";
 
 /** A core module as a bundler presents it: exports as configurable getters. */
 function coreModule() {
@@ -130,20 +130,5 @@ describe("observeCore", () => {
     const observer = observeCore(ns, ["decide", "missing"]);
     expect(Object.keys(observer.unobservable).sort()).toEqual(["decide", "missing"]);
     expect(observer.unobservable["missing"]).toContain("no function");
-  });
-});
-
-describe("summarize", () => {
-  test("JSON as is, everything else as a readable string", () => {
-    expect(summarize({ a: [1, "x", true, null], b: undefined })).toEqual({
-      a: [1, "x", true, null],
-      b: null,
-    });
-    expect(summarize([Number.NaN, -0, 3n, () => 1])).toEqual(["NaN", "-0", "3n", "[function]"]);
-    const cyclic: { self?: unknown } = {};
-    cyclic.self = cyclic;
-    expect(summarize(cyclic)).toEqual({ self: "[…]" });
-    const own = summarize(JSON.parse('{"__proto__":{"approved":true}}'));
-    expect(Object.hasOwn(own as object, "__proto__")).toBe(true);
   });
 });
