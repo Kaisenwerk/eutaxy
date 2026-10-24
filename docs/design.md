@@ -322,8 +322,21 @@ Faults injected at every effect boundary:
   `setAlarm` inside `transactionSync()` makes the run `UNSUPPORTED`. A
   crash injected inside an object's own work resets the object with
   `ctx.abort()`, as a crash does, called where the crash happens because
-  abort() works only from inside the object. Current limits: calls run one at a time, so races between
-  an object's own outbound I/O and another call into it are not explored;
+  abort() works only from inside the object. In a concurrent run an
+  effect the object makes during a call (its own `fetch`) is a turn: the
+  input gate is open while the object awaits outbound I/O (Cloudflare,
+  Durable Objects: input and output gates), so another call into the
+  object may run first, and the call waits on that effect meanwhile
+  instead of counting as I/O in flight (a call awaiting several such
+  effects is waiting only while all of them are parked). workerd refuses
+  to settle a promise made inside an object from outside it, so such an
+  effect waits by polling a flag with real zero timers made inside the
+  object, and the scheduler is never woken from inside an object, where it
+  would resume in the object's I/O context. While an object holds its
+  input gate with `blockConcurrencyWhile` nothing else can enter it, and
+  even its timers wait at the gate, so its effects run at once then
+  (`EffectOptions.mayPark`). Current limits: storage operations are not
+  turns (the input gate holds them, so this is the runtime's behaviour);
   the object's own binding calls are not recorded, and an object reached
   only through another object's binding makes the run `UNSUPPORTED`, as do
   `newUniqueId` (random), `jurisdiction()` namespaces and a namespace the
@@ -333,9 +346,7 @@ Faults injected at every effect boundary:
   a constructor that makes a request fails the reset. A stub property can
   be called (a method) or awaited (an RPC getter); either is one effect.
   A result that is not plain data (an RPC capability) makes the run
-  `UNSUPPORTED`, since calls on it would bypass the proxy; an effect the
-  object makes during a call (its own `fetch`) runs within that call's
-  turn in a concurrent run.
+  `UNSUPPORTED`, since calls on it would bypass the proxy.
 
 **Fidelity rules:**
 - Proxies intercept calls but execute them against the real local

@@ -1,0 +1,8 @@
+{
+  "expect": {
+    "verdict": "VIOLATED",
+    "invariant": "balance-never-negative"
+  },
+  "fault": "no fault: the second withdrawal runs in the object while the first awaits its payout, and both pass the balance check",
+  "description": "A Durable Object wallet checks the balance, pays out through an external API, then debits. The input gate is open during the outbound call, so two concurrent withdrawals both pass the check and the balance goes negative."
+}

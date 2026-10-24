@@ -89,9 +89,12 @@ In this order:
   storage snapshots, the `unique` invariant), planted bug
   `lease-pool-lost-response`; alarms in virtual time (one per object,
   at-least-once with the documented retries, several schedules over one
-  alarm), planted bug `alarm-reminder-sent-twice`. Next: the wallet race;
-  KV and SQL storage when a target needs them (the first target uses
-  key-value storage only).
+  alarm), planted bug `alarm-reminder-sent-twice`; interleaving at an
+  object's own outbound I/O, planted bug `wallet-overdraft-race` (the
+  wallet race of the gate: a withdrawal checks, pays out, then debits, and
+  a second runs while the first awaits its payout). Next: KV and SQL
+  storage when a target needs them (the first target uses key-value
+  storage only).
 - Exhaustive scheduler and partial-order reduction.
 - Lemma spec parser, `SpecIR`, the `CHECKED` rung, `refines`.
 

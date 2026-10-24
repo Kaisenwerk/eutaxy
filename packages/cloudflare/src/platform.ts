@@ -338,6 +338,7 @@ export function createCloudflarePlatform(options: CloudflarePlatformOptions): Pl
             stateFor(binding),
           ),
           abort: (id) => stateFor(binding).abort(id),
+          mayPark: (id) => stateFor(binding).mayPark(id),
           evict: (id) => evictObject(namespace(binding), options.durableObjects, id),
           bookkeep: (op, args) =>
             hooks.effectSync(

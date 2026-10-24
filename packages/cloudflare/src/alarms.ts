@@ -257,6 +257,8 @@ export interface AlarmDelivery {
   readonly bookkeep: (op: string, args: JsonValue) => void;
   /** Reset the object, when the alarm's invocation crashes inside its handler. */
   readonly abort: (id: string) => void;
+  /** Whether an effect the handler makes may wait for a turn (not inside blockConcurrencyWhile). */
+  readonly mayPark: (id: string) => boolean;
   /** Drop the object's instance, when its alarm invocation crashed around the handler. */
   readonly evict: (id: string) => Promise<void>;
 }
@@ -304,7 +306,7 @@ export async function deliverAlarm(
         return null;
       },
       () => null,
-      { onAbandon: () => d.abort(a.id) },
+      { onAbandon: () => d.abort(a.id), mayPark: () => d.mayPark(a.id) },
     )
     .then(
       () => "completed" as const,

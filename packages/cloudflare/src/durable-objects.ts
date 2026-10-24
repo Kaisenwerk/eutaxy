@@ -56,6 +56,40 @@ export function isDurableObjectNamespace(value: unknown): value is DurableObject
 /** Object names by id, so snapshots and the log name objects as the Worker does. */
 export type ObjectNames = Map<string, string>;
 
+/** How deep each object state is inside blockConcurrencyWhile, while it is. */
+const gateDepth = new WeakMap<object, number>();
+/** Object-state prototypes whose blockConcurrencyWhile records that depth. */
+const gateWatched = new WeakSet<object>();
+
+/**
+ * Record when an object holds its input gate with blockConcurrencyWhile,
+ * on the state prototype so constructors are covered too; the wrapper only
+ * records and calls the native method.
+ */
+function watchGate(state: DurableObjectState): void {
+  const proto = Object.getPrototypeOf(state) as {
+    blockConcurrencyWhile?: (cb: () => Promise<unknown>) => Promise<unknown>;
+  };
+  if (!proto || gateWatched.has(proto) || typeof proto.blockConcurrencyWhile !== "function") return;
+  gateWatched.add(proto);
+  const native = proto.blockConcurrencyWhile;
+  proto.blockConcurrencyWhile = function (this: object, callback: () => Promise<unknown>) {
+    return native.call(this, async () => {
+      gateDepth.set(this, (gateDepth.get(this) ?? 0) + 1);
+      try {
+        return await callback();
+      } finally {
+        gateDepth.set(this, (gateDepth.get(this) ?? 1) - 1);
+      }
+    });
+  };
+}
+
+/** Whether the object is inside blockConcurrencyWhile now. */
+function gateHeld(state: DurableObjectState | undefined): boolean {
+  return state !== undefined && (gateDepth.get(state) ?? 0) > 0;
+}
+
 /** What Eutaxy keeps about one namespace during a run; the platform clears it before each run. */
 export class BindingState {
   /** Names learned this run (seeded ones come back with the setup), so traces never depend on earlier runs. */
@@ -66,6 +100,11 @@ export class BindingState {
   readonly alarms = new AlarmBook();
   /** Each reached object's live state, so an invocation that crashes inside it can reset it. */
   readonly states = new Map<string, DurableObjectState>();
+
+  /** Whether the object's own effects may wait for a turn: not while it holds its input gate. */
+  mayPark(id: string): boolean {
+    return !gateHeld(this.states.get(id));
+  }
 
   clear(): void {
     this.names.clear();
@@ -157,6 +196,7 @@ export function proxyNamespace(
       } else {
         touched.add(id);
         await typed(helpers).runInDurableObject(real, (_instance, live) => {
+          watchGate(live);
           state.states.set(id, live);
           return takeOverAlarms(
             live.storage,
@@ -215,8 +255,12 @@ export function proxyNamespace(
         },
         perform,
         summarize,
-        // A crash inside the object's own work leaves its request pending: reset the object.
-        { onAbandon: () => state.abort(id) },
+        {
+          // A crash inside the object's own work leaves its request pending: reset the object.
+          onAbandon: () => state.abort(id),
+          // Inside blockConcurrencyWhile nothing else enters the object: its effects run at once.
+          mayPark: () => state.mayPark(id),
+        },
       );
     }
 
@@ -346,6 +390,7 @@ export function alarmRunner(
     await typed(helpers).runInDurableObject(
       real.get(real.idFromString(id)),
       async (instance, live) => {
+        watchGate(live);
         state.states.set(id, live);
         await takeOverAlarms(
           live.storage,
@@ -418,6 +463,8 @@ async function clearAndSeed(
     // Own entries only, and only for a known name: an object may be named "" or "__proto__".
     const entries = name !== undefined && Object.hasOwn(objects, name) ? objects[name] : undefined;
     await typed(helpers).runInDurableObject(stub, async (_instance, state) => {
+      // Before any constructor of this run: so its blockConcurrencyWhile is seen too.
+      watchGate(state);
       await state.storage.deleteAll();
       await deleteRealAlarm(state.storage);
       if (entries && Object.keys(entries).length > 0) await state.storage.put(entries);
