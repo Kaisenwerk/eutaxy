@@ -1,0 +1,9 @@
+{
+  "name": "@eutaxy-corpus/lemma-conformance",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@eutaxy/spec": "workspace:*"
+  }
+}

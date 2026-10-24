@@ -1,0 +1,5 @@
+{
+  "annotation": "forall (x: int ∈ [1, 2, 3]) { x > 0 }",
+  "note": "an interval has exactly two endpoints",
+  "stage": "prefix"
+}

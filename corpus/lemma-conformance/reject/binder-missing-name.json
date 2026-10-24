@@ -1,0 +1,5 @@
+{
+  "annotation": "forall (: int) { x === x }",
+  "note": "binder group with no variable names",
+  "stage": "prefix"
+}

@@ -1,0 +1,5 @@
+{
+  "annotation": "forall (s: string ∈ [1, 30]) { s === s }",
+  "note": "interval guards apply to numeric domains only",
+  "stage": "prefix"
+}

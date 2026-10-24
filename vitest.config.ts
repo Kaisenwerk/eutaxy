@@ -32,6 +32,7 @@ export default defineConfig({
             "packages/*/src/**/*.test.ts",
             "tests/**/*.test.ts",
             ...corpora.map((root) => `${root}/harness.test.ts`),
+            "corpus/lemma-conformance/*.test.ts",
             // Corpus entries for platforms that run in Node (no workerd), e.g. AWS Lambda.
             ...corpora.map((root) => `${root}/*/scenario.node.test.ts`),
           ],

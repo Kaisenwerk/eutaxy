@@ -1,0 +1,4 @@
+{
+  "annotation": "forall (x y: number ∈ (0, 1)) { x * y < 1 }",
+  "note": "shared interval constraint over two number binders"
+}

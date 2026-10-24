@@ -1,0 +1,4 @@
+{
+  "annotation": "forall (x: int) { Number.isInteger(x) ==> x + 1 > x }",
+  "note": "ASCII ==> at the formula root (precondition position)"
+}

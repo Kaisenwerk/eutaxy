@@ -1,0 +1,4 @@
+{
+  "annotation": "forall (s: string ∈ /(a|b)+/) (n: int) { f(s, n) }",
+  "note": "two binder groups with different domains and one guard"
+}

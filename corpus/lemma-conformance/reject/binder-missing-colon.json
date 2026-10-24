@@ -1,0 +1,5 @@
+{
+  "annotation": "forall (x int) { x === x }",
+  "note": "binder group missing the ':' before the domain",
+  "stage": "prefix"
+}

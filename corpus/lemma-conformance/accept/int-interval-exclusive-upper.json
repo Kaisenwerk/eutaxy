@@ -1,0 +1,4 @@
+{
+  "annotation": "forall (n: int ∈ [0, 10)) { n < 10 }",
+  "note": "exclusive upper endpoint on an int interval"
+}

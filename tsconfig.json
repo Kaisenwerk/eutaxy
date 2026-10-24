@@ -47,6 +47,9 @@
       "path": "corpus/differential"
     },
     {
+      "path": "corpus/lemma-conformance"
+    },
+    {
       "path": "examples/payments-queue"
     }
   ]

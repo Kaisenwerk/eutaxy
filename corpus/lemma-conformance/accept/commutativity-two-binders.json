@@ -1,0 +1,4 @@
+{
+  "annotation": "forall (x y: int) { x + y === y + x }",
+  "note": "one binder group binding two variables (Lean-style grouping)"
+}

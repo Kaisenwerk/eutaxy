@@ -1,0 +1,4 @@
+{
+  "annotation": "forall (x: int) { x > 0 ∧ x < 10 ∨ x === 0 }",
+  "note": "conjunction binds tighter than disjunction"
+}

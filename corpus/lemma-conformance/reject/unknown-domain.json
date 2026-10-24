@@ -1,0 +1,5 @@
+{
+  "annotation": "forall (x: float) { x === x }",
+  "note": "'float' is not a Lemma domain",
+  "stage": "prefix"
+}

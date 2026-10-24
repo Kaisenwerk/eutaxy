@@ -1,0 +1,5 @@
+{
+  "annotation": "forall (x: int) { x > 0 <-> x > 1 <-> x > 2 }",
+  "note": "iff is non-associative; chains must be parenthesized",
+  "stage": "formula"
+}

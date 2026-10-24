@@ -1,0 +1,4 @@
+{
+  "annotation": "forall (s: string ∈ /^[a-z]+$/) { f(s) }",
+  "note": "regex guard on the string domain"
+}

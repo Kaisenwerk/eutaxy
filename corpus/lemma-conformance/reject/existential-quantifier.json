@@ -1,0 +1,5 @@
+{
+  "annotation": "exists (x: int) { x > 0 }",
+  "note": "existential quantifiers are rejected with a teaching error",
+  "stage": "prefix"
+}
