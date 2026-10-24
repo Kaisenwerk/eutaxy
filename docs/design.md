@@ -720,8 +720,9 @@ trips and fuzzing).
 
 ## Open questions
 
-- Durable Objects beyond the stub boundary, in order: interleaving at an
-  object's own outbound I/O (and alarms concurrent with calls, which
-  Cloudflare allows), then recording the object's own binding calls.
+- Durable Objects beyond the stub boundary: recording the object's own
+  binding calls; and a corpus entry in which an alarm interleaves with a
+  call into the same object (Cloudflare allows it, the engine treats an
+  alarm as an event like any other, and no scenario exercises it yet).
 - Whether the Lemma conformance corpus is enough to pin the spec parser, or
   Eutaxy needs its own extension fixtures for loop invariants.
