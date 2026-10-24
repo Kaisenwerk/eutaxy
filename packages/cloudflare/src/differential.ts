@@ -7,19 +7,15 @@
  * semantics; what it does not share is any proxy code.
  */
 
-import {
-  canonicalJson,
-  type EventRef,
-  getPath,
-  type JsonValue,
-  type ScenarioSpec,
-} from "@eutaxy/core";
+import { type EventRef, getPath, type JsonValue, type ScenarioSpec } from "@eutaxy/core";
 import {
   CrashSignal,
+  compareSides,
+  DifferentialStuck,
   effectLatencyMs,
   installScriptedFetch,
   patchGlobals,
-  Run,
+  proxiedSide,
   settleOn,
   type VirtualClock,
 } from "@eutaxy/engine";
@@ -31,7 +27,8 @@ import {
 } from "./platform.ts";
 import type { HttpDrive, HttpRequestSpec, QueueDrive } from "./scenario.ts";
 
-export interface AttemptRecord {
+/** A type, not an interface, so it is JSON data the comparison takes as it is. */
+export type AttemptRecord = {
   readonly event: string;
   readonly attempt: number;
   readonly status: "completed" | "errored";
@@ -39,7 +36,7 @@ export interface AttemptRecord {
   readonly decision: "ack" | "retry" | null;
   /** HTTP drive: the response status the caller saw (500 for an uncaught exception). */
   readonly response?: number;
-}
+};
 
 export interface Side {
   readonly attempts: readonly AttemptRecord[];
@@ -56,16 +53,6 @@ export interface DifferentialResult {
   readonly differences: readonly string[];
   /** What the proxied run could not control; non-empty means the comparison proves nothing. */
   readonly unsupported: readonly string[];
-}
-
-/** The raw side cannot abandon an invocation the way the engine does; a stuck handler ends the comparison. */
-class StuckError extends Error {
-  override readonly name = "StuckError";
-  constructor(
-    message = "the handler is waiting on something outside the run (no timer due, no effect in flight)",
-  ) {
-    super(message);
-  }
 }
 
 /**
@@ -136,30 +123,17 @@ async function snapshotAll(
   return out;
 }
 
-/** The Eutaxy side: one run with no faults, driven like `runOnce` but keeping each delivery's status. */
+/** The Eutaxy side, keeping each delivery's status and the decision it made. */
 async function eutaxySide(
   spec: ScenarioSpec,
   options: CloudflarePlatformOptions,
 ): Promise<Side & { readonly unsupported: readonly string[] }> {
-  const platform = createCloudflarePlatform(options);
-  const run = new Run({
-    mode: "replay",
-    schedule: { seed: 0, faults: [] },
-    // The comparison delivers one event at a time on both sides, whatever the scenario's bound.
-    bounds: { ...spec.bounds, maxConcurrentInvocations: 1 },
-    faultProbability: 0,
-  });
-  const attempts: AttemptRecord[] = [];
-  await platform.reset(spec);
-  run.install(spec.externals);
-  try {
-    const pending: EventRef[] = [...platform.initialEvents(spec)];
-    while (pending.length > 0) {
-      const event = pending.shift() as EventRef;
+  const { attempts, unsupported } = await proxiedSide(
+    spec,
+    createCloudflarePlatform(options),
+    (event, result, entries): AttemptRecord => {
       const invocation = `${event.id}#${event.attempt}`;
-      const before = run.log.entries.length;
-      const result = await platform.deliver(event, run, spec);
-      const mine = run.log.entries.slice(before).filter((e) => e.invocation === invocation);
+      const mine = entries.filter((e) => e.invocation === invocation);
       const decision = mine.find(
         (e) =>
           e.kind === "result" &&
@@ -167,20 +141,24 @@ async function eutaxySide(
           getPath(e.payload, "result.effective") === true,
       )?.op as "ack" | "retry" | undefined;
       const response = mine.find((e) => e.kind === "result" && e.op === "response");
-      attempts.push({
+      return {
         event: event.id,
         attempt: event.attempt,
         status: result.status === "completed" ? "completed" : "errored",
         decision: decision ?? null,
         ...(response ? { response: getPath(response.payload, "result.status") as number } : {}),
-      });
-      pending.push(...run.takeQueued(), ...result.followUps);
-    }
-  } finally {
-    run.uninstall();
-  }
-  await platform.finish?.(spec, run);
-  return { attempts, state: await snapshotAll(spec, options), unsupported: run.unsupportedReasons };
+      };
+    },
+  );
+  return { attempts, state: await snapshotAll(spec, options), unsupported };
+}
+
+/** Each binding's tables under `<binding>.<table>`, as the comparison names them. */
+function flatten(state: Side["state"]): { readonly [name: string]: readonly JsonValue[] } {
+  const out: Record<string, readonly JsonValue[]> = {};
+  for (const [binding, tables] of Object.entries(state))
+    for (const [table, rows] of Object.entries(tables)) out[`${binding}.${table}`] = rows;
+  return out;
 }
 
 /** The raw side: the handler called directly with the real bindings and plain message or Request objects. */
@@ -230,7 +208,7 @@ async function rawSide(spec: ScenarioSpec, options: CloudflarePlatformOptions): 
       inFlight: () => io.n,
       crashed: () => false,
       stuck: () => {
-        throw new StuckError();
+        throw new DifferentialStuck();
       },
     });
   const ctxFor = (background: Promise<unknown>[]) =>
@@ -266,7 +244,7 @@ async function rawSide(spec: ScenarioSpec, options: CloudflarePlatformOptions): 
           response = r.status;
           status = "completed";
         } catch (err) {
-          if (err instanceof CrashSignal || err instanceof StuckError) throw err;
+          if (err instanceof CrashSignal || err instanceof DifferentialStuck) throw err;
           status = "errored";
         }
         await settle(Promise.all(background));
@@ -321,7 +299,7 @@ async function rawSide(spec: ScenarioSpec, options: CloudflarePlatformOptions): 
           );
           status = "completed";
         } catch (err) {
-          if (err instanceof CrashSignal || err instanceof StuckError) throw err;
+          if (err instanceof CrashSignal || err instanceof DifferentialStuck) throw err;
           status = "errored";
         }
         if (status === "completed") decision ??= "ack";
@@ -340,7 +318,7 @@ async function rawSide(spec: ScenarioSpec, options: CloudflarePlatformOptions): 
     restoreFetch();
     patched.restore();
   }
-  if (unsupported.length > 0) throw new StuckError(`raw side: ${unsupported.join("; ")}`);
+  if (unsupported.length > 0) throw new DifferentialStuck(`raw side: ${unsupported.join("; ")}`);
   return { attempts, state: await snapshotAll(spec, options) };
 }
 
@@ -354,24 +332,10 @@ export async function runDifferential(
   }
   const { unsupported, ...eutaxy } = await eutaxySide(spec, options);
   const raw = await rawSide(spec, options);
-  const differences: string[] = [];
-  if (unsupported.length > 0) {
-    differences.push(`the proxied run touched unsupported APIs: ${unsupported.join("; ")}`);
-  }
-  const a = canonicalJson(eutaxy.attempts as unknown as JsonValue);
-  const b = canonicalJson(raw.attempts as unknown as JsonValue);
-  if (a !== b) differences.push(`attempts differ:\n  eutaxy ${a}\n  raw    ${b}`);
-  const bindings = new Set([...Object.keys(eutaxy.state), ...Object.keys(raw.state)]);
-  for (const binding of [...bindings].sort()) {
-    const tables = new Set([
-      ...Object.keys(eutaxy.state[binding] ?? {}),
-      ...Object.keys(raw.state[binding] ?? {}),
-    ]);
-    for (const table of [...tables].sort()) {
-      const x = canonicalJson((eutaxy.state[binding]?.[table] ?? []) as unknown as JsonValue);
-      const y = canonicalJson((raw.state[binding]?.[table] ?? []) as unknown as JsonValue);
-      if (x !== y) differences.push(`${binding}.${table} differs:\n  eutaxy ${x}\n  raw    ${y}`);
-    }
-  }
+  const differences = compareSides(
+    { attempts: eutaxy.attempts, state: flatten(eutaxy.state) },
+    { attempts: raw.attempts, state: flatten(raw.state) },
+    unsupported,
+  );
   return { equal: differences.length === 0, eutaxy, raw, differences, unsupported };
 }

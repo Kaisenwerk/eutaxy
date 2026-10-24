@@ -6,20 +6,29 @@
  */
 
 import type { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { canonicalJson, type EventRef, type JsonValue, type ScenarioSpec } from "@eutaxy/core";
-import { effectLatencyMs, installScriptedFetch, patchGlobals, Run, settleOn } from "@eutaxy/engine";
+import type { EventRef, JsonValue, ScenarioSpec } from "@eutaxy/core";
+import {
+  compareSides,
+  DifferentialStuck,
+  effectLatencyMs,
+  installScriptedFetch,
+  patchGlobals,
+  proxiedSide,
+  settleOn,
+} from "@eutaxy/engine";
 import { resetTables, snapshotTables, type TableSpec } from "./dynamodb.ts";
 import { batchFailed, type SqsBatchResponse, sqsInvocation } from "./lambda.ts";
 import { type AwsPlatformOptions, createAwsPlatform } from "./platform.ts";
 import type { SqsDrive } from "./scenario.ts";
 import { installSdkProxy } from "./sdk.ts";
 
-export interface AttemptRecord {
+/** A type, not an interface, so it is JSON data the comparison takes as it is. */
+export type AttemptRecord = {
   readonly event: string;
   readonly attempt: number;
   readonly status: "completed" | "errored";
   readonly deleted: boolean;
-}
+};
 
 export interface Side {
   readonly attempts: readonly AttemptRecord[];
@@ -34,16 +43,6 @@ export interface DifferentialResult {
   readonly unsupported: readonly string[];
 }
 
-/** The raw side cannot abandon an invocation the way the engine does; a stuck handler ends the comparison. */
-class StuckError extends Error {
-  override readonly name = "StuckError";
-  constructor() {
-    super(
-      "raw side: the handler is waiting on something outside the run (no SDK call in flight, no timer due)",
-    );
-  }
-}
-
 function tablesOf(spec: ScenarioSpec): readonly TableSpec[] {
   return spec.setup.filter((s): s is TableSpec => s.kind === "dynamodb-table");
 }
@@ -52,44 +51,19 @@ async function eutaxySide(
   spec: ScenarioSpec,
   options: AwsPlatformOptions,
 ): Promise<Side & { unsupported: readonly string[] }> {
-  const platform = createAwsPlatform(options);
-  const run = new Run({
-    mode: "replay",
-    schedule: { seed: 0, faults: [] },
-    bounds: spec.bounds,
-    faultProbability: 0,
-  });
-  const attempts: AttemptRecord[] = [];
-  await platform.reset(spec);
-  run.install(spec.externals);
-  try {
-    try {
-      const pending: EventRef[] = [...platform.initialEvents(spec)];
-      while (pending.length > 0) {
-        const event = pending.shift() as EventRef;
-        const before = run.log.entries.length;
-        const result = await platform.deliver(event, run, spec);
-        const deleted = run.log.entries
-          .slice(before)
-          .some((e) => e.kind === "result" && e.op === "delete");
-        attempts.push({
-          event: event.id,
-          attempt: event.attempt,
-          status: result.status === "completed" ? "completed" : "errored",
-          deleted,
-        });
-        pending.push(...result.followUps);
-      }
-    } finally {
-      run.uninstall();
-    }
-    await platform.finish?.(spec, run);
-  } finally {
-    await platform.cleanup?.(spec);
-  }
+  const { attempts, unsupported } = await proxiedSide(
+    spec,
+    createAwsPlatform(options),
+    (event, result, entries): AttemptRecord => ({
+      event: event.id,
+      attempt: event.attempt,
+      status: result.status === "completed" ? "completed" : "errored",
+      deleted: entries.some((e) => e.kind === "result" && e.op === "delete"),
+    }),
+  );
   const dynamo = options.clients["DynamoDBClient"] as DynamoDBClient | undefined;
   const tables = dynamo ? await snapshotTables(dynamo, tablesOf(spec)) : {};
-  return { attempts, tables, unsupported: run.unsupportedReasons };
+  return { attempts, tables, unsupported };
 }
 
 async function rawSide(spec: ScenarioSpec, options: AwsPlatformOptions): Promise<Side> {
@@ -146,13 +120,13 @@ async function rawSide(spec: ScenarioSpec, options: AwsPlatformOptions): Promise
             inFlight: () => io.n,
             crashed: () => false,
             stuck: () => {
-              throw new StuckError();
+              throw new DifferentialStuck();
             },
           },
         )) as SqsBatchResponse | undefined;
         status = "completed";
       } catch (err) {
-        if (err instanceof StuckError) throw err;
+        if (err instanceof DifferentialStuck) throw err;
         status = "errored";
       }
       const failed = batchFailed(response, event.id, [event.id]);
@@ -182,17 +156,10 @@ export async function runAwsDifferential(
 ): Promise<DifferentialResult> {
   const { unsupported, ...eutaxy } = await eutaxySide(spec, options);
   const raw = await rawSide(spec, options);
-  const differences: string[] = [];
-  if (unsupported.length > 0)
-    differences.push(`the proxied run touched unsupported APIs: ${unsupported.join("; ")}`);
-  const a = canonicalJson(eutaxy.attempts as unknown as JsonValue);
-  const b = canonicalJson(raw.attempts as unknown as JsonValue);
-  if (a !== b) differences.push(`attempts differ:\n  eutaxy ${a}\n  raw    ${b}`);
-  const names = new Set([...Object.keys(eutaxy.tables), ...Object.keys(raw.tables)]);
-  for (const t of [...names].sort()) {
-    const x = canonicalJson((eutaxy.tables[t] ?? []) as unknown as JsonValue);
-    const y = canonicalJson((raw.tables[t] ?? []) as unknown as JsonValue);
-    if (x !== y) differences.push(`${t} differs:\n  eutaxy ${x}\n  raw    ${y}`);
-  }
+  const differences = compareSides(
+    { attempts: eutaxy.attempts, state: eutaxy.tables },
+    { attempts: raw.attempts, state: raw.tables },
+    unsupported,
+  );
   return { equal: differences.length === 0, eutaxy, raw, differences, unsupported };
 }
