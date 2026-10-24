@@ -13,6 +13,7 @@
  */
 
 import { type JsonValue, toJson } from "@eutaxy/core";
+import { patchProperty } from "./patch.ts";
 import { installedRun } from "./run.ts";
 
 export interface ObservedCall {
@@ -66,25 +67,19 @@ export function observeCore(namespace: object, functions: readonly string[]): Co
       record(false, { result: toJson(value) });
       return value;
     };
-    const descriptor = Object.getOwnPropertyDescriptor(target, name);
+    let restore: () => void;
     try {
-      Object.defineProperty(target, name, {
-        configurable: true,
-        enumerable: descriptor?.enumerable ?? true,
-        get: () => wrapped,
-      });
+      restore = patchProperty(target, name, { get: () => wrapped });
     } catch (err) {
       unobservable[name] = `its module's namespace cannot be changed here (${String(err)})`;
       continue;
     }
     if (target[name] !== wrapped) {
+      restore();
       unobservable[name] = "its module's namespace did not take the observer";
       continue;
     }
-    undo.push(() => {
-      if (descriptor) Object.defineProperty(target, name, descriptor);
-      else delete target[name];
-    });
+    undo.push(restore);
   }
   let restored = false;
   return {

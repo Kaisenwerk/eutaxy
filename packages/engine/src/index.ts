@@ -23,6 +23,7 @@ export {
   withoutNetwork,
 } from "./fetch.ts";
 export { type CoreObserver, type ObservedCall, observeCore } from "./observe.ts";
+export { patchProperty } from "./patch.ts";
 export {
   type ChoiceOption,
   type Chooser,

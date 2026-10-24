@@ -127,6 +127,11 @@ describe("observeCore", () => {
 
   test("a frozen namespace cannot be observed, and says so", () => {
     const ns = Object.freeze({ decide: (n: number) => n === 0 });
+    const ignoring = new Proxy({ decide: (n: number) => n > 0 }, { defineProperty: () => true });
+    const ignored = observeCore(ignoring, ["decide"]);
+    expect(ignored.unobservable["decide"]).toContain("did not take the observer");
+    expect(ignoring.decide(1)).toBe(true);
+    ignored.restore();
     const observer = observeCore(ns, ["decide", "missing"]);
     expect(Object.keys(observer.unobservable).sort()).toEqual(["decide", "missing"]);
     expect(observer.unobservable["missing"]).toContain("no function");

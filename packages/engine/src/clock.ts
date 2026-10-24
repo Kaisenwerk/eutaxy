@@ -10,6 +10,7 @@
 
 import { nextFloat, nextU32, type PrngState, seedPrng } from "@eutaxy/core";
 import { asyncScope } from "./context.ts";
+import { patchProperty } from "./patch.ts";
 
 /** 2026-01-01T00:00:00.000Z. Every run starts here. */
 export const virtualEpoch = Date.UTC(2026, 0, 1);
@@ -237,15 +238,9 @@ export function patchGlobals(seed: number | string, options: PatchOptions = {}):
     reads.count++;
   };
   const g = globalThis as unknown as Global;
-  const saved: { target: object; key: string; descriptor: PropertyDescriptor | undefined }[] = [];
+  const undo: (() => void)[] = [];
   const define = (target: object, key: string, value: unknown): void => {
-    saved.push({ target, key, descriptor: Object.getOwnPropertyDescriptor(target, key) });
-    Object.defineProperty(target, key, {
-      value,
-      configurable: true,
-      writable: true,
-      enumerable: false,
-    });
+    undo.push(patchProperty(target, key, { value }));
   };
 
   const RealDate = Date;
@@ -332,10 +327,7 @@ export function patchGlobals(seed: number | string, options: PatchOptions = {}):
     restore() {
       if (restored) return;
       restored = true;
-      for (const { target, key, descriptor } of saved.reverse()) {
-        if (descriptor) Object.defineProperty(target, key, descriptor);
-        else delete (target as Global)[key];
-      }
+      for (const u of undo.reverse()) u();
     },
   };
 }

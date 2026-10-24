@@ -8,6 +8,7 @@
  */
 
 import type { EffectPoint, FaultKind, JsonValue, RunHooks } from "@eutaxy/core";
+import { patchProperty } from "@eutaxy/engine";
 import { Client } from "@smithy/smithy-client";
 import { toJson } from "./json.ts";
 
@@ -141,8 +142,6 @@ export function summarize(
 
 /** Replace `Client.prototype.send` for a run; returns the function that restores it. Safe to call twice. */
 export function installSdkProxy(options: SdkProxyOptions): () => void {
-  const proto = Client.prototype as unknown as { send: Send };
-  const saved = proto.send;
   const patched: Send = async function (this: AnyClient, command: AnyCommand, ...rest: unknown[]) {
     const className = this.constructor.name;
     const local = options.clients[className];
@@ -181,11 +180,5 @@ export function installSdkProxy(options: SdkProxyOptions): () => void {
     };
     return options.hooks.effect(point, perform, (r) => summarize(op, r, input));
   };
-  proto.send = patched;
-  let restored = false;
-  return () => {
-    if (restored) return;
-    restored = true;
-    proto.send = saved;
-  };
+  return patchProperty(Client.prototype, "send", { value: patched });
 }

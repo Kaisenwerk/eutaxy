@@ -12,6 +12,7 @@
  */
 
 import type { ExternalDecl, FaultKind, JsonValue, RunHooks, ScriptedResponse } from "@eutaxy/core";
+import { patchProperty } from "./patch.ts";
 
 const FAULTS: readonly FaultKind[] = ["crash_before", "crash_after", "ambiguous", "error"];
 
@@ -178,21 +179,8 @@ export function installScriptedFetch(
   unsupported: (reason: string) => void,
   afterRequest?: () => void,
 ): () => void {
-  const g = globalThis as unknown as { fetch: typeof fetch };
-  const saved = Object.getOwnPropertyDescriptor(globalThis, "fetch");
   const { fetch: scripted } = createScriptedFetch(externals, hooks, unsupported, afterRequest);
-  Object.defineProperty(globalThis, "fetch", {
-    value: scripted,
-    configurable: true,
-    writable: true,
-  });
-  let restored = false;
-  return () => {
-    if (restored) return;
-    restored = true;
-    if (saved) Object.defineProperty(globalThis, "fetch", saved);
-    else delete (g as { fetch?: unknown }).fetch;
-  };
+  return patchProperty(globalThis, "fetch", { value: scripted });
 }
 
 /**
@@ -205,19 +193,15 @@ export async function withoutNetwork<T>(
   work: () => Promise<T>,
 ): Promise<{ readonly value: T; readonly requested: boolean }> {
   let requested = false;
-  const saved = Object.getOwnPropertyDescriptor(globalThis, "fetch");
-  Object.defineProperty(globalThis, "fetch", {
+  const restore = patchProperty(globalThis, "fetch", {
     value: async () => {
       requested = true;
       throw new TypeError("network access is blocked while Eutaxy resets or snapshots state");
     },
-    configurable: true,
-    writable: true,
   });
   try {
     return { value: await work(), requested };
   } finally {
-    if (saved) Object.defineProperty(globalThis, "fetch", saved);
-    else delete (globalThis as { fetch?: unknown }).fetch;
+    restore();
   }
 }
