@@ -16,16 +16,9 @@ design describes what they built. Patch work has no gate of its own: each
 item ships as a `0.5.x` release once `pnpm check` and the corpora pass,
 and v0.6's gate closes the next phase.
 
-In this order. The first four came out of a full review before 0.5.0 and
+In this order. The first three came out of a full review before 0.5.0 and
 go before the provers, because the prover phase builds on the engine's run
 loop and the public facade, which are cheaper to reshape now than after.
-- Platform-neutral code moves down: the `atMostOncePerKey` and
-  `atLeastOncePerMessage` constructors and the JSON summary to `core` (one
-  summarizer, platform extras wrapping it), the platform's bookkeeping
-  invocation to `RunHooks`, the differential's two-sided comparison to
-  `engine`. Both platforms carry copies today, so the second use has
-  arrived. One `patchProperty` in `engine` replaces the four ways globals
-  are saved and restored.
 - The generated check test shrinks to its globs and one typed call: the
   orchestration it holds as a template string (schemas, module loading,
   spec modules, observers, verdict, transport) moves into a function in
