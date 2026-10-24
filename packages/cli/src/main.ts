@@ -17,7 +17,7 @@ Options:
   --expect-violation    write a regression test that asserts the violation (for corpora)
   --keep                keep the generated .eutaxy/ files
 
-Exit codes: 0 BOUNDED, 1 VIOLATED, 2 UNSUPPORTED, 3 error.
+Exit codes: 0 BOUNDED, 1 VIOLATED or a REFUTED spec, 2 UNSUPPORTED, 3 error.
 `;
 
 export interface Io {
