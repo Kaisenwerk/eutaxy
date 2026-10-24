@@ -1,5 +1,6 @@
 // @eutaxy/core: the pure simulation kernel. See README.md.
 export { canonicalJson, type JsonValue } from "./canonical-json.ts";
+export { atLeastOnce, atLeastOncePerMessage, atMostOncePerKey } from "./delivery-invariants.ts";
 export {
   appendEffect,
   digestLog,

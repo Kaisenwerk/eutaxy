@@ -2,12 +2,11 @@
 
 import {
   type AtLeastOnce,
-  type AtMostOncePerKey,
   type Bounds,
+  atLeastOncePerMessage as coreAtLeastOncePerMessage,
   defaultBounds,
   type EffectSelector,
   type ExternalDecl,
-  getPath,
   type Invariant,
   type JsonValue,
   type PlatformData,
@@ -70,14 +69,7 @@ export function sqsDelete(queue: string): EffectSelector {
   return { target: `SQS:${queue}`, op: "delete", kind: "result" };
 }
 
-export function atMostOncePerKey(
-  name: string,
-  effect: EffectSelector,
-  key: string,
-): AtMostOncePerKey {
-  return { kind: "atMostOncePerKey", name, effect, key };
-}
-
+/** Every message's `bodyKey` value must appear at least once as `key` in a selected effect. */
 export function atLeastOncePerMessage(
   name: string,
   drive: SqsDrive,
@@ -85,14 +77,7 @@ export function atLeastOncePerMessage(
   key: string,
   bodyKey: string,
 ): AtLeastOnce {
-  const expected: JsonValue[] = [];
-  for (const m of drive.messages) {
-    const v = getPath(m.body, bodyKey);
-    if (v === undefined)
-      throw new Error(`message ${m.id} has no ${JSON.stringify(bodyKey)} in its body`);
-    expected.push(v);
-  }
-  return { kind: "atLeastOnce", name, effect, key, expected, perMessage: { bodyKey } };
+  return coreAtLeastOncePerMessage(name, drive.messages, effect, key, bodyKey);
 }
 
 export interface AwsScenarioInput {

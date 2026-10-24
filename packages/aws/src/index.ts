@@ -1,4 +1,6 @@
 // @eutaxy/aws: the AWS platform (Lambda + SQS + DynamoDB). See README.md.
+
+export { atMostOncePerKey } from "@eutaxy/core";
 export {
   type AttemptRecord,
   type DifferentialResult,
@@ -24,7 +26,6 @@ export {
 export {
   type AwsScenarioInput,
   atLeastOncePerMessage,
-  atMostOncePerKey,
   defineAwsScenario,
   dynamoRows,
   dynamoTable,

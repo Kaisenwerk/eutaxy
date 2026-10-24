@@ -7,13 +7,12 @@
 
 import {
   type AtLeastOnce,
-  type AtMostOncePerKey,
   type Bounds,
+  atLeastOncePerMessage as coreAtLeastOncePerMessage,
   defaultBounds,
   type EffectSelector,
   type EveryRow,
   type ExternalDecl,
-  getPath,
   type Implies,
   type Invariant,
   type JsonValue,
@@ -233,23 +232,6 @@ export function refines(
   return { kind: "refines", name, decision, effect, ...options };
 }
 
-export function atMostOncePerKey(
-  name: string,
-  effect: EffectSelector,
-  key: string,
-): AtMostOncePerKey {
-  return { kind: "atMostOncePerKey", name, effect, key };
-}
-
-export function atLeastOnce(
-  name: string,
-  effect: EffectSelector,
-  key: string,
-  expected: readonly JsonValue[],
-): AtLeastOnce {
-  return { kind: "atLeastOnce", name, effect, key, expected };
-}
-
 /**
  * Every message's (or request's) `bodyKey` value must appear at least once
  * as `key` in a selected effect: nothing the drive delivered may be lost.
@@ -261,23 +243,12 @@ export function atLeastOncePerMessage(
   key: string,
   bodyKey: string,
 ): AtLeastOnce {
-  const expected: JsonValue[] = [];
-  const items =
-    drive.kind === "queue"
-      ? drive.messages.map((m) => ({ id: m.id, body: m.body }))
-      : drive.requests.map((r) => ({ id: r.id, body: r.body ?? null }));
-  for (const m of items) {
-    const v = getPath(m.body, bodyKey);
-    if (v === undefined) {
-      throw new Error(`${drive.kind} event ${m.id} has no ${JSON.stringify(bodyKey)} in its body`);
-    }
-    expected.push(v);
-  }
+  if (drive.kind === "queue")
+    return coreAtLeastOncePerMessage(name, drive.messages, effect, key, bodyKey);
+  const requests = drive.requests.map((r) => ({ id: r.id, body: r.body ?? null }));
+  const inv = coreAtLeastOncePerMessage(name, requests, effect, key, bodyKey);
   // An HTTP event's data is the whole request, so the path to re-derive from starts at its body.
-  const perMessage = {
-    bodyKey: drive.kind === "queue" ? bodyKey : bodyKey === "" ? "body" : `body.${bodyKey}`,
-  };
-  return { ...atLeastOnce(name, effect, key, expected), perMessage };
+  return { ...inv, perMessage: { bodyKey: bodyKey === "" ? "body" : `body.${bodyKey}` } };
 }
 
 /**

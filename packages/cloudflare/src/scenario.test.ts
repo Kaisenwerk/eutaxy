@@ -1,7 +1,7 @@
+import { atMostOncePerKey } from "@eutaxy/core";
 import { describe, expect, test } from "vitest";
 import {
   atLeastOncePerMessage,
-  atMostOncePerKey,
   d1Param,
   d1Schema,
   d1Write,

@@ -10,7 +10,7 @@ import {
 } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, PutCommand } from "@aws-sdk/lib-dynamodb";
 import { marshall } from "@aws-sdk/util-dynamodb";
-import { digestLog, type ScenarioSpec, selectEffects } from "@eutaxy/core";
+import { atMostOncePerKey, digestLog, type ScenarioSpec, selectEffects } from "@eutaxy/core";
 import { explore, replay } from "@eutaxy/engine";
 import { Client } from "@smithy/smithy-client";
 import dynalite from "dynalite";
@@ -20,7 +20,6 @@ import { listAllTables, resetTables } from "./dynamodb.ts";
 import { createAwsPlatform, type SqsHandler } from "./platform.ts";
 import {
   atLeastOncePerMessage,
-  atMostOncePerKey,
   defineAwsScenario,
   dynamoRows,
   dynamoTable,

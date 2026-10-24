@@ -1,4 +1,6 @@
 // @eutaxy/cloudflare: see README.md.
+
+export { atLeastOnce, atMostOncePerKey } from "@eutaxy/core";
 export { check, expectHolds } from "./check.ts";
 export { proxyD1, resetD1, snapshotD1, splitSql } from "./d1.ts";
 export {
@@ -15,9 +17,7 @@ export {
   type WorkerHandler,
 } from "./platform.ts";
 export {
-  atLeastOnce,
   atLeastOncePerMessage,
-  atMostOncePerKey,
   type CloudflareScenarioInput,
   type D1Setup,
   type DurableObjectSetup,
