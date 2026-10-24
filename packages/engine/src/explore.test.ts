@@ -417,6 +417,23 @@ describe("shrinking", () => {
 });
 
 describe("Run", () => {
+  test("bookkeeping is one invocation per run that never becomes the running one", () => {
+    const run = new Run({
+      mode: "replay",
+      schedule: { seed: 1, faults: [] },
+      bounds: spec.bounds,
+      faultProbability: 0,
+    });
+    run.startInvocation("i");
+    const id = run.bookkeeping();
+    expect(run.bookkeeping()).toBe(id);
+    expect(run.running()).toBe("i");
+    expect(() => run.startInvocation(id)).toThrow(/already started/);
+    // The option it replaces still works: tracked, never running.
+    run.startInvocation("dead-letter", { bookkeeping: true });
+    expect(run.running()).toBe("i");
+  });
+
   test("replay mode follows the schedule exactly and ignores disallowed faults", async () => {
     const run = new Run({
       mode: "replay",

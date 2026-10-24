@@ -212,6 +212,9 @@ function hang<T>(): Promise<T> {
   return new Promise<T>(() => {});
 }
 
+/** Delivered invocations are `<event>#<attempt>`, so this id is never one of theirs. */
+const bookkeepingId = "platform";
+
 export class Run implements RunHooks {
   private logState: EffectLog = emptyLog;
   private readonly faults: FaultDecision[] = [];
@@ -382,9 +385,7 @@ export class Run implements RunHooks {
   }
 
   startInvocation(id: string, options: { readonly bookkeeping?: boolean } = {}): Invocation {
-    if (this.invocations.has(id)) throw new Error(`invocation ${id} already started`);
-    const inv = new InvocationState(id, () => this.patched?.clock.cancelOwner(id));
-    this.invocations.set(id, inv);
+    const inv = this.track(id);
     if (options.bookkeeping) return inv;
     if (this.concurrent) {
       this.startOrder.set(id, this.startOrder.size);
@@ -430,6 +431,18 @@ export class Run implements RunHooks {
   private runAs(id: string | null): void {
     if (this.patched) this.patched.clock.owner = id;
     if (id !== null) this.current = id;
+  }
+
+  bookkeeping(): string {
+    if (!this.invocations.has(bookkeepingId)) this.track(bookkeepingId);
+    return bookkeepingId;
+  }
+
+  private track(id: string): InvocationState {
+    if (this.invocations.has(id)) throw new Error(`invocation ${id} already started`);
+    const inv = new InvocationState(id, () => this.patched?.clock.cancelOwner(id));
+    this.invocations.set(id, inv);
+    return inv;
   }
 
   private invocation(id: string): InvocationState {

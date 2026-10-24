@@ -74,12 +74,19 @@ export interface Invocation {
 /** What the engine offers a platform during one run. */
 export interface RunHooks {
   /**
-   * Start tracking an invocation; it becomes the running one. With
-   * `bookkeeping`, it only records the platform's own actions (a dead
-   * letter, a caller giving up) and never becomes the running one, so it
-   * cannot take over the effects of the handler it was started during.
+   * Start tracking an invocation; it becomes the running one.
+   * @param options.bookkeeping Deprecated: use `bookkeeping()`. Tracks the
+   * invocation without it ever becoming the running one.
    */
   startInvocation(id: string, options?: { readonly bookkeeping?: boolean }): Invocation;
+  /**
+   * The invocation the platform's own actions are recorded under (a dead
+   * letter, a caller giving up, an end-of-run snapshot), started on first
+   * use in the run. No fault crashes it and it never becomes the running
+   * one, so it cannot take over the effects of the handler it was started
+   * during.
+   */
+  bookkeeping(): string;
   /** Perform an asynchronous effect under fault injection and record it. */
   effect<T>(
     point: EffectPoint,

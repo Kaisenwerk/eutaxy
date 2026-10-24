@@ -76,9 +76,8 @@ export function createFakePlatform(
       rows.clear();
     },
     async finish(_spec, hooks) {
-      const inv = hooks.startInvocation("platform", { bookkeeping: true });
       const payments = [...rows.entries()].sort().map(([order_id, count]) => ({ order_id, count }));
-      hooks.snapshot(inv.id, "D1:DB", { tables: { payments } });
+      hooks.snapshot(hooks.bookkeeping(), "D1:DB", { tables: { payments } });
     },
     restrictEvents(spec: ScenarioSpec, keepIds: readonly string[]): ScenarioSpec {
       const messages = spec.drive["messages"] as readonly { id: string; body: JsonValue }[];

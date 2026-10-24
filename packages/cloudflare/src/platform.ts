@@ -214,18 +214,6 @@ export function createCloudflarePlatform(options: CloudflarePlatformOptions): Pl
     },
   });
 
-  /** Platform-level actions (dead-lettering) are recorded under an invocation no fault can crash. */
-  const platformInvocations = new WeakMap<RunHooks, string>();
-  function platformInvocation(hooks: RunHooks): string {
-    let id = platformInvocations.get(hooks);
-    if (id === undefined) {
-      id = "platform";
-      hooks.startInvocation(id, { bookkeeping: true });
-      platformInvocations.set(hooks, id);
-    }
-    return id;
-  }
-
   return {
     name: "cloudflare",
     assumptions,
@@ -296,7 +284,7 @@ export function createCloudflarePlatform(options: CloudflarePlatformOptions): Pl
               ),
             (reason) => hooks.unsupported(reason),
           );
-          hooks.snapshot(platformInvocation(hooks), `DO:${binding}`, { tables });
+          hooks.snapshot(hooks.bookkeeping(), `DO:${binding}`, { tables });
           continue;
         }
         if (step.kind !== "d1") continue;
@@ -304,7 +292,7 @@ export function createCloudflarePlatform(options: CloudflarePlatformOptions): Pl
         const real = env[binding];
         if (!isD1(real)) continue;
         const tables = await snapshotD1(real);
-        hooks.snapshot(platformInvocation(hooks), `D1:${binding}`, { tables });
+        hooks.snapshot(hooks.bookkeeping(), `D1:${binding}`, { tables });
       }
     },
 
@@ -343,7 +331,7 @@ export function createCloudflarePlatform(options: CloudflarePlatformOptions): Pl
           bookkeep: (op, args) =>
             hooks.effectSync(
               {
-                invocation: platformInvocation(hooks),
+                invocation: hooks.bookkeeping(),
                 target: `DO:${binding}`,
                 op,
                 args,
@@ -444,7 +432,7 @@ export function createCloudflarePlatform(options: CloudflarePlatformOptions): Pl
       } else {
         hooks.effectSync(
           {
-            invocation: platformInvocation(hooks),
+            invocation: hooks.bookkeeping(),
             target,
             op: "gave_up",
             args: { requestId: event.id, attempts: event.attempt },
@@ -612,7 +600,7 @@ export function createCloudflarePlatform(options: CloudflarePlatformOptions): Pl
         } else {
           hooks.effectSync(
             {
-              invocation: platformInvocation(hooks),
+              invocation: hooks.bookkeeping(),
               target: queueTarget,
               op: "dead_letter",
               args: { messageId: event.id, attempts: event.attempt },

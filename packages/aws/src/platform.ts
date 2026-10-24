@@ -58,20 +58,9 @@ export function createAwsPlatform(options: AwsPlatformOptions): Platform {
   let currentInvocation = "";
   let hooksRef: RunHooks | null = null;
   let restoreProxy: (() => void) | null = null;
-  const platformInvocations = new WeakMap<RunHooks, string>();
 
   function tablesOf(spec: ScenarioSpec): readonly TableSpec[] {
     return spec.setup.filter((s): s is TableSpec => s.kind === "dynamodb-table");
-  }
-
-  function platformInvocation(hooks: RunHooks): string {
-    let id = platformInvocations.get(hooks);
-    if (id === undefined) {
-      id = "platform";
-      hooks.startInvocation(id, { bookkeeping: true });
-      platformInvocations.set(hooks, id);
-    }
-    return id;
   }
 
   function ensureProxy(hooks: RunHooks): void {
@@ -104,7 +93,7 @@ export function createAwsPlatform(options: AwsPlatformOptions): Platform {
       const tables = tablesOf(spec);
       if (tables.length === 0 || !dynamo) return;
       const snapshot = await snapshotTables(dynamo, tables);
-      hooks.snapshot(platformInvocation(hooks), "DynamoDB", { tables: snapshot });
+      hooks.snapshot(hooks.bookkeeping(), "DynamoDB", { tables: snapshot });
     },
 
     async cleanup(): Promise<void> {
@@ -192,7 +181,7 @@ export function createAwsPlatform(options: AwsPlatformOptions): Platform {
         } else {
           hooks.effectSync(
             {
-              invocation: platformInvocation(hooks),
+              invocation: hooks.bookkeeping(),
               target: queueTarget,
               op: "dead_letter",
               args: { messageId: event.id, attempts: event.attempt },
