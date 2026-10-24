@@ -74,6 +74,12 @@ export interface ScenarioSpec {
   readonly externals: readonly ExternalDecl[];
   readonly invariants: readonly Invariant[];
   readonly bounds: Bounds;
+  /**
+   * Modules of pure core functions with Lemma specs, relative to the
+   * scenario. Calls to their annotated functions are recorded as decisions
+   * during exploration, and each property is checked on the inputs seen.
+   */
+  readonly specs?: readonly string[];
 }
 
 export const defaultBounds: Bounds = {
@@ -109,6 +115,12 @@ export function validateScenario(spec: ScenarioSpec): readonly string[] {
     else if (names.has(inv.name))
       errors.push(`duplicate invariant name ${JSON.stringify(inv.name)}`);
     names.add(inv.name);
+  }
+  const specs = new Set<string>();
+  for (const m of spec.specs ?? []) {
+    if (!m) errors.push("every specs entry needs a module path");
+    else if (specs.has(m)) errors.push(`duplicate specs module ${JSON.stringify(m)}`);
+    specs.add(m);
   }
   const ext = new Set<string>();
   for (const e of spec.externals) {

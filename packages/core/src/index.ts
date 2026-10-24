@@ -22,6 +22,7 @@ export {
   type AtMostOncePerKey,
   checkInvariant,
   checkInvariants,
+  decisionTarget,
   type EffectSelector,
   type EveryRow,
   getPath,
@@ -30,6 +31,7 @@ export {
   lastSnapshot,
   matches,
   queryRows,
+  type Refines,
   type Row,
   type RowCondition,
   recomputePerMessageExpected,
@@ -61,6 +63,15 @@ export {
   type WorkerRef,
 } from "./scenario.ts";
 export { type ShrinkState, shrinkCandidates, shrinkSize } from "./shrink.ts";
+export {
+  type Checked,
+  type Counterexample,
+  describeSpecVerdict,
+  type Refuted,
+  type SpecUnknown,
+  type SpecUnknownCause,
+  type SpecVerdict,
+} from "./spec-verdict.ts";
 export { bytesEqual, utf8Encode } from "./utf8.ts";
 export {
   type Bounded,
