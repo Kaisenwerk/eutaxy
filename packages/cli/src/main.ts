@@ -10,6 +10,7 @@ Options:
   --wrangler <path>     wrangler config (default: wrangler.jsonc/json/toml beside the scenario)
   --seed <seed>         exploration seed (default: the scenario file name)
   --max-runs <n>        cap on exploration runs in addition to the scenario's time budget
+  --exhaustive          run every schedule within the bounds once (with partial-order reduction)
   --json                print the versioned JSON report instead of text
   --out <path>          where to write the regression test on a violation
   --no-regression       do not write a regression test
@@ -32,6 +33,7 @@ export async function main(argv: readonly string[], io: Io): Promise<number> {
     "expect-violation",
     "keep",
     "help",
+    "exhaustive",
   ]);
   const command = positionals[0];
   if (!command || command === "help" || flags["help"] === true) {
@@ -61,6 +63,7 @@ export async function main(argv: readonly string[], io: Io): Promise<number> {
     ...(str("wrangler") ? { wrangler: str("wrangler") as string } : {}),
     ...(str("seed") ? { seed: str("seed") as string } : {}),
     ...(maxRuns === undefined ? {} : { maxRuns }),
+    exhaustive: flags["exhaustive"] === true,
     json: flags["json"] === true,
     ...(str("out") ? { out: str("out") as string } : {}),
     noRegression: flags["no-regression"] === true,

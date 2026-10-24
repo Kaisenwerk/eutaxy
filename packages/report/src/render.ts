@@ -82,6 +82,12 @@ export function renderText(verdict: ScenarioVerdict): string {
       out.push(
         `Bounds: faults per run ≤ ${b.maxFaultsPerRun}, redeliveries ≤ ${b.maxRedeliveries}, concurrent invocations ≤ ${b.maxConcurrentInvocations}, budget ${b.budgetMs} ms`,
       );
+      const e = r.exhaustive;
+      if (e) {
+        out.push(
+          `Exhaustive: ${e.complete ? "every schedule within the bounds ran" : "stopped at the budget before every schedule ran"} (${e.schedules} schedules${e.reduction ? ", partial-order reduction" : ""})`,
+        );
+      }
       break;
     }
     case "UNSUPPORTED": {

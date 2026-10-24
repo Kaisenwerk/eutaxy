@@ -101,6 +101,41 @@ describe("renderText", () => {
     expect(text).toContain("faults per run ≤ 1, redeliveries ≤ 2");
   });
 
+  test("an exhaustive BOUNDED says whether every schedule ran", () => {
+    const bounded: Bounded = {
+      kind: "BOUNDED",
+      scenario: "s",
+      seed: 1,
+      bounds: {
+        maxFaultsPerRun: 1,
+        maxRedeliveries: 0,
+        maxConcurrentInvocations: 2,
+        budgetMs: 2000,
+      },
+      reached: {
+        runs: 12,
+        effectPoints: 40,
+        faultsInjected: 8,
+        elapsedMs: 50,
+        exhaustive: { complete: true, schedules: 10, reduction: true },
+      },
+      assumptions: [],
+    };
+    expect(renderText(bounded)).toContain(
+      "Exhaustive: every schedule within the bounds ran (10 schedules, partial-order reduction)",
+    );
+    const partial = {
+      ...bounded,
+      reached: {
+        ...bounded.reached,
+        exhaustive: { complete: false, schedules: 3, reduction: false },
+      },
+    };
+    expect(renderText(partial)).toContain(
+      "stopped at the budget before every schedule ran (3 schedules)",
+    );
+  });
+
   test("UNSUPPORTED names the cause", () => {
     const u: Unsupported = {
       kind: "UNSUPPORTED",

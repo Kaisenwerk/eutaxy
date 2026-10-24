@@ -22,4 +22,9 @@ describe("generated check test", () => {
     expect(src).toContain('reporters: ["json"]');
     expect(src).toContain('outputFile: "/p/.eutaxy/r.json"');
   });
+
+  test("an exhaustive check asks explore for every schedule", () => {
+    const src = checkTestSource({ seed: "s", exhaustive: true, scenarioImport: "../x.sim.ts" });
+    expect(src).toContain('check(scenario, platform, { seed: "s", exhaustive: true })');
+  });
 });

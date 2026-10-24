@@ -19,6 +19,8 @@ export interface CheckOptions {
   readonly wrangler?: string;
   readonly seed?: string;
   readonly maxRuns?: number;
+  /** Run every schedule within the bounds once instead of drawing them from the seed. */
+  readonly exhaustive?: boolean;
   readonly json: boolean;
   /** Where to write the regression test on a violation; default `<name>.regression.test.ts` beside the scenario. */
   readonly out?: string;
@@ -114,6 +116,7 @@ export async function runCheck(o: CheckOptions): Promise<number> {
       checkTestSource({
         seed: o.seed ?? name,
         ...(o.maxRuns === undefined ? {} : { maxRuns: o.maxRuns }),
+        ...(o.exhaustive ? { exhaustive: true } : {}),
         scenarioImport: `../${basename(scenarioPath)}`,
       }),
     );
