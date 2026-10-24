@@ -121,18 +121,35 @@ const deliveryScope = asyncScope<DeliveryCell>();
 class Frame {
   /** The invocation whose effect this is. */
   readonly invocation: string;
+  /** Whether the effect hosts user code that makes effects of its own (`hostsEffects`). */
+  readonly hosts: boolean;
   /** False once the effect's perform has ended. */
   active = true;
   /** The effect's `onAbandon`, called where the crash happens (inside the hosted code's context). */
   private readonly onAbandon: (() => void) | undefined;
+  /** The effect's `mayPark`: whether an effect its hosted code makes may wait for a turn now. */
+  readonly mayPark: () => boolean;
+  /** The hosting effect this one was made inside of and waited for a turn under, if any. */
+  parent: Frame | undefined;
+  /** Effects the hosted code made that are parked or running now. */
+  children = 0;
+  /** Of those, the ones parked, or running but only waiting on parked effects of their own. */
+  waitingChildren = 0;
   private abandoned = false;
   private wake: () => void = () => {};
   readonly crashed = new Promise<"nested_crash">((resolve) => {
     this.wake = () => resolve("nested_crash");
   });
-  constructor(invocation: string, onAbandon: (() => void) | undefined) {
+  constructor(invocation: string, hosts: boolean, options: EffectOptions) {
     this.invocation = invocation;
-    this.onAbandon = onAbandon;
+    this.hosts = hosts;
+    this.onAbandon = options.onAbandon;
+    this.mayPark = options.mayPark ?? (() => true);
+  }
+
+  /** Its hosted code is only waiting on effects of its own that are parked (however deep). */
+  isWaiting(): boolean {
+    return this.children > 0 && this.waitingChildren === this.children;
   }
 
   crash(): void {
@@ -177,6 +194,8 @@ export class Run implements RunHooks {
   private readonly frames: Frame[] = [];
   /** Per invocation, its effects with `hostsEffects` being performed, innermost last. */
   private readonly hosting = new Map<string, Frame[]>();
+  /** Effects with `hostsEffects` being performed now, across invocations. */
+  private hostingNow = 0;
   private patched: Patched | null = null;
   private restoreFetch: (() => void) | null = null;
   /** The invocation whose code is running (one at a time); outbound fetches are attributed to it. */
@@ -186,6 +205,8 @@ export class Run implements RunHooks {
     readonly inv: InvocationState;
     readonly seq: number;
     readonly go: () => void;
+    /** For hosted code's effects: the hosting effect, waiting on this one meanwhile. */
+    readonly host?: Frame;
   }[] = [];
   private parkSeq = 0;
   /** Events a platform queued during a delivery, for the run loop to pick up. */
@@ -408,7 +429,65 @@ export class Run implements RunHooks {
         this.progressed();
       });
       if (inv.isCrashed()) return hang();
+    } else if (this.concurrent && enclosing?.hosts && enclosing.mayPark()) {
+      // Hosted code calling out (an object's fetch during a call) is a turn too: the object's
+      // input gate is open meanwhile, so another call into it may run first. While all such
+      // effects of the host are parked the host is waiting, not performing I/O.
+      const host = enclosing;
+      let released = false;
+      this.adjust(host, () => {
+        host.children++;
+        host.waitingChildren++;
+      });
+      this.parked.push({ inv, seq: this.parkSeq++, go: () => (released = true), host });
+      this.progressed();
+      // Wait by polling a flag with real zero timers made here, inside the hosted code: no
+      // promise is settled from outside it (workerd refuses that for a Durable Object), and no
+      // event has to enter it (its input gate may be closed, as in blockConcurrencyWhile).
+      while (!released && !inv.isCrashed()) await realTick();
+      if (!released) {
+        this.adjust(host, () => {
+          host.children--;
+          host.waitingChildren--;
+        });
+        return hang();
+      }
+      try {
+        return await this.performEffect(point, perform, summarize, options, inv, enclosing, host);
+      } finally {
+        this.adjust(host, () => host.children--);
+      }
     }
+    return this.performEffect(point, perform, summarize, options, inv, enclosing);
+  }
+
+  /**
+   * Change a hosting frame's children and keep `inFlight` in step: a frame
+   * counts in flight unless it is only waiting on parked effects of its own,
+   * and a frame that starts or stops waiting does so for its parent too.
+   */
+  private adjust(frame: Frame, change: () => void): void {
+    const before = frame.isWaiting();
+    change();
+    const after = frame.isWaiting();
+    if (before === after) return;
+    if (frame.active) this.inFlight += after ? -1 : 1;
+    const parent = frame.parent;
+    if (frame.active && parent)
+      this.adjust(parent, () => (parent.waitingChildren += after ? 1 : -1));
+  }
+
+  /** The effect once it has its turn: the fault, the perform under its deadline, the record. */
+  private async performEffect<T>(
+    point: EffectPoint,
+    perform: () => Promise<T>,
+    summarize: (value: T) => JsonValue,
+    options: EffectOptions,
+    inv: InvocationState,
+    enclosing: Frame | undefined,
+    /** The hosting effect this one waited for a turn under, which waits on it while it waits. */
+    host?: Frame,
+  ): Promise<T> {
     // A crash hangs this effect; inside another effect's perform it ends that effect too.
     const dead = (): Promise<T> => {
       enclosing?.crash();
@@ -431,11 +510,13 @@ export class Run implements RunHooks {
       | "nested_crash";
     // Real I/O that outlasts the scenario's whole budget is treated as hung, so the run ends.
     const deadline = realDeadline(this.options.bounds.budgetMs);
-    const frame = new Frame(point.invocation, options.onAbandon);
+    const frame = new Frame(point.invocation, point.hostsEffects === true, options);
+    frame.parent = host;
     const hosted = point.hostsEffects ? this.hostingFrames(point.invocation) : undefined;
     this.inFlight++;
     this.frames.push(frame);
     hosted?.push(frame);
+    if (hosted) this.hostingNow++;
     try {
       const inside = (): Promise<T> => (effectScope ? effectScope.run(frame, perform) : perform());
       // The library's own timers inside the I/O are real; the handler's stay virtual.
@@ -453,10 +534,20 @@ export class Run implements RunHooks {
       settled = { ok: false, error: err };
     } finally {
       deadline.cancel();
-      frame.active = false;
-      hosted?.splice(hosted.lastIndexOf(frame), 1);
+      if (hosted) {
+        hosted.splice(hosted.lastIndexOf(frame), 1);
+        this.hostingNow--;
+      }
       this.frames.splice(this.frames.lastIndexOf(frame), 1);
-      this.inFlight--;
+      // A frame only waiting on parked effects already counts as not in flight, and as waiting for
+      // its parent: undo both as it ends.
+      if (!frame.isWaiting()) this.inFlight--;
+      else if (frame.parent) {
+        const parent = frame.parent;
+        this.adjust(parent, () => parent.waitingChildren--);
+      }
+      frame.active = false;
+      frame.parent = undefined;
       this.patched?.clock.advance(effectLatencyMs);
       if (this.concurrent) this.progressed();
     }
@@ -568,6 +659,10 @@ export class Run implements RunHooks {
 
   /** Concurrent runs: something moved (an invocation parked, a delivery ended, I/O completed). */
   progressed(): void {
+    // While hosted code runs (a Durable Object call), a wake could come from inside it, and the
+    // scheduler would resume in that object's I/O context, where workerd refuses other calls.
+    // The scheduler's own zero timer wakes it then instead (see quiesce).
+    if (this.hostingNow > 0) return;
     const waiters = this.progressWaiters;
     this.progressWaiters = [];
     for (const wake of waiters) wake();
@@ -613,6 +708,9 @@ export class Run implements RunHooks {
     const [chosen] = pick < this.parked.length ? this.parked.splice(pick, 1) : [];
     if (!chosen) return "start";
     this.runAs(chosen.inv.id);
+    const host = chosen.host;
+    // Hosted code resumes: its host counts in flight again from now, before the code runs.
+    if (host) this.adjust(host, () => host.waitingChildren--);
     chosen.go();
     return "turn";
   }

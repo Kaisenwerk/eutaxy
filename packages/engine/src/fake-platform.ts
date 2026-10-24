@@ -57,6 +57,10 @@ export function createFakePlatform(
     duringInsert?: () => void;
     /** Mark the insert as hosting effects, like a Durable Object call. */
     insertHosts?: boolean;
+    /** The insert checks for the row itself and calls out before writing, like an object's method. */
+    checkInside?: boolean;
+    /** The insert makes two reads at once inside it, like an object awaiting two fetches together. */
+    parallelInside?: boolean;
   } = {},
 ): Platform & {
   readonly rows: Map<string, number>;
@@ -106,6 +110,14 @@ export function createFakePlatform(
             async () => {
               if (orderId === options.hangInsert) await new Promise(() => {});
               if (options.nestedRead) await env.count(orderId);
+              if (options.parallelInside)
+                await Promise.all([env.count(orderId), env.count(orderId)]);
+              if (options.checkInside) {
+                // Like an object: read its own state, call out (the nested read), then write on what it read.
+                const seen = rows.get(orderId) ?? 0;
+                await env.count(orderId);
+                if (seen > 0) return { changes: 0 };
+              }
               if (options.duringInsert) {
                 options.duringInsert();
                 await new Promise((resolve) => setTimeout(resolve, 0));

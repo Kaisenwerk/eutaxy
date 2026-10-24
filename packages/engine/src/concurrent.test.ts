@@ -231,6 +231,47 @@ describe("concurrent invocations", () => {
     }
   });
 
+  test("an object's own effect during a call is a turn: another call can run in between", async () => {
+    // Each insert checks for its row with a read made inside it (an object reading, then writing).
+    const insertThenAck: FakeHandler = async (message, env) => {
+      await env.insert((message.body as { orderId: string }).orderId);
+      message.ack();
+    };
+    const raced = (insertHosts: boolean, maxConcurrentInvocations: number) =>
+      explore(
+        { ...raceSpec(maxConcurrentInvocations) },
+        createFakePlatform(insertThenAck, { concurrent: true, checkInside: true, insertHosts }),
+        { seed: "inside", now: fixedClock, maxRuns: 50 },
+      );
+    // As an object's call (hosting): the second call's read runs while the first waits on its own.
+    const hosted = await raced(true, 2);
+    expect(hosted.kind).toBe("VIOLATED");
+    // One at a time the check holds.
+    expect((await raced(true, 1)).kind).toBe("BOUNDED");
+  });
+
+  test("an object awaiting two of its own effects at once still completes", {
+    timeout: 10_000,
+  }, async () => {
+    const insertThenAck: FakeHandler = async (message, env) => {
+      await env.insert((message.body as { orderId: string }).orderId);
+      message.ack();
+    };
+    const verdict = await explore(
+      {
+        ...raceSpec(2),
+        drive: { kind: "queue", queue: "q", messages: [{ id: "m1", body: { orderId: "o-1" } }] },
+      },
+      createFakePlatform(insertThenAck, {
+        concurrent: true,
+        parallelInside: true,
+        insertHosts: true,
+      }),
+      { seed: "parallel", now: fixedClock, maxRuns: 5 },
+    );
+    expect(verdict.kind).toBe("BOUNDED");
+  });
+
   test("a crash injected into a nested effect crashes the invocation, it does not hang its parent", {
     timeout: 10_000,
   }, async () => {
@@ -578,5 +619,57 @@ describe("nested effects", () => {
     await Promise.race([outer, new Promise((resolve) => setTimeout(resolve, 200))]);
     expect(inv.isCrashed()).toBe(true);
     expect(abandoned).toBe(true);
+  });
+
+  test("a hosting effect inside another, whose own effect parks, lets the scheduler move", {
+    timeout: 10_000,
+  }, async () => {
+    const run = new Run({
+      mode: "replay",
+      schedule: { seed: 1, faults: [] },
+      bounds: {
+        maxFaultsPerRun: 0,
+        maxRedeliveries: 0,
+        maxConcurrentInvocations: 2,
+        budgetMs: 2_000,
+      },
+      faultProbability: 0,
+    });
+    run.install();
+    try {
+      const point = (op: string, hostsEffects = false) => ({
+        invocation: "i#1",
+        target: "T",
+        op,
+        args: null,
+        allowed: [],
+        hostsEffects,
+      });
+      const none = () => null;
+      const started = run.startDelivery(async () => {
+        run.startInvocation("i#1");
+        return run.effect(
+          point("outer", true),
+          () =>
+            run.effect(
+              point("inner", true),
+              () => run.effect(point("fetch"), async () => 1, none),
+              none,
+            ),
+          none,
+        );
+      });
+      // Drive the turns by hand: release whatever is parked until the delivery settles.
+      let settled = false;
+      void started.promise.then(() => (settled = true));
+      for (let i = 0; i < 50 && !settled; i++) {
+        await run.quiesce();
+        run.takeTurn(false);
+      }
+      expect(settled).toBe(true);
+      expect(run.unsupportedReasons).toEqual([]);
+    } finally {
+      run.uninstall();
+    }
   });
 });

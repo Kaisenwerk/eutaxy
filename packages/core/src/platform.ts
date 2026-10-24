@@ -54,6 +54,13 @@ export interface EffectOptions {
    * async context of the code the perform runs.
    */
   readonly onAbandon?: () => void;
+  /**
+   * Whether an effect the hosted code makes may wait for its turn now. False
+   * while the hosted code holds every other event out (a Durable Object
+   * inside blockConcurrencyWhile): nothing else could enter it then, and it
+   * could not notice its release, so the effect runs at once.
+   */
+  readonly mayPark?: () => boolean;
 }
 
 /** One invocation of the Worker, as the engine tracks it. */
