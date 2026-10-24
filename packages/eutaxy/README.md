@@ -2,7 +2,7 @@
 
 **Purpose.** The published facade: `eutaxy` and `eutaxy/cloudflare`. Internal packages are bundled into it at build time.
 
-**Public surface.** `.`: scenario and verdict types, `checkInvariants`, `explore`, `replay`, `restrictSpec`, `renderText`, `renderJson`, `emitRegressionTest`. `./cloudflare`: everything from the cloudflare package plus `cloudflareRegressionTest`. `./aws`: everything from the aws package.
+**Public surface.** `.`: scenario, invariant (`Refines` included) and verdict types, for scenarios and specs (`SpecVerdict`); `checkInvariants`, `explore`, `replay`, `restrictSpec`; `observeCore` (record a core module's calls as decisions); Lemma specs (`parseProperty`, `printProperty`, `extractSpecs`, the `SpecIR` types) and the `CHECKED` rung (`checkedRung`, `checkSpecModule`); `renderText`, `renderJson`, `renderSpecs`, `emitRegressionTest`. `./cloudflare`: everything from the cloudflare package (`refines` and `d1Read` among it) plus `cloudflareRegressionTest`. `./aws`: everything from the aws package.
 
 **Build.** `pnpm build` at the repository root bundles every internal
 package into `dist/` (tsdown, ESM, bundled declarations); `publishConfig`
@@ -14,4 +14,4 @@ pnpm links only declared workspace dependencies, so an import of any other
 package does not resolve. The project references in `tsconfig.json` mirror the
 list; a test keeps the two in sync with the design.
 
-**Phase.** v0.4. See `docs/design.md` and `docs/roadmap.md`.
+**Phase.** v0.4 onward. See `docs/design.md` and `docs/roadmap.md`.

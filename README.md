@@ -3,24 +3,34 @@
 Deterministic simulation and formal proof for TypeScript on Cloudflare
 Workers.
 
-Eutaxy runs unmodified Worker code with its bindings wrapped, injects faults
-at every effect boundary, explores runs from a seed, and checks invariants
-over the effect log. The same engine checks AWS Lambda functions consuming
-SQS with DynamoDB, through the AWS SDK as the effect boundary. A failure comes back as a shrunk, replayable trace plus
-a Vitest regression test that runs in workerd. Specs on pure core functions
-are checked on simulated inputs, then on generated inputs, then optionally
-proved in Lean 4.
+Eutaxy runs unmodified Worker code with its bindings wrapped (D1, and
+Durable Objects with their alarms; outbound `fetch` is answered from the
+externals a scenario declares), injects faults at every effect boundary,
+interleaves concurrent invocations at their I/O, and checks invariants over
+the effect log. It explores runs from a seed, or every schedule within the
+bounds. The same engine checks AWS Lambda functions consuming SQS with
+DynamoDB, through the AWS SDK as the effect boundary. A failure in a Worker
+comes back as a shrunk, replayable trace plus a Vitest regression test that
+runs in workerd.
 
-**Status: 0.4, early.** The design is in
+Lemma specs on a Worker's pure core functions are checked on the inputs the
+simulator actually passed them, and `refines` checks that the Worker carries
+out the core's decisions on state that was still current. Checking specs on
+generated inputs and proving them in Lean 4 are the next phase.
+
+**Status: 0.5, early.** The design is in
 [docs/design.md](docs/design.md); the phases and their gates are in
 [docs/roadmap.md](docs/roadmap.md).
 
 ## Verdicts
 
 A scenario gets `VIOLATED`, `BOUNDED` or `UNSUPPORTED`. A spec gets
-`CHECKED`, `TESTED` or `PROVEN`, or `REFUTED`, `UNKNOWN` or `CONFLICT`. Every
-verdict carries what it rests on: seed and bounds, or engine, version and
-assumptions. Nothing is ever reported as verified when it was only explored.
+`CHECKED` (held on every input the simulator passed), `REFUTED` (with the
+call that breaks it) or `UNKNOWN`; `TESTED`, `PROVEN` and `CONFLICT` come
+with the provers. Every verdict carries what it rests on: seed and bounds,
+or the inputs it was checked on, and the assumptions. Nothing is ever
+reported as verified when it was only explored: `BOUNDED` and `CHECKED` are
+not proofs.
 
 ## Repository
 
@@ -56,12 +66,20 @@ Worker it reports `BOUNDED` for.
 
 A scenario drives the Worker through its `queue()` handler or, with
 `http(...)`, through its `fetch()` handler, where the caller's retry policy
-(a webhook provider resending until it gets a 2xx) decides redelivery.
+(a webhook provider resending until it gets a 2xx) decides redelivery. With
+`maxConcurrentInvocations` above 1, invocations run concurrently and
+interleave at their I/O, including a Durable Object's outbound I/O during
+a call (its storage operations hold other events, as the runtime's input
+gate does); alarms fire in virtual time. A scenario's `specs` names the
+modules of its pure core, whose Lemma specs are then checked on the inputs
+seen.
 
 It runs the scenario inside workerd through your Vitest and the Cloudflare
 Vitest plugin, prints the verdict with its trace and assumptions (or
-`--json`), and on a violation writes `payments.regression.test.ts`, which
-fails while the bug exists and passes once it is fixed.
+`--json`; `--exhaustive` runs every schedule within the bounds), and on a
+violation writes `payments.regression.test.ts`, which fails while the bug
+exists and passes once it is fixed. It exits 0 for `BOUNDED`, 1 for
+`VIOLATED` or a `REFUTED` spec, 2 for `UNSUPPORTED`, and 3 on an error.
 
 ## Developing
 
