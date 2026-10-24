@@ -9,7 +9,7 @@ import {
   ScanCommand,
 } from "@aws-sdk/client-dynamodb";
 import { unmarshall } from "@aws-sdk/util-dynamodb";
-import { canonicalJson, type JsonValue, type PlatformData } from "@eutaxy/core";
+import { canonicalJson, type JsonValue, type PlatformData, type ScenarioSpec } from "@eutaxy/core";
 import { realTick } from "@eutaxy/engine";
 import { toJson } from "./json.ts";
 import { rawSend } from "./sdk.ts";
@@ -25,6 +25,11 @@ export interface TableSpec extends PlatformData {
   readonly name: string;
   readonly partitionKey: KeyDef;
   readonly sortKey?: KeyDef;
+}
+
+/** The DynamoDB tables a scenario sets up. */
+export function scenarioTables(spec: ScenarioSpec): readonly TableSpec[] {
+  return spec.setup.filter((s): s is TableSpec => s.kind === "dynamodb-table");
 }
 
 async function waitActive(client: DynamoDBClient, name: string): Promise<void> {

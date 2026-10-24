@@ -18,7 +18,7 @@ import type {
   ScenarioSpec,
 } from "@eutaxy/core";
 import { CrashSignal } from "@eutaxy/engine";
-import { resetTables, snapshotTables, type TableSpec } from "./dynamodb.ts";
+import { resetTables, scenarioTables, snapshotTables, type TableSpec } from "./dynamodb.ts";
 import type { SqsDrive } from "./scenario.ts";
 import { installSdkProxy } from "./sdk.ts";
 
@@ -59,10 +59,6 @@ export function createAwsPlatform(options: AwsPlatformOptions): Platform {
   let hooksRef: RunHooks | null = null;
   let restoreProxy: (() => void) | null = null;
 
-  function tablesOf(spec: ScenarioSpec): readonly TableSpec[] {
-    return spec.setup.filter((s): s is TableSpec => s.kind === "dynamodb-table");
-  }
-
   function ensureProxy(hooks: RunHooks): void {
     if (hooksRef === hooks && restoreProxy) return;
     restoreProxy?.();
@@ -80,7 +76,7 @@ export function createAwsPlatform(options: AwsPlatformOptions): Platform {
     assumptions,
 
     async reset(spec: ScenarioSpec): Promise<void> {
-      const tables = tablesOf(spec);
+      const tables = scenarioTables(spec);
       if (tables.length === 0) return;
       if (!dynamo)
         throw new Error(
@@ -90,7 +86,7 @@ export function createAwsPlatform(options: AwsPlatformOptions): Platform {
     },
 
     async finish(spec: ScenarioSpec, hooks: RunHooks): Promise<void> {
-      const tables = tablesOf(spec);
+      const tables = scenarioTables(spec);
       if (tables.length === 0 || !dynamo) return;
       const snapshot = await snapshotTables(dynamo, tables);
       hooks.snapshot(hooks.bookkeeping(), "DynamoDB", { tables: snapshot });

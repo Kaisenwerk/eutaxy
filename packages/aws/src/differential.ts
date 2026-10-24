@@ -16,7 +16,7 @@ import {
   proxiedSide,
   settleOn,
 } from "@eutaxy/engine";
-import { resetTables, snapshotTables, type TableSpec } from "./dynamodb.ts";
+import { resetTables, scenarioTables, snapshotTables } from "./dynamodb.ts";
 import { batchFailed, type SqsBatchResponse, sqsInvocation } from "./lambda.ts";
 import { type AwsPlatformOptions, createAwsPlatform } from "./platform.ts";
 import type { SqsDrive } from "./scenario.ts";
@@ -43,10 +43,6 @@ export interface DifferentialResult {
   readonly unsupported: readonly string[];
 }
 
-function tablesOf(spec: ScenarioSpec): readonly TableSpec[] {
-  return spec.setup.filter((s): s is TableSpec => s.kind === "dynamodb-table");
-}
-
 async function eutaxySide(
   spec: ScenarioSpec,
   options: AwsPlatformOptions,
@@ -62,14 +58,14 @@ async function eutaxySide(
     }),
   );
   const dynamo = options.clients["DynamoDBClient"] as DynamoDBClient | undefined;
-  const tables = dynamo ? await snapshotTables(dynamo, tablesOf(spec)) : {};
+  const tables = dynamo ? await snapshotTables(dynamo, scenarioTables(spec)) : {};
   return { attempts, tables, unsupported };
 }
 
 async function rawSide(spec: ScenarioSpec, options: AwsPlatformOptions): Promise<Side> {
   const drive = spec.drive as SqsDrive;
   const dynamo = options.clients["DynamoDBClient"] as DynamoDBClient | undefined;
-  if (dynamo) await resetTables(dynamo, tablesOf(spec));
+  if (dynamo) await resetTables(dynamo, scenarioTables(spec));
   const patched = patchGlobals(0);
   const reasons: string[] = [];
   const restoreFetch = installScriptedFetch(
@@ -146,7 +142,7 @@ async function rawSide(spec: ScenarioSpec, options: AwsPlatformOptions): Promise
     patched.restore();
   }
   if (reasons.length > 0) throw new Error(`raw side: ${reasons.join("; ")}`);
-  const tables = dynamo ? await snapshotTables(dynamo, tablesOf(spec)) : {};
+  const tables = dynamo ? await snapshotTables(dynamo, scenarioTables(spec)) : {};
   return { attempts, tables };
 }
 
