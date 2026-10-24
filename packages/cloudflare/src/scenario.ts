@@ -18,6 +18,7 @@ import {
   type Invariant,
   type JsonValue,
   type PlatformData,
+  type Refines,
   type RowCondition,
   type ScenarioSpec,
   type ScriptedResponse,
@@ -179,6 +180,8 @@ export interface CloudflareScenarioInput {
   readonly externals?: readonly ExternalDecl[];
   readonly invariants: readonly Invariant[];
   readonly bounds?: Partial<Bounds>;
+  /** Modules of pure core functions with Lemma specs, relative to the scenario (see ScenarioSpec.specs). */
+  readonly specs?: readonly string[];
 }
 
 export function queue(name: string, messages: readonly QueueMessage[]): QueueDrive {
@@ -203,9 +206,31 @@ export function d1Write(binding: string, op: "run" | "batch" = "run"): EffectSel
   return { target: `D1:${binding}`, op, kind: "result", atLeast: { "result.changes": 1 } };
 }
 
+/** Reads of a D1 binding: `first` (result payload `{ row }`), `all` or `raw`. */
+export function d1Read(binding: string, op: "first" | "all" | "raw" = "first"): EffectSelector {
+  return { target: `D1:${binding}`, op, kind: "result" };
+}
+
 /** Dot path to the Nth bound parameter of a D1 statement, in an effect payload. */
 export function d1Param(index: number): string {
   return `args.params.${index}`;
+}
+
+/**
+ * The shell follows the core function `decision` (see the `refines`
+ * invariant): every selected effect carries out the latest decision of its
+ * invocation, agrees with it on `follows`, and, with `state`, was not made
+ * stale by another invocation's write between the read it rests on and the
+ * effect. The core function's module must be listed in the scenario's
+ * `specs`, which is what records its calls.
+ */
+export function refines(
+  name: string,
+  decision: string,
+  effect: EffectSelector,
+  options: Pick<Refines, "follows" | "state"> = {},
+): Refines {
+  return { kind: "refines", name, decision, effect, ...options };
 }
 
 export function atMostOncePerKey(
@@ -393,6 +418,7 @@ export function defineScenario(input: CloudflareScenarioInput): ScenarioSpec {
     externals: input.externals ?? [],
     invariants: input.invariants,
     bounds: { ...defaultBounds, ...input.bounds },
+    ...(input.specs ? { specs: input.specs } : {}),
   };
   const errors = [
     ...validateScenario(spec),

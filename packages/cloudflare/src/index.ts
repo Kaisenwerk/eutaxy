@@ -22,6 +22,7 @@ export {
   type D1Setup,
   type DurableObjectSetup,
   d1Param,
+  d1Read,
   d1Rows,
   d1Schema,
   d1Write,
@@ -42,5 +43,6 @@ export {
   type QueueMessage,
   queue,
   queueAck,
+  refines,
   unique,
 } from "./scenario.ts";
