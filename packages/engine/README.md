@@ -2,7 +2,7 @@
 
 **Purpose.** The platform-neutral run loop: virtual clock, globals patching, per-run state reset, replay, and the turns of concurrent invocations.
 
-**Public surface.** `explore` (seeded or, with `exhaustive`, every schedule within the bounds with partial-order reduction; replay, shrink, verdict), `Chooser` and `ChoiceOption` (how exhaustive runs make their choices), `replay` and `replayRun` (re-run a schedule exactly), `shrink` and `restrictSpec`, `runOnce`, `Run` (the per-run hooks proxies call), `CrashSignal`, `InjectedEffectError`. `patchGlobals`, `VirtualClock`, `VirtualRandom`, `settleOn` (the virtual clock and the globals patch; `Run.install`/`uninstall` apply them per run and `Run.settle` waits under them).
+**Public surface.** `explore` (seeded or, with `exhaustive`, every schedule within the bounds with partial-order reduction; replay, shrink, verdict), `Chooser` and `ChoiceOption` (how exhaustive runs make their choices), `replay` and `replayRun` (re-run a schedule exactly), `shrink` and `restrictSpec`, `runOnce`, `Run` (the per-run hooks proxies call), `CrashSignal`, `InjectedEffectError`. `observeCore` (wraps a module namespace's functions so calls made while a run is installed are recorded, with their arguments, and logged as decisions of the invocation running; `Run.decision` is where they land), `summarize`. `patchGlobals`, `VirtualClock`, `VirtualRandom`, `settleOn` (the virtual clock and the globals patch; `Run.install`/`uninstall` apply them per run and `Run.settle` waits under them).
 
 **May import.** `@eutaxy/core`, and from the host only what it patches:
 `node:async_hooks` (through `process.getBuiltinModule`, so a host without it

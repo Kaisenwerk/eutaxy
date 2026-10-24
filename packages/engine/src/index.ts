@@ -21,6 +21,7 @@ export {
   type ScriptedFetch,
   withoutNetwork,
 } from "./fetch.ts";
+export { type CoreObserver, type ObservedCall, observeCore, summarize } from "./observe.ts";
 export {
   type ChoiceOption,
   type Chooser,

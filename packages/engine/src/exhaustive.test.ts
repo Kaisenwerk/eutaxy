@@ -211,7 +211,7 @@ describe("partial-order reduction", () => {
     id: string,
     step: (target: string, perform?: () => Promise<unknown>) => Promise<unknown>,
     write: (target: string, value: string) => unknown,
-  ) => Promise<void | EventRef[]>;
+  ) => Promise<EventRef[] | undefined>;
   const scripted = (script: Script, reset: () => void = () => {}): Platform => ({
     ...stepsPlatform([], false),
     async reset() {

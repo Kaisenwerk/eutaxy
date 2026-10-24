@@ -19,6 +19,7 @@ import {
   appendEffect,
   type Bounds,
   decideFault,
+  decisionTarget,
   type EffectLog,
   type EffectOptions,
   type EffectPoint,
@@ -189,6 +190,13 @@ class Frame {
 /** The frame of the effect whose `perform` the current code runs inside. */
 const effectScope = asyncScope<Frame>();
 
+/** The run whose globals are installed, if any: where code observed from outside records into. */
+let installed: Run | null = null;
+
+export function installedRun(): Run | null {
+  return installed;
+}
+
 /** Whether this host can run concurrent invocations: attribution needs async context. */
 export const concurrencySupported = deliveryScope !== null;
 
@@ -322,6 +330,7 @@ export class Run implements RunHooks {
 
   /** Replace the nondeterministic globals and `fetch` for this run. Call `uninstall` in a finally. */
   install(externals: readonly ExternalDecl[] = []): void {
+    installed = this;
     if (!this.patched) {
       this.patched = patchGlobals(this.options.schedule.seed, {
         // Web Crypto is real work the handler waits on: the run waits for it like an effect's I/O.
@@ -355,6 +364,7 @@ export class Run implements RunHooks {
   }
 
   uninstall(): void {
+    if (installed === this) installed = null;
     this.restoreFetch?.();
     this.restoreFetch = null;
     this.patched?.restore();
@@ -888,6 +898,17 @@ export class Run implements RunHooks {
       abandoned++;
     }
     return abandoned;
+  }
+
+  /** A call of a pure core function, recorded as a decision of the invocation running now (see `observeCore`). */
+  decision(fn: string, payload: JsonValue): void {
+    this.logState = appendEffect(this.logState, {
+      kind: "result",
+      invocation: this.running(),
+      target: decisionTarget(fn),
+      op: "decide",
+      payload,
+    });
   }
 
   snapshot(invocation: string, target: string, payload: JsonValue): void {
