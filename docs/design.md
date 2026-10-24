@@ -384,6 +384,38 @@ and by the effect's ordinal within that invocation (not by a global index),
 so a schedule stays valid when other invocations are removed. Replay follows
 a schedule exactly; exploration records one.
 
+**Exhaustive exploration** (`explore(..., { exhaustive: true })`, `eutaxy
+check --exhaustive`) runs every schedule within the bounds once instead of
+drawing schedules from the seed. A run's nondeterminism is a sequence of
+choices (a fault or none at each effect point that may still take one, the
+next turn at each scheduling decision); runs are deterministic, so the
+enumerator walks the tree of choice sequences depth first, re-running from
+the scenario's reset with an ever longer forced prefix, and a run that
+makes different choices after the same prefix makes the verdict
+`UNSUPPORTED` (`not_replayable`). Such a schedule records its turn picks
+(`Schedule.turns`), so replay, shrinking and regression tests follow them
+rather than the seed. The count is checked against closed forms in the
+engine's tests: k events of n effects interleave in
+(k(n+1))! / ((n+1)!^k k!) ways (each event starts with a turn, in order), m
+faults of f kinds on kn points are placed in sum_{j<=m} C(kn, j) f^j ways,
+and with both the count is the product. Partial-order reduction is on by
+default: sleep sets (Godefroid, 1996) skip an order of two turns once the
+other order has run when they belong to different invocations and their
+effects have different targets; starting an event is dependent on
+everything. This assumes code between an invocation's effects shares no
+state with other invocations except through effects and the virtual
+globals, which the verdict states. A turn is known by its parked effect's
+target before it runs, but it may do more: perform a synchronous or nested
+effect on another target, queue an event (the pending queue's order is
+shared), or read the time or randomness, or schedule a timer (every effect advances the clock and every draw the random stream,
+so such code can tell two orders apart). The run notes any of these in a
+turn other than an event's start (an effect's own I/O included),
+and once a run has, it is checked as usual and the enumeration starts
+again over every order with the reduction off. Dependence learned while
+running would need dynamic partial-order reduction to stay sound. Every exhaustive verdict reports whether
+enumeration completed before the budget, how many schedules ran, and
+whether the reduction stayed on.
+
 **Concurrent invocations.** With `maxConcurrentInvocations` above 1, up to
 that many invocations are in flight, as concurrent requests are in one
 isolate ("other requests may (or may not) be processed during awaiting any

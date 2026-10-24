@@ -21,5 +21,12 @@ export {
   type ScriptedFetch,
   withoutNetwork,
 } from "./fetch.ts";
-export { CrashSignal, InjectedEffectError, Run, type RunOptions } from "./run.ts";
+export {
+  type ChoiceOption,
+  type Chooser,
+  CrashSignal,
+  InjectedEffectError,
+  Run,
+  type RunOptions,
+} from "./run.ts";
 export { restrictSpec, type ShrinkOptions, type ShrinkResult, shrink } from "./shrink.ts";

@@ -20,6 +20,7 @@ import {
   type Schedule,
   seedPrng,
 } from "@eutaxy/core";
+import { Enumerator } from "./exhaustive.ts";
 import { concurrencySupported, Run, type StartedDelivery } from "./run.ts";
 import { shrink } from "./shrink.ts";
 
@@ -39,6 +40,14 @@ export interface ExploreOptions {
    * runs. 0 disables the pass.
    */
   readonly leakCheckRuns?: number;
+  /**
+   * Explore every schedule within the bounds, each once, instead of drawing
+   * schedules from the seed: every fault (or none) at every effect point
+   * that may still take one, and every order of turns. With `reduction`
+   * (the default), turns of different invocations on different targets
+   * commute and only one order of them is run.
+   */
+  readonly exhaustive?: boolean | { readonly reduction?: boolean };
 }
 
 const engineAssumptions: readonly string[] = [
@@ -65,6 +74,21 @@ function nextEvent(pending: readonly EventRef[]): number {
   for (let i = 1; i < pending.length; i++)
     if ((pending[i]?.at ?? 0) < (pending[best]?.at ?? 0)) best = i;
   return best;
+}
+
+/** What a verdict rests on about how schedules were chosen, when exploration was exhaustive. */
+function explorationAssumption(options: ExploreOptions): readonly string[] {
+  if (!options.exhaustive) return [];
+  const reduction =
+    typeof options.exhaustive === "object" ? (options.exhaustive.reduction ?? true) : true;
+  return [
+    "exhaustive: every placement of faults within maxFaultsPerRun and every order of turns, each run once, until complete or the budget ends (reached.exhaustive says which)",
+    ...(reduction
+      ? [
+          "partial-order reduction: turns of different invocations whose effects have different targets commute, so one order of them is run; this assumes code between an invocation's effects shares no state with other invocations except through effects and the virtual globals, and once a turn other than an event's start performs an effect on another target than its own, queues an event, or reads virtual time or randomness, or schedules a timer, the reduction is off and every order is run (reached.exhaustive.reduction says whether it stayed on)",
+        ]
+      : []),
+  ];
 }
 
 /** Deliver events one at a time, each to completion; time passes until a delayed one is due. */
@@ -99,6 +123,7 @@ async function deliverConcurrently(
   let active: Delivery[] = [];
   for (;;) {
     // Finished deliveries leave in the order they started; their follow-ups queue behind the rest.
+    const queuedBefore = pending.length;
     for (const d of active) {
       if (!d.outcome) continue;
       if ("error" in d.outcome) throw d.outcome.error;
@@ -106,6 +131,7 @@ async function deliverConcurrently(
     }
     active = active.filter((d) => !d.outcome);
     pending.push(...run.takeQueued());
+    if (pending.length > queuedBefore) run.queuedEvents();
     if (active.length === 0 && pending.length === 0) return;
     const next = pending.length > 0 ? nextEvent(pending) : -1;
     const due = next >= 0 && (pending[next]?.at ?? 0) <= run.now();
@@ -205,6 +231,7 @@ export async function explore(
   const assumptions = [
     ...engineAssumptions,
     concurrencyAssumption(spec.bounds),
+    ...explorationAssumption(options),
     ...platform.assumptions,
   ];
   const start = now();
@@ -237,17 +264,47 @@ export async function explore(
   const witnesses: { schedule: Schedule; digest: string }[] = [];
 
   let master: PrngState = seedPrng(options.seed);
-  while (reached.runs < maxRuns && now() - start < spec.bounds.budgetMs) {
+  let reduction =
+    typeof options.exhaustive === "object" ? (options.exhaustive.reduction ?? true) : true;
+  let enumerator = options.exhaustive ? new Enumerator({ reduction }) : null;
+  let schedules = 0;
+  let more = true;
+  let restart = false;
+  const exhaustiveReached = () =>
+    enumerator ? { exhaustive: { complete: !more, schedules, reduction } } : {};
+  const doneNow = (): BoundsReached => ({ ...done(), ...exhaustiveReached() });
+  while (more && reached.runs < maxRuns && now() - start < spec.bounds.budgetMs) {
     const [runSeed, next] = nextU32(master);
     master = next;
     const run = new Run({
       mode: "explore",
-      schedule: { seed: runSeed, faults: [] },
+      // Enumerated runs pick their choices; they share one seed for the virtual globals.
+      schedule: { seed: enumerator ? 0 : runSeed, faults: [] },
       bounds: spec.bounds,
       faultProbability,
+      ...(enumerator ? { chooser: enumerator.next() } : {}),
     });
     const log = await runOnce(spec, platform, run);
     reached.runs++;
+    if (enumerator) {
+      if (enumerator.mismatch) {
+        return {
+          ...base,
+          kind: "UNSUPPORTED",
+          cause: "not_replayable",
+          reason: `exhaustive exploration needs deterministic runs: ${enumerator.mismatch}`,
+          reached: doneNow(),
+        };
+      }
+      // The reduction's commuting turns do not commute here: once this run is checked, every order.
+      restart = reduction && run.turnsMayNotCommute;
+      if (!restart) {
+        more = enumerator.advance();
+        // A run the reduction had already covered is not a new schedule; its checks repeat others'.
+        if (enumerator.blocked) continue;
+        schedules++;
+      }
+    }
     reached.effectPoints += run.effectPoints;
     reached.faultsInjected += run.faultsInjected;
     if (witnesses.length < leakCheckRuns)
@@ -259,7 +316,7 @@ export async function explore(
         kind: "UNSUPPORTED",
         cause: "unsupported_api",
         reason: run.unsupportedReasons.join("; "),
-        reached: done(),
+        reached: doneNow(),
       };
     }
 
@@ -276,7 +333,7 @@ export async function explore(
           kind: "UNSUPPORTED",
           cause: "not_replayable",
           reason: `the violating run of seed ${schedule.seed} did not reproduce on replay`,
-          reached: done(),
+          reached: doneNow(),
         };
       }
       // Shrink within the scenario's budget (a second budget's worth at most), then report.
@@ -298,8 +355,13 @@ export async function explore(
           eventsRemoved: shrunk.eventsRemoved,
           runs: shrunk.runs,
         },
-        reached: done(),
+        reached: doneNow(),
       };
+    }
+    if (restart) {
+      reduction = false;
+      enumerator = new Enumerator({ reduction });
+      schedules = 0;
     }
   }
   // Module-state leak detection: the same schedules, in the opposite order, must give the same logs.
@@ -312,9 +374,9 @@ export async function explore(
         kind: "UNSUPPORTED",
         cause: "module_state_leak",
         reason: `run seed ${witness.schedule.seed} produced a different log when replayed after other runs: state is leaking between runs (module-level variables, or a binding Eutaxy does not reset)`,
-        reached: done(),
+        reached: doneNow(),
       };
     }
   }
-  return { ...base, kind: "BOUNDED", bounds: spec.bounds, reached: done() };
+  return { ...base, kind: "BOUNDED", bounds: spec.bounds, reached: doneNow() };
 }

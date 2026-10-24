@@ -17,10 +17,8 @@ export function shrinkCandidates(state: ShrinkState): readonly ShrinkState[] {
   const out: ShrinkState[] = [];
   state.schedule.faults.forEach((_, i) => {
     out.push({
-      schedule: {
-        seed: state.schedule.seed,
-        faults: state.schedule.faults.filter((_, j) => j !== i),
-      },
+      // Recorded turns stay: a candidate replays the same turn picks as far as they still apply.
+      schedule: { ...state.schedule, faults: state.schedule.faults.filter((_, j) => j !== i) },
       keepIds: state.keepIds,
     });
   });
@@ -28,7 +26,7 @@ export function shrinkCandidates(state: ShrinkState): readonly ShrinkState[] {
     state.keepIds.forEach((id) => {
       out.push({
         schedule: {
-          seed: state.schedule.seed,
+          ...state.schedule,
           // Faults that belonged to the removed event's invocations can no longer fire.
           faults: state.schedule.faults.filter((f) => !f.invocation.startsWith(`${id}#`)),
         },

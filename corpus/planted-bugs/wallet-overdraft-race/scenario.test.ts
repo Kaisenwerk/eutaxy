@@ -54,3 +54,12 @@ test("a wallet that holds the input gate with blockConcurrencyWhile holds too", 
   const verdict = await check(scenario, platformFor(bindings), { seed: "corpus" });
   expect(verdict.kind, renderText(verdict)).toBe("BOUNDED");
 });
+
+test("exhaustive exploration finds the race, and every schedule of the fixed wallet holds", async () => {
+  const buggy = await check(scenario, platformFor(env), { seed: "corpus", exhaustive: true });
+  expect(buggy.kind, renderText(buggy)).toBe("VIOLATED");
+  const bindings = { WALLET: (env as unknown as { FIXED_WALLET: unknown }).FIXED_WALLET };
+  const fixed = await check(scenario, platformFor(bindings), { seed: "corpus", exhaustive: true });
+  expect(fixed.kind, renderText(fixed)).toBe("BOUNDED");
+  expect(fixed.reached.exhaustive?.complete).toBe(true);
+});

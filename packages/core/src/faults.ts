@@ -35,6 +35,13 @@ export interface Schedule {
   /** The per-run seed the decisions were drawn from. */
   readonly seed: number;
   readonly faults: readonly FaultDecision[];
+  /**
+   * The turn picked at each scheduling decision with more than one option,
+   * in order, as an index into the options (parked invocations by start
+   * order, then starting the next event). Absent: turns follow the seed.
+   * Exhaustive exploration records them, since it picks rather than draws.
+   */
+  readonly turns?: readonly number[];
 }
 
 export interface FaultPolicy {

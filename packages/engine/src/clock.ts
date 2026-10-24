@@ -183,6 +183,12 @@ export class VirtualRandom {
 export interface Patched {
   readonly clock: VirtualClock;
   readonly random: VirtualRandom;
+  /**
+   * Reads of the shared virtual state, by any code: the time (Date,
+   * performance.now, scheduling a virtual timer) and the random stream. Code that reads them can tell orders of other invocations' turns
+   * apart; the counter is the run's to reset.
+   */
+  readonly reads: { count: number };
   /** Put every global back. Safe to call twice. */
   restore(): void;
   /**
@@ -224,6 +230,12 @@ export interface PatchOptions {
 export function patchGlobals(seed: number | string, options: PatchOptions = {}): Patched {
   const clock = new VirtualClock();
   const random = new VirtualRandom(seed);
+  const reads = { count: 0 };
+  const inLibrary = () => libraryScope?.getStore() === true;
+  /** Counts a read of the shared virtual state, an effect's own I/O included: its result may depend on it. */
+  const read = (): void => {
+    reads.count++;
+  };
   const g = globalThis as unknown as Global;
   const saved: { target: object; key: string; descriptor: PropertyDescriptor | undefined }[] = [];
   const define = (target: object, key: string, value: unknown): void => {
@@ -238,27 +250,38 @@ export function patchGlobals(seed: number | string, options: PatchOptions = {}):
 
   const RealDate = Date;
   const VirtualDate = function (this: unknown, ...args: unknown[]): unknown {
+    if (new.target === undefined || args.length === 0) read();
     if (new.target === undefined) return new RealDate(clock.now()).toString();
     return Reflect.construct(RealDate, args.length === 0 ? [clock.now()] : args, new.target);
   } as unknown as DateConstructor;
   Object.setPrototypeOf(VirtualDate, RealDate);
   Object.defineProperty(VirtualDate, "prototype", { value: RealDate.prototype, writable: false });
   Object.defineProperty(VirtualDate, "now", {
-    value: () => clock.now(),
+    value: () => {
+      read();
+      return clock.now();
+    },
     configurable: true,
     writable: true,
   });
   Object.defineProperty(VirtualDate, "name", { value: "Date" });
 
   define(g, "Date", VirtualDate);
-  define(Math, "random", () => random.float());
-  const inLibrary = () => libraryScope?.getStore() === true;
-  define(g, "setTimeout", (cb: (...a: unknown[]) => void, ms?: number, ...args: unknown[]) =>
-    inLibrary() ? realSetTimeout(cb, ms, ...args) : clock.setTimeout(cb, ms, ...args),
-  );
-  define(g, "setInterval", (cb: (...a: unknown[]) => void, ms?: number, ...args: unknown[]) =>
-    inLibrary() ? realSetInterval(cb, ms, ...args) : clock.setInterval(cb, ms, ...args),
-  );
+  define(Math, "random", () => {
+    read();
+    return random.float();
+  });
+  // A virtual timer's due time is read from the clock when it is scheduled.
+  define(g, "setTimeout", (cb: (...a: unknown[]) => void, ms?: number, ...args: unknown[]) => {
+    if (inLibrary()) return realSetTimeout(cb, ms, ...args);
+    read();
+    return clock.setTimeout(cb, ms, ...args);
+  });
+  define(g, "setInterval", (cb: (...a: unknown[]) => void, ms?: number, ...args: unknown[]) => {
+    if (inLibrary()) return realSetInterval(cb, ms, ...args);
+    read();
+    return clock.setInterval(cb, ms, ...args);
+  });
   // Clearing dispatches on the handle: a virtual timer cancelled from library code, or a real
   // one cancelled from handler code, each reach the implementation that owns it.
   define(g, "clearTimeout", (id?: unknown) => {
@@ -270,11 +293,21 @@ export function patchGlobals(seed: number | string, options: PatchOptions = {}):
     else realClearInterval(id as Parameters<typeof realClearInterval>[0]);
   });
   const perf = g["performance"];
-  if (perf && typeof perf === "object") define(perf, "now", () => clock.now() - virtualEpoch);
+  if (perf && typeof perf === "object")
+    define(perf, "now", () => {
+      read();
+      return clock.now() - virtualEpoch;
+    });
   const cryptoObj = g["crypto"];
   if (cryptoObj && typeof cryptoObj === "object") {
-    define(cryptoObj, "randomUUID", () => random.uuid());
-    define(cryptoObj, "getRandomValues", <T extends ArrayBufferView>(view: T) => random.fill(view));
+    define(cryptoObj, "randomUUID", () => {
+      read();
+      return random.uuid();
+    });
+    define(cryptoObj, "getRandomValues", <T extends ArrayBufferView>(view: T) => {
+      read();
+      return random.fill(view);
+    });
     const subtle = (cryptoObj as { subtle?: Record<string, unknown> }).subtle;
     const trackIo = options.trackIo;
     if (trackIo && subtle && typeof subtle === "object") {
@@ -292,6 +325,7 @@ export function patchGlobals(seed: number | string, options: PatchOptions = {}):
   return {
     clock,
     random,
+    reads,
     libraryIo<T>(perform: () => Promise<T>): Promise<T> {
       return libraryScope ? libraryScope.run(true, perform) : perform();
     },

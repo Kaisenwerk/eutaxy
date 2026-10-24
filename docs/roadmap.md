@@ -95,7 +95,12 @@ In this order:
   a second runs while the first awaits its payout). Next: KV and SQL
   storage when a target needs them (the first target uses key-value
   storage only).
-- Exhaustive scheduler and partial-order reduction.
+- Exhaustive scheduler and partial-order reduction. Done: depth-first
+  enumeration of fault and turn choices with recorded turns, its count
+  checked against closed forms, sleep-set reduction (off for the rest of
+  the exploration once a turn shares more than its effect's target),
+  `eutaxy check --exhaustive`. Next, if real scenarios lose the reduction
+  too often: dynamic partial-order reduction from observed dependences.
 - Lemma spec parser, `SpecIR`, the `CHECKED` rung, `refines`.
 
 **Gate:** a planted rate-limit race under concurrent requests is caught;

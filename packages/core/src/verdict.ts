@@ -10,6 +10,17 @@ export interface BoundsReached {
   readonly effectPoints: number;
   readonly faultsInjected: number;
   readonly elapsedMs: number;
+  /**
+   * Present when exploration was exhaustive: how many distinct schedules ran
+   * (runs that only repeated an order the reduction had covered are not
+   * counted), and whether every schedule within the bounds was reached
+   * before the budget ran out.
+   */
+  readonly exhaustive?: {
+    readonly complete: boolean;
+    readonly schedules: number;
+    readonly reduction: boolean;
+  };
 }
 
 interface VerdictBase {

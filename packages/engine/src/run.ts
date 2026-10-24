@@ -69,11 +69,31 @@ export class InjectedEffectError extends Error {
   }
 }
 
+/** One option at a decision the run cannot make by itself. */
+export interface ChoiceOption {
+  /** Names the option the same way in every run that reaches it, e.g. "req-1#1@2" or "crash_after". */
+  readonly label: string;
+  /** For a turn: the invocation it continues and the target of the effect it performs. */
+  readonly invocation?: string;
+  readonly target?: string;
+}
+
+/**
+ * Makes a run's choices instead of the seed: which fault (or none) at an
+ * effect point, and which turn next in a concurrent run. Exhaustive
+ * exploration drives runs through one of these.
+ */
+export interface Chooser {
+  choose(kind: "fault" | "turn", options: readonly ChoiceOption[]): number;
+}
+
 export interface RunOptions {
   readonly mode: "explore" | "replay";
   readonly schedule: Schedule;
   readonly bounds: Bounds;
   readonly faultProbability: number;
+  /** Makes the choices (explore mode): faults and turns are picked, not drawn from the seed. */
+  readonly chooser?: Chooser;
 }
 
 class InvocationState implements Invocation {
@@ -81,6 +101,8 @@ class InvocationState implements Invocation {
   private readonly onCrash: () => void;
   /** Effect points seen so far in this invocation; the next effect's ordinal. */
   ordinal = 0;
+  /** Times this invocation has parked for a turn; names its next turn the same in every run. */
+  parks = 0;
   private crashedFlag = false;
   private resolveCrashed: () => void = () => {};
   readonly id: string;
@@ -207,7 +229,18 @@ export class Run implements RunHooks {
     readonly go: () => void;
     /** For hosted code's effects: the hosting effect, waiting on this one meanwhile. */
     readonly host?: Frame;
+    /** The turn as a choice: its label and the target of the effect it performs. */
+    readonly option: ChoiceOption;
   }[] = [];
+  /** The turns picked at decisions with more than one option, in order (see Schedule.turns). */
+  private readonly turnPicks: number[] = [];
+  /** Turns taken from `schedule.turns` so far, when replaying recorded turns. */
+  private turnReplayed = 0;
+  /** Events started so far, to name the next start the same in every run. */
+  private starts = 0;
+  /** The target of the turn running since the last decision; null for an event's start or none. */
+  private turnTarget: string | null = null;
+  private turnsCommuteNot = false;
   private parkSeq = 0;
   /** Events a platform queued during a delivery, for the run loop to pick up. */
   private queued: EventRef[] = [];
@@ -236,7 +269,13 @@ export class Run implements RunHooks {
 
   /** The schedule as actually executed: input decisions during replay, drawn ones during exploration. */
   get schedule(): Schedule {
-    return { seed: this.options.schedule.seed, faults: [...this.faults] };
+    const recorded =
+      this.options.chooser !== undefined || this.options.schedule.turns !== undefined;
+    return {
+      seed: this.options.schedule.seed,
+      faults: [...this.faults],
+      ...(recorded ? { turns: [...this.turnPicks] } : {}),
+    };
   }
 
   get effectPoints(): number {
@@ -245,6 +284,36 @@ export class Run implements RunHooks {
 
   get faultsInjected(): number {
     return this.faults.length;
+  }
+
+  /**
+   * Whether a turn other than an event's start did more than its own effect:
+   * performed an effect on another target (synchronous, or nested in it),
+   * queued events, or read virtual time or randomness (effects advance the clock and draws the
+   * stream). Turns told apart by their parked effects' targets need not
+   * commute then. A start is ordered against every turn anyway, so what it
+   * does does not count.
+   */
+  get turnsMayNotCommute(): boolean {
+    this.endSegment();
+    return this.turnsCommuteNot;
+  }
+
+  /**
+   * Concurrent runs: events were queued since the last decision (follow-ups
+   * of a delivery that ended, or `enqueue`). The queue's order is shared, so
+   * within a turn this is another dependence.
+   */
+  queuedEvents(): void {
+    if (this.turnTarget !== null) this.turnsCommuteNot = true;
+  }
+
+  /** Close the code run since the last decision, noting whether a turn read the shared virtual state. */
+  private endSegment(): void {
+    const reads = this.patched?.reads;
+    if (!reads) return;
+    if (this.turnTarget !== null && reads.count > 0) this.turnsCommuteNot = true;
+    reads.count = 0;
   }
 
   get unsupportedReasons(): readonly string[] {
@@ -360,6 +429,16 @@ export class Run implements RunHooks {
   }
 
   private decide(point: EffectPoint, ordinal: number): FaultKind | null {
+    const chooser = this.options.chooser;
+    if (chooser && this.options.mode === "explore") {
+      if (point.allowed.length === 0 || this.faults.length >= this.options.bounds.maxFaultsPerRun)
+        return null;
+      const i = chooser.choose("fault", [
+        { label: "none" },
+        ...point.allowed.map((f) => ({ label: f })),
+      ]);
+      return i === 0 ? null : (point.allowed[i - 1] ?? null);
+    }
     if (this.options.mode === "replay") {
       const d = this.options.schedule.faults.find(
         (f) => f.invocation === point.invocation && f.ordinal === ordinal,
@@ -375,6 +454,9 @@ export class Run implements RunHooks {
   }
 
   private record(point: EffectPoint, kind: "call" | "result" | "fault", payload: JsonValue): void {
+    // A result is an effect performed: within a turn, one on another target is shared with other turns.
+    if (kind === "result" && this.turnTarget !== null && point.target !== this.turnTarget)
+      this.turnsCommuteNot = true;
     this.logState = appendEffect(this.logState, {
       kind,
       invocation: point.invocation,
@@ -425,7 +507,7 @@ export class Run implements RunHooks {
     const nested = enclosing !== undefined;
     if (this.concurrent && !nested) {
       await new Promise<void>((go) => {
-        this.parked.push({ inv, seq: this.parkSeq++, go });
+        this.parked.push({ inv, seq: this.parkSeq++, go, option: this.turnOption(inv, point) });
         this.progressed();
       });
       if (inv.isCrashed()) return hang();
@@ -439,7 +521,13 @@ export class Run implements RunHooks {
         host.children++;
         host.waitingChildren++;
       });
-      this.parked.push({ inv, seq: this.parkSeq++, go: () => (released = true), host });
+      this.parked.push({
+        inv,
+        seq: this.parkSeq++,
+        go: () => (released = true),
+        host,
+        option: this.turnOption(inv, point),
+      });
       this.progressed();
       // Wait by polling a flag with real zero timers made here, inside the hosted code: no
       // promise is settled from outside it (workerd refuses that for a Durable Object), and no
@@ -698,21 +786,57 @@ export class Run implements RunHooks {
       .filter((p) => !p.inv.isCrashed())
       .sort((a, b) => order(a.inv) - order(b.inv) || a.seq - b.seq);
     const options = this.parked.length + (canStart ? 1 : 0);
+    this.endSegment();
+    this.turnTarget = null;
     if (options === 0) return "none";
     let pick = 0;
     if (options > 1) {
-      const [i, next] = nextInt(this.turns, options);
-      this.turns = next;
-      pick = i;
+      pick = this.pickTurn(options, canStart);
+      this.turnPicks.push(pick);
+    } else if (this.options.chooser && this.options.mode === "explore") {
+      // Not a choice, but the enumerator sees it: a single turn can still repeat an explored order.
+      this.options.chooser.choose("turn", this.turnOptions(canStart));
     }
     const [chosen] = pick < this.parked.length ? this.parked.splice(pick, 1) : [];
-    if (!chosen) return "start";
+    if (!chosen) {
+      this.starts++;
+      return "start";
+    }
+    this.turnTarget = chosen.option.target ?? null;
     this.runAs(chosen.inv.id);
     const host = chosen.host;
     // Hosted code resumes: its host counts in flight again from now, before the code runs.
     if (host) this.adjust(host, () => host.waitingChildren--);
     chosen.go();
     return "turn";
+  }
+
+  /** A parked invocation's next turn as a choice. */
+  private turnOption(inv: InvocationState, point: EffectPoint): ChoiceOption {
+    return { label: `${inv.id}@${inv.parks++}`, invocation: inv.id, target: point.target };
+  }
+
+  /** The turns on offer, as choices: the parked invocations in order, then starting the next event. */
+  private turnOptions(canStart: boolean): ChoiceOption[] {
+    return [
+      ...this.parked.map((p) => p.option),
+      ...(canStart ? [{ label: `start:${this.starts}` }] : []),
+    ];
+  }
+
+  /** The turn at a decision with more than one option: recorded, chosen, or drawn from the seed. */
+  private pickTurn(options: number, canStart: boolean): number {
+    const recorded = this.options.schedule.turns;
+    if (this.options.mode === "replay" && recorded) {
+      const i = recorded[this.turnReplayed++] ?? 0;
+      return i < options ? i : 0;
+    }
+    const chooser = this.options.chooser;
+    if (chooser && this.options.mode === "explore")
+      return chooser.choose("turn", this.turnOptions(canStart));
+    const [i, next] = nextInt(this.turns, options);
+    this.turns = next;
+    return i;
   }
 
   /**
