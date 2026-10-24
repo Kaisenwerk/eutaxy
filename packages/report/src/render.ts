@@ -3,17 +3,56 @@
  * CI and coding agents. Both are pure functions over the verdict data.
  */
 
-import { canonicalJson, type EffectLog, type JsonValue, type ScenarioVerdict } from "@eutaxy/core";
+import {
+  canonicalJson,
+  type EffectLog,
+  type JsonValue,
+  type ScenarioVerdict,
+  type SpecVerdict,
+} from "@eutaxy/core";
 
 export const reportSchemaVersion = 1;
 
-/** The JSON report: one object, canonical, with a schema version at the top. */
-export function renderJson(verdict: ScenarioVerdict): string {
+/**
+ * The JSON report: one object, canonical, with a schema version at the top.
+ * Spec verdicts, when there are any, sit beside the scenario's, never in it.
+ */
+export function renderJson(verdict: ScenarioVerdict, specs: readonly SpecVerdict[] = []): string {
   return canonicalJson({
     schemaVersion: reportSchemaVersion,
     generator: "eutaxy",
     verdict: verdict as unknown as JsonValue,
+    ...(specs.length > 0 ? { specs: specs as unknown as JsonValue } : {}),
   });
+}
+
+/** Spec verdicts as text: one line each, a counterexample under a refutation. */
+export function renderSpecs(specs: readonly SpecVerdict[]): string {
+  if (specs.length === 0) return "";
+  const out = ["Specs (CHECKED means held on the inputs the simulator passed; it is not a proof)"];
+  for (const v of specs) {
+    const what = `${v.function} ${v.property}`;
+    switch (v.kind) {
+      case "CHECKED":
+        out.push(
+          `  CHECKED  ${what}: held on ${v.inputs} input(s)${v.discarded > 0 ? `, ${v.discarded} outside the claim` : ""}`,
+        );
+        break;
+      case "REFUTED": {
+        const c = v.counterexample;
+        out.push(
+          `  REFUTED  ${what}: false at ${c.call}${c.error ? `, which threw ${c.error}` : ""}`,
+        );
+        out.push(`           ${c.binders.map((b) => `${b.name} = ${b.value}`).join(", ")}`);
+        out.push(`           ${v.text.replace(/\s+/g, " ")}`);
+        break;
+      }
+      case "UNKNOWN":
+        out.push(`  UNKNOWN  ${what}: ${v.cause}: ${v.reason}`);
+        break;
+    }
+  }
+  return out.join("\n");
 }
 
 function clip(s: string, max: number): string {

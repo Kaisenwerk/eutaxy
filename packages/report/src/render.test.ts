@@ -2,12 +2,13 @@ import {
   appendEffect,
   type Bounded,
   emptyLog,
+  type SpecVerdict,
   type Unsupported,
   type Violated,
 } from "@eutaxy/core";
 import { describe, expect, test } from "vitest";
 import { emitRegressionTest } from "./regression.ts";
-import { renderJson, renderText, renderTrace } from "./render.ts";
+import { renderJson, renderSpecs, renderText, renderTrace } from "./render.ts";
 
 let trace = appendEffect(emptyLog, {
   kind: "call",
@@ -207,5 +208,69 @@ describe("emitRegressionTest", () => {
     expect(src).toContain('from "@eutaxy/engine"');
     expect(src).toContain('toContainEqual(["payment-recorded-once", ["\\"o-1\\""]])');
     expect(src).toContain("is still violated");
+  });
+});
+
+describe("spec verdicts", () => {
+  const bounded: Bounded = {
+    kind: "BOUNDED",
+    scenario: "s",
+    seed: 1,
+    bounds: { maxFaultsPerRun: 1, maxRedeliveries: 2, maxConcurrentInvocations: 1, budgetMs: 2000 },
+    reached: { runs: 1, effectPoints: 1, faultsInjected: 0, elapsedMs: 1 },
+    assumptions: [],
+  };
+  const base = { module: "./domain.ts", function: "decideRefund", assumptions: [] };
+  const specs: SpecVerdict[] = [
+    {
+      ...base,
+      property: "a",
+      text: "forall (x: int) { x === x }",
+      kind: "CHECKED",
+      inputs: 3,
+      discarded: 1,
+    },
+    {
+      ...base,
+      property: "b",
+      text: "forall (c r a: int) {\n  f(c, r, a) }",
+      kind: "REFUTED",
+      rung: "CHECKED",
+      counterexample: {
+        binders: [
+          { name: "c", value: "1000" },
+          { name: "r", value: "800" },
+          { name: "a", value: "400" },
+        ],
+        call: "decideRefund(1000, 800, 400)",
+      },
+    },
+    {
+      ...base,
+      property: "@total",
+      text: "@total",
+      kind: "UNKNOWN",
+      cause: "unsupported",
+      reason: "needs a prover",
+    },
+  ];
+
+  test("text: one line each, the counterexample under a refutation", () => {
+    expect(renderSpecs(specs).split("\n")).toEqual([
+      "Specs (CHECKED means held on the inputs the simulator passed; it is not a proof)",
+      "  CHECKED  decideRefund a: held on 3 input(s), 1 outside the claim",
+      "  REFUTED  decideRefund b: false at decideRefund(1000, 800, 400)",
+      "           c = 1000, r = 800, a = 400",
+      "           forall (c r a: int) { f(c, r, a) }",
+      "  UNKNOWN  decideRefund @total: unsupported: needs a prover",
+    ]);
+    expect(renderSpecs([])).toBe("");
+  });
+
+  test("JSON: beside the scenario verdict, only when there are any", () => {
+    const verdict = JSON.parse(renderJson(bounded)) as Record<string, unknown>;
+    expect("specs" in verdict).toBe(false);
+    const withSpecs = JSON.parse(renderJson(bounded, specs)) as { specs: { kind: string }[] };
+    expect(withSpecs.specs.map((s) => s.kind)).toEqual(["CHECKED", "REFUTED", "UNKNOWN"]);
   });
 });
