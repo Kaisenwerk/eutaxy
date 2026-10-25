@@ -12,6 +12,21 @@
   "engines": {
     "node": ">=24"
   },
+  "keywords": [
+    "deterministic-simulation",
+    "simulation-testing",
+    "fault-injection",
+    "model-checking",
+    "formal-verification",
+    "invariants",
+    "cloudflare",
+    "cloudflare-workers",
+    "durable-objects",
+    "workerd",
+    "vitest",
+    "aws-lambda",
+    "testing"
+  ],
   "exports": {
     ".": "./src/index.ts",
     "./cloudflare": "./src/cloudflare.ts",

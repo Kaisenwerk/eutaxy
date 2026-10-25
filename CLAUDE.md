@@ -102,6 +102,7 @@ packages/cli/              commands, config, adapter discovery
 packages/eutaxy/           the published facade, eutaxy
 corpus/                    planted bugs, differential scenarios, prover contracts (never published)
 examples/                  runnable examples that double as acceptance tests
+scripts/                   release helpers (the README on the npm page)
 ```
 
 ## 5. Changing these rules

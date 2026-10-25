@@ -58,6 +58,7 @@ describe("published package", () => {
         unknown
       >;
       expect(pkg["bin"]).toEqual({ eutaxy: "./dist/bin.mjs" });
+      expect(pkg["keywords"]).toEqual(expect.arrayContaining(["cloudflare-workers"]));
       expect(pkg["exports"]).toEqual({
         ".": { types: "./dist/index.d.mts", default: "./dist/index.mjs" },
         "./cloudflare": { types: "./dist/cloudflare.d.mts", default: "./dist/cloudflare.mjs" },

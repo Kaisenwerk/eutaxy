@@ -55,10 +55,13 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm check
       - run: pnpm build
+      - name: Use the repository README for the npm page
+        run: node scripts/npm-readme.ts "${{ needs.release-please.outputs.tag_name }}" packages/eutaxy/README.md
       - name: Pack with publishConfig applied
         run: |
           mkdir -p release
           pnpm --filter eutaxy pack --pack-destination "$(pwd)/release"
           ls -l release
+          tar -xOzf release/*.tgz package/README.md | head -n 1 | grep -qx '# Eutaxy'
       - name: Publish with provenance
         run: npm publish ./release/*.tgz --access public --provenance
