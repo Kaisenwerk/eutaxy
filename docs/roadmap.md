@@ -16,12 +16,7 @@ design describes what they built. Patch work has no gate of its own: each
 item ships as a `0.5.x` release once `pnpm check` and the corpora pass,
 and v0.6's gate closes the next phase.
 
-In this order. The first came out of a full review before 0.5.0 and goes
-before the provers, because the prover phase builds on the engine's run
-loop and the public facade, which are cheaper to reshape now than after.
-- Smaller simplifications: one token check shared by the spec parser's
-  atoms and template substitutions; unused core exports dropped; per-package
-  nits.
+In this order.
 - Left over from v0.5, when a target needs them: concurrent delivery on
   the AWS platform (it still delivers one event at a time); latency on
   scripted externals; Workers KV, and Durable Object SQL storage (objects
@@ -39,8 +34,9 @@ loop and the public facade, which are cheaper to reshape now than after.
   cache; `eutaxy prover install lean`.
 - MCP server and GitHub Action over the JSON schema.
 
-`checkSpecModule`, `lemmaBool`, `lemmaUnresolved` and `ModulePredicates`
-leave the public facade with `0.6.0`. They are deprecated in `0.5.x`,
+`checkSpecModule`, `lemmaBool`, `lemmaUnresolved`, `ModulePredicates` and
+`QueueHandler` (the former name of `WorkerHandler`) leave the public facade
+with `0.6.0`. They are deprecated in `0.5.x`,
 since the check test `eutaxy check` generates now holds only its module
 globs and one call to `checkInWorkerd`, so nothing generated imports them;
 removing them in a patch release would break callers semver lets rely on
