@@ -59,6 +59,7 @@ export {
   type SpecUnknown,
   type SpecUnknownCause,
   type SpecVerdict,
+  type Tested,
 } from "./spec-verdict.ts";
 export {
   type EveryRow,
