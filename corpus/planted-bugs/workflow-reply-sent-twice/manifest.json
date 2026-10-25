@@ -1,0 +1,8 @@
+{
+  "expect": {
+    "verdict": "VIOLATED",
+    "invariant": "reply-sent-once"
+  },
+  "fault": "the engine restarting after the reply step posted and before its result was persisted (crash_after on the step), or the step's attempt counting as failed after it posted (ambiguous), so the step runs again and posts again",
+  "description": "A chat webhook starts one Workflow instance per message. The Workflow generates a reply and posts it in a step. Steps run at least once, so a step that posted and was not persisted posts the reply twice."
+}
