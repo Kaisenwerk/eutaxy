@@ -332,11 +332,15 @@ export function patchGlobals(seed: number | string, options: PatchOptions = {}):
   };
 }
 
+/** The longest timeout hosts accept: 2^31 - 1 ms. */
+const maxTimeoutMs = 2 ** 31 - 1;
+
 /** A real-time deadline: `expired` resolves after `ms` unless cancelled first. */
 export function realDeadline(ms: number): { readonly expired: Promise<"expired">; cancel(): void } {
   let handle: ReturnType<typeof realSetTimeout> | undefined;
   const expired = new Promise<"expired">((resolve) => {
-    handle = realSetTimeout(() => resolve("expired"), ms);
+    // Hosts fire a timeout above this after 1 ms; the longest they can wait (about 24.8 days) is as good as never.
+    handle = realSetTimeout(() => resolve("expired"), Math.min(ms, maxTimeoutMs));
   });
   return { expired, cancel: () => realClearTimeout(handle) };
 }

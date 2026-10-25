@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
   patchGlobals,
+  realDeadline,
   realTick,
   settleOn,
   VirtualClock,
@@ -249,5 +250,18 @@ describe("settleOn", () => {
     ]);
     expect(race).toBe("tick");
     expect(stuck).toEqual(["stuck"]);
+  });
+});
+
+describe("realDeadline", () => {
+  test("a deadline past the host's timer limit waits rather than firing at once", async () => {
+    // Hosts fire a timeout above 2^31 - 1 ms after 1 ms; a budget that large must still mean "not yet".
+    const deadline = realDeadline(2 ** 31 + 5);
+    const first = await Promise.race([
+      deadline.expired,
+      new Promise<"waiting">((r) => realSetTimeoutForTest(() => r("waiting"), 30)),
+    ]);
+    deadline.cancel();
+    expect(first).toBe("waiting");
   });
 });
