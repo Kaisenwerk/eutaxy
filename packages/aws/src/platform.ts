@@ -18,7 +18,7 @@ import type {
   ScenarioSpec,
 } from "@eutaxy/core";
 import { CrashSignal } from "@eutaxy/engine";
-import { resetTables, scenarioTables, snapshotTables, type TableSpec } from "./dynamodb.ts";
+import { resetTables, scenarioTables, snapshotTables } from "./dynamodb.ts";
 import {
   batchFailed,
   type LambdaContext,
