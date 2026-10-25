@@ -8,7 +8,7 @@ import scenario from "./scenario.sim.ts";
 import handler from "./worker.ts";
 import { expect, test } from "vitest";
 
-const schedule = {"faults":[{"fault":"ambiguous","invocation":"req-1#1","op":"acquire","ordinal":0,"target":"DO:POOL"}],"seed":1651600209} as const;
+const schedule = {"faults":[{"fault":"ambiguous","invocation":"req-1#1","op":"acquire","ordinal":0,"target":"DO:POOL"}],"seed":1377997758} as const;
 const keptEvents = ["req-1"] as const;
 
 test("lease-pool-lost-response: one-slot-per-project is still violated on the recorded schedule", async () => {

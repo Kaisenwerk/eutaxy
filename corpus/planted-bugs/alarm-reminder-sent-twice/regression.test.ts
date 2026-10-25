@@ -8,7 +8,7 @@ import scenario from "./scenario.sim.ts";
 import handler from "./worker.ts";
 import { expect, test } from "vitest";
 
-const schedule = {"faults":[{"fault":"ambiguous","invocation":"alarm:REMINDERS:reminders:1#1","op":"POST","ordinal":1,"target":"Fetch:mail"}],"seed":4232751360} as const;
+const schedule = {"faults":[{"fault":"ambiguous","invocation":"alarm:REMINDERS:reminders:1#1","op":"POST","ordinal":1,"target":"Fetch:mail"}],"seed":1974462766} as const;
 const keptEvents = ["req-1"] as const;
 
 test("alarm-reminder-sent-twice: reminder-sent-once is still violated on the recorded schedule", async () => {

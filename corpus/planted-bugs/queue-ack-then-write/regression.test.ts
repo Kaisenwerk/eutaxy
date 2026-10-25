@@ -8,7 +8,7 @@ import schema_DB from "./schema.sql?raw";
 import handler from "./worker.ts";
 import { expect, test } from "vitest";
 
-const schedule = {"faults":[{"fault":"crash_after","invocation":"msg-1#1","op":"first","ordinal":1,"target":"D1:DB"}],"seed":3015770734} as const;
+const schedule = {"faults":[{"fault":"crash_after","invocation":"msg-1#1","op":"ack","ordinal":0,"target":"Queue:payments"}],"seed":282410683} as const;
 const keptEvents = ["msg-1"] as const;
 
 test("queue-ack-then-write: every-payment-recorded is still violated on the recorded schedule", async () => {

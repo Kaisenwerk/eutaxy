@@ -8,7 +8,7 @@ import schema_DB from "./schema.sql?raw";
 import handler from "./worker.ts";
 import { expect, test } from "vitest";
 
-const schedule = {"faults":[{"fault":"error","invocation":"req-1#1","op":"run","ordinal":1,"target":"D1:DB"}],"seed":3015770734} as const;
+const schedule = {"faults":[{"fault":"error","invocation":"req-1#1","op":"run","ordinal":1,"target":"D1:DB"}],"seed":2645778316} as const;
 const keptEvents = ["req-1"] as const;
 
 test("webhook-lease-outlives-retries: every-event-applied is still violated on the recorded schedule", async () => {

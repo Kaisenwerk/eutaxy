@@ -8,7 +8,7 @@ import schema_DB from "./schema.sql?raw";
 import handler from "./worker.ts";
 import { expect, test } from "vitest";
 
-const schedule = {"faults":[{"fault":"crash_before","invocation":"req-1#1","op":"response","ordinal":1,"target":"Http:/webhooks/payments"}],"seed":3015770734} as const;
+const schedule = {"faults":[{"fault":"crash_before","invocation":"req-1#1","op":"response","ordinal":1,"target":"Http:/webhooks/payments"}],"seed":4232751360} as const;
 const keptEvents = ["req-1"] as const;
 
 test("webhook-duplicate-record: event-recorded-once is still violated on the recorded schedule", async () => {

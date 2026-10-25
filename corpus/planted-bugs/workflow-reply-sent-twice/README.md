@@ -17,9 +17,9 @@ ran but counted as failed.
 effective posts for `msg-1`: one before the restart (or the failed
 attempt) and one after. `one-run-per-message` holds: the webhook keys the
 instance by the message id, so a resent webhook finds it already there.
-`FixedChatTurn`, which sends the message id as the post's idempotency
-key, is `BOUNDED`, seeded and exhaustively: the repeated post is
-deduplicated.
+Seeded and exhaustive exploration both find it. `FixedChatTurn`, which
+sends the message id as the post's idempotency key, is `BOUNDED`, seeded
+and exhaustively: the repeated post is deduplicated.
 
 **The fix.** Make every non-idempotent call inside a step idempotent,
 here with a key derived from the message.

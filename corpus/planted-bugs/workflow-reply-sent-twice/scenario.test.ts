@@ -21,9 +21,8 @@ const platform = () =>
 const fixed = { ...scenario, setup: [workflow("TURNS", "FixedChatTurn")] };
 const { COUNTING } = env as unknown as { readonly COUNTING: Workflow };
 
-// Exhaustive: the reply step is several effects deep, where seeded runs rarely place their one fault.
 test(`reaches ${manifest.expect.verdict} on ${manifest.expect.invariant}`, async () => {
-  const verdict = await check(scenario, platform(), { seed: "corpus", exhaustive: true });
+  const verdict = await check(scenario, platform(), { seed: "corpus" });
   expect(verdict.kind, renderText(verdict)).toBe(manifest.expect.verdict);
   if (verdict.kind !== "VIOLATED") return;
   expect(verdict.violation.invariant).toBe(manifest.expect.invariant);
@@ -47,7 +46,9 @@ test("the fixed Workflow's idempotency key makes the repeated step harmless", as
   expect(verdict.kind, renderText(verdict)).toBe("BOUNDED");
 });
 
-test("every schedule of the fix holds", async () => {
+test("exhaustive exploration finds it too, and every schedule of the fix holds", async () => {
+  const buggy = await check(scenario, platform(), { seed: "corpus", exhaustive: true });
+  expect(buggy.kind, renderText(buggy)).toBe("VIOLATED");
   const holds = await check(fixed, platform(), { seed: "corpus", exhaustive: true });
   expect(holds.kind, renderText(holds)).toBe("BOUNDED");
   expect(holds.reached.exhaustive?.complete).toBe(true);

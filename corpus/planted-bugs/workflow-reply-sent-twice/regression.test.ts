@@ -7,7 +7,7 @@ import scenario from "./scenario.sim.ts";
 import * as worker from "./worker.ts";
 import { expect, test } from "vitest";
 
-const schedule = {"faults":[{"fault":"crash_after","invocation":"workflow:TURNS:msg-1#1","op":"step_result","ordinal":5,"target":"Workflow:TURNS"}],"seed":0,"turns":[]} as const;
+const schedule = {"faults":[{"fault":"ambiguous","invocation":"workflow:TURNS:msg-1#1","op":"POST","ordinal":4,"target":"Fetch:chat"}],"seed":1377997758} as const;
 const keptEvents = ["req-1"] as const;
 
 test("workflow-reply-sent-twice: reply-sent-once is still violated on the recorded schedule", async () => {
