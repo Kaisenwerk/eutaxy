@@ -536,9 +536,12 @@ runtime dependencies. Concretely, `eutaxy check <scenario.sim.ts>` writes a
 `.eutaxy/` directory beside the scenario holding a test that performs the
 check inside workerd and a Vitest config with the Cloudflare plugin pointed
 at the wrangler config found beside the scenario (or given with
-`--wrangler`). The test resolves the Worker and schema files with Vite globs
-from the scenario's own `worker.entry` and `setup`, stores the verdict in
-its Vitest task meta, and the CLI reads it back through Vitest's JSON
+`--wrangler`). The test holds only the Vite globs (they resolve at build
+time, so they must be written in it) and one call to `checkInWorkerd`, a
+typed function of the `cli` package that resolves the Worker and schema
+files from the scenario's own `worker.entry` and `setup`, observes the
+modules the scenario's `specs` name, runs the check and checks the specs.
+The test stores what it returns in its Vitest task meta, and the CLI reads it back through Vitest's JSON
 reporter: nothing depends on console output. The CLI then prints the text
 report or the JSON report, writes `<name>.regression.test.ts` on a
 violation, removes `.eutaxy/`, and exits 0, 1 or 2 for `BOUNDED`,

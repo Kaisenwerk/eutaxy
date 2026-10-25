@@ -6,7 +6,7 @@
 calls the simulator made: binders matched to parameters by name, values
 outside a binder's domain or guard and failed preconditions discarded),
 `checkSpecModule` (every verdict for one module, markers included),
-`lemmaBool` (the atom check generated predicates call), `inDomain`,
+`lemmaBool` (the atom check generated predicates are given), `inDomain`,
 `render`. From v0.6: `Prover`, `runLadder`, `aggregate`.
 
 **May import.** `@eutaxy/core`, `@eutaxy/spec`. Only these are declared in `package.json`, and

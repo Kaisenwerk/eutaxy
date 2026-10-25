@@ -17,6 +17,11 @@ export function f(x: number) { return x; }
     expect(source).toContain(
       "})(__eutaxyBool, __eutaxySame, __eutaxyNamespace, __eutaxyUnresolved)",
     );
+    // The helpers come in as parameters; the file imports nothing.
+    expect(source).not.toContain("import ");
+    expect(source).toContain(
+      "export const predicates = (__eutaxyNamespace: any, __eutaxyBool: any, __eutaxyUnresolved: any) => ({",
+    );
   });
 
   test("each module's predicates are their own file, loaded only when a scenario names the module", () => {

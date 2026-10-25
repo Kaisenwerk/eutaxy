@@ -1,6 +1,13 @@
 // eutaxy/cloudflare: scenarios, the platform and checks for Cloudflare Workers.
 
-export { type CloudflareRegressionOptions, cloudflareRegressionTest } from "@eutaxy/cli";
+export {
+  type CheckTransport,
+  type CloudflareRegressionOptions,
+  checkInWorkerd,
+  cloudflareRegressionTest,
+  type SpecEntry,
+  type WorkerdCheckInput,
+} from "@eutaxy/cli";
 export {
   atLeastOnce,
   atLeastOncePerMessage,

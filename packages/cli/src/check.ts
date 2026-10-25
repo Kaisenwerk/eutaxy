@@ -16,9 +16,10 @@ import {
   type Violated,
 } from "@eutaxy/core";
 import { renderSpecs, renderText } from "@eutaxy/report";
-import { type CheckTransport, checkTestSource, metaKey, vitestConfigSource } from "./generate.ts";
+import { checkTestSource, metaKey, vitestConfigSource } from "./generate.ts";
 import { cloudflareRegressionTest } from "./regression.ts";
 import { findSpecModules, specFiles } from "./specs.ts";
+import type { CheckTransport } from "./workerd.ts";
 
 export interface CheckOptions {
   readonly scenario: string;

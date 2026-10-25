@@ -7,8 +7,9 @@ describe("generated check test", () => {
     expect(src).toContain('import scenario from "../x.sim.ts";');
     expect(src).toContain('import.meta.glob("../**/*.sql"');
     expect(src).toContain('"!../**/*.sim.ts"');
-    expect(src).toContain('check(scenario, platform, { seed: "s", maxRuns: 5 })');
-    expect(src).toContain(`task.meta[${JSON.stringify(metaKey)}] =`);
+    expect(src).toContain(
+      `task.meta[${JSON.stringify(metaKey)}] = await checkInWorkerd({ scenario, env, durableObjects, sqlFiles, modules, specLoaders, seed: "s", maxRuns: 5 });`,
+    );
   });
 
   test("the vitest config points the Cloudflare plugin at the wrangler file", () => {
@@ -23,13 +24,15 @@ describe("generated check test", () => {
     expect(src).toContain('outputFile: "/p/.eutaxy/r.json"');
   });
 
-  test("a function observed in two spec modules is an error: its decisions would be ambiguous", () => {
+  test("holds no logic: the globs and one typed call, importing only checkInWorkerd from eutaxy", () => {
     const src = checkTestSource({ seed: "s", scenarioImport: "../x.sim.ts" });
-    expect(src).toContain("is observed in both");
+    expect(src.match(/from "eutaxy[^"]*"/g)).toEqual(['from "eutaxy/cloudflare"']);
+    expect(src).toContain('import { checkInWorkerd } from "eutaxy/cloudflare";');
+    expect(src).not.toMatch(/\bfor \(|\bif \(/);
   });
 
   test("an exhaustive check asks explore for every schedule", () => {
     const src = checkTestSource({ seed: "s", exhaustive: true, scenarioImport: "../x.sim.ts" });
-    expect(src).toContain('check(scenario, platform, { seed: "s", exhaustive: true })');
+    expect(src).toContain('seed: "s", exhaustive: true });');
   });
 });
