@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.5.1](https://github.com/Kaisenwerk/eutaxy/compare/v0.5.0...v0.5.1) (2026-10-25)
+
+
+### Features
+
+* **cli:** --budget-ms replaces the scenario's time budget ([6455130](https://github.com/Kaisenwerk/eutaxy/commit/6455130d913d1577e30a7335d52fc7db94ae822b))
+* **cli:** eutaxy check and regression tests run Workflow scenarios ([6756ecc](https://github.com/Kaisenwerk/eutaxy/commit/6756ecceada593de20079c6768ca886b691d77f2))
+* **cloudflare:** deprecate QueueHandler, the former name of WorkerHandler ([5441c57](https://github.com/Kaisenwerk/eutaxy/commit/5441c574222b6a4b054cdea3ae5980983942cf55))
+* **cloudflare:** model R2 buckets ([886317b](https://github.com/Kaisenwerk/eutaxy/commit/886317b99e712594f7829b585216fbe8cbb1a438))
+* **cloudflare:** Workflows as a model of the engine ([51805a8](https://github.com/Kaisenwerk/eutaxy/commit/51805a82cbf9cec95f276dd5b7863a44efdcd072))
+* **core:** references invariant for rows another snapshot must name ([38d66b9](https://github.com/Kaisenwerk/eutaxy/commit/38d66b9b854f3a1d12094fed802a4b99779deb15))
+* **engine:** seeded runs place faults by position, not by a chance at each point ([875590f](https://github.com/Kaisenwerk/eutaxy/commit/875590ffd57a1bae03b317866ee802565515e25b))
+* **eutaxy:** deprecate checkSpecModule, lemmaBool and lemmaUnresolved ([56a4ef2](https://github.com/Kaisenwerk/eutaxy/commit/56a4ef2d8ea63d9b211f5352db69e43959857947))
+
+
+### Bug Fixes
+
+* **core:** one toJson summarizes every payload, in any time zone ([c498418](https://github.com/Kaisenwerk/eutaxy/commit/c4984182df64158d3509e421f67f78b1ff54a947))
+* **engine:** a real deadline past the host's timer limit waits ([69d851f](https://github.com/Kaisenwerk/eutaxy/commit/69d851f30c6788bf5967de435411d9278fd006d7))
+* **engine:** count the run that turns the reduction off as a schedule ([61c7439](https://github.com/Kaisenwerk/eutaxy/commit/61c743923794880d3433a1f3573f6fcf8af5198b))
+* **report:** print the Exhaustive line on every exhaustive verdict ([e58248d](https://github.com/Kaisenwerk/eutaxy/commit/e58248d388df44134b76bf47b9ec67114c76daec))
+
 ## [0.5.0](https://github.com/Kaisenwerk/eutaxy/compare/v0.4.0...v0.5.0) (2026-10-24)
 
 
