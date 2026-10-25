@@ -16,6 +16,16 @@ import {
 const WRITE: readonly FaultKind[] = ["crash_before", "crash_after", "ambiguous", "error"];
 const READ: readonly FaultKind[] = ["crash_before", "crash_after", "error"];
 
+/** Whether a binding is a D1 database (what the proxies and the differential wrap). */
+export function isD1(value: unknown): value is D1Database {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as { prepare?: unknown }).prepare === "function" &&
+    typeof (value as { batch?: unknown }).batch === "function"
+  );
+}
+
 export interface ProxyContext {
   readonly hooks: RunHooks;
   /** The invocation currently running; only one runs at a time, even with several in flight. */

@@ -19,7 +19,8 @@ import {
   settleOn,
   type VirtualClock,
 } from "@eutaxy/engine";
-import { resetD1, snapshotD1 } from "./d1.ts";
+import { executionContext } from "./background.ts";
+import { isD1, resetD1, snapshotD1 } from "./d1.ts";
 import { requestFor } from "./http.ts";
 import { type CloudflarePlatformOptions, createCloudflarePlatform } from "./platform.ts";
 import type { HttpDrive, HttpRequestSpec, QueueDrive } from "./scenario.ts";
@@ -95,14 +96,6 @@ function countingD1(real: D1Database, io: { n: number }, clock: VirtualClock): D
       return typeof v === "function" ? (v as (...x: unknown[]) => unknown).bind(t) : v;
     },
   });
-}
-
-function isD1(value: unknown): value is D1Database {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    typeof (value as { prepare?: unknown }).prepare === "function"
-  );
 }
 
 async function snapshotAll(
@@ -208,19 +201,6 @@ async function rawSide(spec: ScenarioSpec, options: CloudflarePlatformOptions): 
         throw new DifferentialStuck();
       },
     });
-  const ctxFor = (background: Promise<unknown>[]) =>
-    ({
-      waitUntil: (p: Promise<unknown>) => {
-        background.push(
-          p.then(
-            () => undefined,
-            () => undefined,
-          ),
-        );
-      },
-      passThroughOnException: () => {},
-      props: {},
-    }) as unknown as ExecutionContext;
   try {
     if (drive.kind === "http") {
       const handler = options.handler.fetch;
@@ -234,7 +214,12 @@ async function rawSide(spec: ScenarioSpec, options: CloudflarePlatformOptions): 
         try {
           const r = await settle(
             Promise.resolve().then(() =>
-              handler.call(options.handler, requestFor(req), countedEnv, ctxFor(background)),
+              handler.call(
+                options.handler,
+                requestFor(req),
+                countedEnv,
+                executionContext(background),
+              ),
             ),
           );
           await settle(r.clone().text());
@@ -288,7 +273,7 @@ async function rawSide(spec: ScenarioSpec, options: CloudflarePlatformOptions): 
           ackAll: () => message.ack(),
           retryAll: () => message.retry(),
         };
-        const ctx = ctxFor(background);
+        const ctx = executionContext(background);
         let status: "completed" | "errored";
         try {
           await settle(

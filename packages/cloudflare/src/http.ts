@@ -104,9 +104,7 @@ export async function deliverRequest(
   };
   // A virtual timer: at the deadline the caller gives up, whatever the handler is doing.
   const deadlineTimer =
-    deadline === undefined || lateAt === undefined
-      ? undefined
-      : setTimeout(() => giveUp(lateAt), deadline);
+    lateAt === undefined ? undefined : setTimeout(() => giveUp(lateAt), deadline);
 
   let response: Response | undefined;
   const outcome = Promise.resolve()

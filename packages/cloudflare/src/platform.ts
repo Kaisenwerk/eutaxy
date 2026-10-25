@@ -17,7 +17,7 @@ import type {
 } from "@eutaxy/core";
 import { alarmSource, deliverAlarm } from "./alarms.ts";
 import type { RunningWorker } from "./background.ts";
-import { type ProxyContext, proxyD1, resetD1, snapshotD1 } from "./d1.ts";
+import { isD1, type ProxyContext, proxyD1, resetD1, snapshotD1 } from "./d1.ts";
 import {
   alarmRunner,
   BindingState,
@@ -61,15 +61,6 @@ export interface CloudflarePlatformOptions {
    * seeds and snapshots the real objects through them.
    */
   readonly durableObjects?: DurableObjectTestHelpers;
-}
-
-function isD1(value: unknown): value is D1Database {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    typeof (value as { prepare?: unknown }).prepare === "function" &&
-    typeof (value as { batch?: unknown }).batch === "function"
-  );
 }
 
 function isBindingLike(value: unknown): boolean {
@@ -172,21 +163,14 @@ export function createCloudflarePlatform(options: CloudflarePlatformOptions): Pl
     concurrent: true,
 
     async reset(spec: ScenarioSpec): Promise<void> {
-      resetBindings = new Set(
-        spec.setup.filter((s) => s.kind === "durable_object").map((s) => String(s["binding"])),
-      );
+      resetBindings = new Set();
+      alarmLimits = new Map();
       for (const state of bindingStates.values()) state.clear();
-      alarmLimits = new Map(
-        spec.setup
-          .filter((s) => s.kind === "durable_object")
-          .map((s) => [
-            String(s["binding"]),
-            (s as DurableObjectSetup).alarmsPerObject ?? defaultAlarmsPerObject,
-          ]),
-      );
       for (const step of spec.setup) {
         if (step.kind === "durable_object") {
           const setup = step as DurableObjectSetup;
+          resetBindings.add(setup.binding);
+          alarmLimits.set(setup.binding, setup.alarmsPerObject ?? defaultAlarmsPerObject);
           await resetNamespace(
             namespace(setup.binding),
             helpers(),

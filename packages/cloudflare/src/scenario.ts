@@ -372,13 +372,9 @@ function validateHttpDrive(drive: HttpDrive): readonly string[] {
 
 /** Build and validate a scenario spec; throws with every problem listed. */
 export function defineScenario(input: CloudflareScenarioInput): ScenarioSpec {
+  // queue() keeps the ids a QueueDrive already has, so it serves both forms.
   const drive: QueueDrive | HttpDrive =
-    input.drive.kind === "http"
-      ? input.drive
-      : "messages" in input.drive &&
-          input.drive.messages.every((m) => "id" in m && typeof m.id === "string")
-        ? (input.drive as QueueDrive)
-        : queue(input.drive.queue, input.drive.messages);
+    input.drive.kind === "http" ? input.drive : queue(input.drive.queue, input.drive.messages);
   const spec: ScenarioSpec = {
     version: 1,
     name: input.name,

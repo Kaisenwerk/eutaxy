@@ -352,10 +352,6 @@ export function proxyNamespace(
   });
 }
 
-/**
- * Run an object's `alarm()` handler inside it, after taking over its alarms
- * (the instance may be new since the alarm was set).
- */
 /** Drop an object's instance from outside it; one that is not running has nothing to drop. */
 export async function evictObject(
   real: DurableObjectNamespace,
@@ -368,6 +364,10 @@ export async function evictObject(
     .catch(() => {});
 }
 
+/**
+ * Run an object's `alarm()` handler inside it, after taking over its alarms
+ * (the instance may be new since the alarm was set).
+ */
 export function alarmRunner(
   real: DurableObjectNamespace,
   binding: string,
