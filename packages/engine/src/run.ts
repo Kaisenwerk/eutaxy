@@ -155,6 +155,11 @@ function hang<T>(): Promise<T> {
   return new Promise<T>(() => {});
 }
 
+/** Why an invocation that nothing can move is abandoned. */
+function waitingUnseen(invocation: string): string {
+  return `invocation ${invocation} is waiting on something Eutaxy cannot see (no effect in flight, no timer due)`;
+}
+
 /** Delivered invocations are `<event>#<attempt>`, so this id is never one of theirs. */
 const bookkeepingId = "platform";
 
@@ -589,7 +594,7 @@ export class Run implements RunHooks {
     this.current = invocation;
     if (!patched) {
       // Globals not installed (direct use outside runOnce): just wait, abandoning on crash.
-      return Promise.race([promise, inv.crashed.then(() => new Promise<T>(() => {}))]);
+      return Promise.race([promise, inv.crashed.then(() => hang<T>())]);
     }
     return settleOn(promise, {
       clock: patched.clock,
@@ -597,9 +602,7 @@ export class Run implements RunHooks {
       crashed: () => inv.isCrashed(),
       stuck: () => {
         // Nothing can make progress: report it and abandon the invocation so the run can end.
-        this.unsupported(
-          `invocation ${invocation} is waiting on something Eutaxy cannot see (no effect in flight, no timer due)`,
-        );
+        this.unsupported(waitingUnseen(invocation));
         inv.crash();
       },
     });
@@ -682,9 +685,7 @@ export class Run implements RunHooks {
     for (const id of ids) {
       const inv = this.invocations.get(id);
       if (!inv || inv.isCrashed()) continue;
-      this.unsupported(
-        `invocation ${id} is waiting on something Eutaxy cannot see (no effect in flight, no timer due)`,
-      );
+      this.unsupported(waitingUnseen(id));
       inv.crash();
       abandoned++;
     }

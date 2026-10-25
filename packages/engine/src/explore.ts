@@ -20,7 +20,7 @@ import {
   type Schedule,
   seedPrng,
 } from "@eutaxy/core";
-import { Enumerator } from "./exhaustive.ts";
+import { ExhaustiveDriver } from "./exhaustive.ts";
 import { concurrencySupported, Run, type StartedDelivery } from "./run.ts";
 import { shrink } from "./shrink.ts";
 
@@ -264,46 +264,43 @@ export async function explore(
   const witnesses: { schedule: Schedule; digest: string }[] = [];
 
   let master: PrngState = seedPrng(options.seed);
-  let reduction =
-    typeof options.exhaustive === "object" ? (options.exhaustive.reduction ?? true) : true;
-  let enumerator = options.exhaustive ? new Enumerator({ reduction }) : null;
-  let schedules = 0;
-  let more = true;
-  let restart = false;
-  const exhaustiveReached = () =>
-    enumerator ? { exhaustive: { complete: !more, schedules, reduction } } : {};
-  const doneNow = (): BoundsReached => ({ ...done(), ...exhaustiveReached() });
-  while (more && reached.runs < maxRuns && now() - start < spec.bounds.budgetMs) {
+  const exhaustive = options.exhaustive
+    ? new ExhaustiveDriver(
+        typeof options.exhaustive === "object" ? (options.exhaustive.reduction ?? true) : true,
+      )
+    : null;
+  const doneNow = (): BoundsReached => ({
+    ...done(),
+    ...(exhaustive ? { exhaustive: exhaustive.reached } : {}),
+  });
+  while (
+    (exhaustive?.hasMore ?? true) &&
+    reached.runs < maxRuns &&
+    now() - start < spec.bounds.budgetMs
+  ) {
     const [runSeed, next] = nextU32(master);
     master = next;
     const run = new Run({
       mode: "explore",
       // Enumerated runs pick their choices; they share one seed for the virtual globals.
-      schedule: { seed: enumerator ? 0 : runSeed, faults: [] },
+      schedule: { seed: exhaustive ? 0 : runSeed, faults: [] },
       bounds: spec.bounds,
       faultProbability,
-      ...(enumerator ? { chooser: enumerator.next() } : {}),
+      ...(exhaustive ? { chooser: exhaustive.next() } : {}),
     });
     const log = await runOnce(spec, platform, run);
     reached.runs++;
-    if (enumerator) {
-      if (enumerator.mismatch) {
+    if (exhaustive) {
+      if (exhaustive.mismatch) {
         return {
           ...base,
           kind: "UNSUPPORTED",
           cause: "not_replayable",
-          reason: `exhaustive exploration needs deterministic runs: ${enumerator.mismatch}`,
+          reason: `exhaustive exploration needs deterministic runs: ${exhaustive.mismatch}`,
           reached: doneNow(),
         };
       }
-      // The reduction's commuting turns do not commute here: once this run is checked, every order.
-      restart = reduction && run.turnsMayNotCommute;
-      if (!restart) {
-        more = enumerator.advance();
-        // A run the reduction had already covered is not a new schedule; its checks repeat others'.
-        if (enumerator.blocked) continue;
-      }
-      schedules++;
+      if (!exhaustive.ran(() => run.turnsMayNotCommute)) continue;
     }
     reached.effectPoints += run.effectPoints;
     reached.faultsInjected += run.faultsInjected;
@@ -358,11 +355,7 @@ export async function explore(
         reached: doneNow(),
       };
     }
-    if (restart) {
-      reduction = false;
-      enumerator = new Enumerator({ reduction });
-      schedules = 0;
-    }
+    exhaustive?.checked();
   }
   // Module-state leak detection: the same schedules, in the opposite order, must give the same logs.
   for (const witness of [...witnesses].reverse()) {

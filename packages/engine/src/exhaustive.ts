@@ -129,3 +129,69 @@ export class Enumerator {
     return false;
   }
 }
+
+/**
+ * The exhaustive half of `explore`: the chooser for each run, what a run
+ * counts for, and starting the enumeration again with the reduction off
+ * once a run shows its turns may not commute.
+ */
+export class ExhaustiveDriver {
+  private reduction: boolean;
+  private enumerator: Enumerator;
+  private schedules = 0;
+  private more = true;
+  private restart = false;
+
+  constructor(reduction: boolean) {
+    this.reduction = reduction;
+    this.enumerator = new Enumerator({ reduction });
+  }
+
+  /** Whether schedules are left to run. */
+  get hasMore(): boolean {
+    return this.more;
+  }
+
+  /** See `Enumerator.mismatch`. */
+  get mismatch(): string | null {
+    return this.enumerator.mismatch;
+  }
+
+  /** The chooser for the next run. */
+  next(): Chooser {
+    return this.enumerator.next();
+  }
+
+  /**
+   * Account for the run just made. False when it only repeated an order the
+   * reduction had covered: it is not a new schedule and its checks repeat
+   * others'. A run that shows its turns may not commute counts and is
+   * checked, and `checked` then starts again over every order.
+   */
+  ran(turnsMayNotCommute: () => boolean): boolean {
+    this.restart = this.reduction && turnsMayNotCommute();
+    if (!this.restart) {
+      this.more = this.enumerator.advance();
+      if (this.enumerator.blocked) return false;
+    }
+    this.schedules++;
+    return true;
+  }
+
+  /** The run's checks passed: if it turned the reduction off, every order from the start. */
+  checked(): void {
+    if (!this.restart) return;
+    this.reduction = false;
+    this.enumerator = new Enumerator({ reduction: false });
+    this.schedules = 0;
+  }
+
+  /** What the verdict reports (see `BoundsReached.exhaustive`). */
+  get reached(): {
+    readonly complete: boolean;
+    readonly schedules: number;
+    readonly reduction: boolean;
+  } {
+    return { complete: !this.more, schedules: this.schedules, reduction: this.reduction };
+  }
+}
