@@ -1,14 +1,14 @@
 import { describe, expect, test } from "vitest";
 import { appendEffect, type EffectLog, emptyLog } from "./effect-log.ts";
+import { checkInvariant } from "./invariants.ts";
 import {
-  checkInvariant,
   type EveryRow,
   type Implies,
   lastSnapshot,
   queryRows,
   rowMatches,
   type Unique,
-} from "./invariants.ts";
+} from "./state.ts";
 
 function withSnapshot(log: EffectLog, tables: Record<string, unknown[]>): EffectLog {
   return appendEffect(log, {

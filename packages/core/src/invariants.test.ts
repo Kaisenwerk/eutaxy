@@ -5,11 +5,10 @@ import {
   type AtMostOncePerKey,
   checkInvariant,
   checkInvariants,
-  getPath,
   recomputePerMessageExpected,
   sameViolation,
-  selectEffects,
 } from "./invariants.ts";
+import { getPath, selectEffects } from "./selectors.ts";
 
 /** A D1 insert result as the Cloudflare proxies will record it. */
 function insertResult(

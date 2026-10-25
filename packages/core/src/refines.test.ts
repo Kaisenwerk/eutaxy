@@ -2,7 +2,8 @@
 import { describe, expect, test } from "vitest";
 import type { JsonValue } from "./canonical-json.ts";
 import { appendEffect, type EffectLog, emptyLog } from "./effect-log.ts";
-import { checkInvariant, decisionTarget, type Refines } from "./invariants.ts";
+import { checkInvariant } from "./invariants.ts";
+import { decisionTarget, type Refines } from "./refines.ts";
 
 /** A refund: read the order's refunded total, decide, write the new total. */
 type Step =

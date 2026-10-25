@@ -5,12 +5,8 @@
  */
 
 import type { JsonValue } from "./canonical-json.ts";
-import {
-  type AtLeastOnce,
-  type AtMostOncePerKey,
-  type EffectSelector,
-  getPath,
-} from "./invariants.ts";
+import type { AtLeastOnce, AtMostOncePerKey } from "./invariants.ts";
+import { type EffectSelector, getPath } from "./selectors.ts";
 
 export function atMostOncePerKey(
   name: string,

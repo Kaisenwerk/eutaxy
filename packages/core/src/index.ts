@@ -23,24 +23,9 @@ export {
   type AtMostOncePerKey,
   checkInvariant,
   checkInvariants,
-  decisionTarget,
-  type EffectSelector,
-  type EveryRow,
-  getPath,
-  type Implies,
   type Invariant,
-  lastSnapshot,
-  matches,
-  queryRows,
-  type Refines,
-  type Row,
-  type RowCondition,
   recomputePerMessageExpected,
-  rowMatches,
-  type StateQuery,
   sameViolation,
-  selectEffects,
-  type Unique,
   type Violation,
 } from "./invariants.ts";
 export type {
@@ -53,6 +38,7 @@ export type {
   RunHooks,
 } from "./platform.ts";
 export { fork, nextFloat, nextInt, nextU32, type PrngState, seedPrng } from "./prng.ts";
+export { decisionTarget, type Refines } from "./refines.ts";
 export {
   type Bounds,
   defaultBounds,
@@ -63,6 +49,7 @@ export {
   validateScenario,
   type WorkerRef,
 } from "./scenario.ts";
+export { type EffectSelector, getPath, matches, selectEffects } from "./selectors.ts";
 export { type ShrinkState, shrinkCandidates, shrinkSize } from "./shrink.ts";
 export {
   type Checked,
@@ -73,6 +60,17 @@ export {
   type SpecUnknownCause,
   type SpecVerdict,
 } from "./spec-verdict.ts";
+export {
+  type EveryRow,
+  type Implies,
+  lastSnapshot,
+  queryRows,
+  type Row,
+  type RowCondition,
+  rowMatches,
+  type StateQuery,
+  type Unique,
+} from "./state.ts";
 export { type JsonExtra, toJson } from "./to-json.ts";
 export { bytesEqual, utf8Encode } from "./utf8.ts";
 export {
