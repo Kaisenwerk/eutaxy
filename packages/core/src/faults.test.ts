@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { decideFault, type FaultKind } from "./faults.ts";
+import { decideFault, type FaultKind, planFaults } from "./faults.ts";
 
 const allFaults: readonly FaultKind[] = [
   "crash_before",
@@ -48,5 +48,47 @@ describe("decideFault", () => {
     const a = decideFault(seedPrng(9), allFaults, 0, { maxFaultsPerRun: 1, faultProbability: 0.5 });
     const b = decideFault(seedPrng(9), allFaults, 0, { maxFaultsPerRun: 1, faultProbability: 0.5 });
     expect(a).toEqual(b);
+  });
+});
+
+describe("planFaults", () => {
+  test("none without eligible points, a share of runs, or a fault budget", () => {
+    const s = seedPrng(1);
+    expect(planFaults(s, 0, 0, 1, 1)[0]).toEqual([]);
+    expect(planFaults(s, 10, 10, 0, 1)[0]).toEqual([]);
+    expect(planFaults(s, 10, 10, 1, 0)[0]).toEqual([]);
+  });
+
+  test("distinct positions in order, at most the budget, uniform over the points", () => {
+    let s = seedPrng("plan");
+    const hits = new Array<number>(20).fill(0);
+    for (let i = 0; i < 4000; i++) {
+      const [plan, next] = planFaults(s, 20, 20, 3, 1);
+      s = next;
+      expect(plan.length).toBeGreaterThanOrEqual(1);
+      expect(plan.length).toBeLessThanOrEqual(3);
+      expect([...plan].sort((a, b) => a - b)).toEqual(plan);
+      expect(new Set(plan).size).toBe(plan.length);
+      for (const p of plan) hits[p] = (hits[p] ?? 0) + 1;
+    }
+    // The first fault is uniform: each of 20 points takes about 4000 / 20 = 200 of them; later ones follow it.
+    for (const h of hits) expect(h).toBeGreaterThan(150);
+  });
+
+  test("the first fault lands within the baseline; later ones may reach a longer run's points", () => {
+    let s = seedPrng("longer");
+    let beyond = 0;
+    for (let i = 0; i < 500; i++) {
+      const [plan, next] = planFaults(s, 5, 15, 2, 1);
+      s = next;
+      expect(plan[0]).toBeLessThan(5);
+      for (const p of plan) expect(p).toBeLessThan(15);
+      if (plan.some((p) => p >= 5)) beyond++;
+    }
+    expect(beyond).toBeGreaterThan(0);
+  });
+
+  test("the same state gives the same plan", () => {
+    expect(planFaults(seedPrng(7), 9, 9, 2, 1)).toEqual(planFaults(seedPrng(7), 9, 9, 2, 1));
   });
 });

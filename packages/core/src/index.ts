@@ -15,6 +15,7 @@ export {
   type FaultDecision,
   type FaultKind,
   type FaultPolicy,
+  planFaults,
   type Schedule,
 } from "./faults.ts";
 export {

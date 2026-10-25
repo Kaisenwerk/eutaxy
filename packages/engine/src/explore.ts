@@ -15,6 +15,7 @@ import {
   nextU32,
   type Platform,
   type PrngState,
+  planFaults,
   type ScenarioSpec,
   type ScenarioVerdict,
   type Schedule,
@@ -28,7 +29,12 @@ export interface ExploreOptions {
   readonly seed: number | string;
   /** Hard cap on runs, in addition to the scenario's time budget. */
   readonly maxRuns?: number;
-  /** Probability of injecting at an eligible effect point. */
+  /**
+   * The share of seeded runs after the first (which injects none) that
+   * inject faults (see `planFaults`). Default 0.9: the runs without faults
+   * also check the scenario as it runs without them, and measure how many
+   * eligible points a run without faults has, which can vary with the seed.
+   */
   readonly faultProbability?: number;
   /** Clock for the time budget; injectable for tests. */
   readonly now?: () => number;
@@ -227,7 +233,8 @@ export async function explore(
 ): Promise<ScenarioVerdict> {
   const now = options.now ?? (() => Date.now());
   const maxRuns = options.maxRuns ?? 100;
-  const faultProbability = options.faultProbability ?? 0.5;
+  // The runs kept fault-free re-measure the path without faults, which can vary with the seed.
+  const faultProbability = options.faultProbability ?? 0.9;
   const assumptions = [
     ...engineAssumptions,
     concurrencyAssumption(spec.bounds),
@@ -264,6 +271,9 @@ export async function explore(
   const witnesses: { schedule: Schedule; digest: string }[] = [];
 
   let master: PrngState = seedPrng(options.seed);
+  /** Eligible points of a run without faults, and the most any run has had: seeded fault positions. */
+  let baseline = 0;
+  let longest = 0;
   const exhaustive = options.exhaustive
     ? new ExhaustiveDriver(
         typeof options.exhaustive === "object" ? (options.exhaustive.reduction ?? true) : true,
@@ -280,16 +290,29 @@ export async function explore(
   ) {
     const [runSeed, next] = nextU32(master);
     master = next;
+    // Seeded runs fault positions drawn over the eligible points seen so far: none before any is.
+    let faultPlan: readonly number[] = [];
+    if (!exhaustive) {
+      [faultPlan, master] = planFaults(
+        master,
+        baseline,
+        longest,
+        spec.bounds.maxFaultsPerRun,
+        faultProbability,
+      );
+    }
     const run = new Run({
       mode: "explore",
       // Enumerated runs pick their choices; they share one seed for the virtual globals.
       schedule: { seed: exhaustive ? 0 : runSeed, faults: [] },
       bounds: spec.bounds,
       faultProbability,
-      ...(exhaustive ? { chooser: exhaustive.next() } : {}),
+      ...(exhaustive ? { chooser: exhaustive.next() } : { faultPlan }),
     });
     const log = await runOnce(spec, platform, run);
     reached.runs++;
+    if (run.faultsInjected === 0) baseline = Math.max(baseline, run.eligiblePoints);
+    longest = Math.max(longest, run.eligiblePoints);
     if (exhaustive) {
       if (exhaustive.mismatch) {
         return {

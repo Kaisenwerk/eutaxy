@@ -3,6 +3,7 @@ import {
   type AtMostOncePerKey,
   digestLog,
   type Implies,
+  type Platform,
   type ScenarioSpec,
 } from "@eutaxy/core";
 import { describe, expect, test } from "vitest";
@@ -66,13 +67,14 @@ describe("explore", () => {
     );
     expect(verdict.assumptions).toContain("fake in-memory platform");
     // Shrunk to the one message and the one fault that matter.
-    expect(verdict.keptEvents).toEqual(["m1"]);
+    expect(verdict.keptEvents).toHaveLength(1);
+    const kept = verdict.keptEvents[0] as string;
     expect(verdict.schedule.faults).toHaveLength(1);
     expect(verdict.shrunk.eventsRemoved).toBe(1);
     expect(
       verdict.trace.entries
         .filter((e) => e.kind !== "snapshot")
-        .every((e) => e.invocation.startsWith("m1#")),
+        .every((e) => e.invocation.startsWith(`${kept}#`)),
     ).toBe(true);
     // Replaying the shrunk schedule on the restricted scenario reproduces the exact trace.
     const restricted = restrictSpec(platform, spec, verdict.keptEvents);
@@ -565,5 +567,172 @@ describe("Run", () => {
       ),
     ).rejects.toThrow("boom");
     expect(run.log.entries[1]?.payload).toEqual({ args: null, result: null, error: "Error: boom" });
+  });
+});
+
+describe("seeded fault placement", () => {
+  /**
+   * One message whose handler reads `depth - 1` times, then writes and acks.
+   * The only bug is a crash right after the write (it is redelivered and
+   * writes again), so a fault has to reach the depth-th eligible point.
+   */
+  function deepPlatform(depth: number): Platform & { faultsAt: number[] } {
+    let rows = 0;
+    const faultsAt: number[] = [];
+    return {
+      name: "deep",
+      assumptions: [],
+      faultsAt,
+      async reset() {
+        rows = 0;
+      },
+      initialEvents: () => [{ id: "m1", attempt: 1, data: null }],
+      restrictEvents: (s) => s,
+      async deliver(event, hooks) {
+        const invocation = `${event.id}#${event.attempt}`;
+        const inv = hooks.startInvocation(invocation);
+        try {
+          for (let i = 0; i < depth - 1; i++)
+            hooks.effectSync(
+              { invocation, target: "R", op: "read", args: i, allowed: ["error"] },
+              () => null,
+              () => null,
+            );
+          hooks.effectSync(
+            { invocation, target: "W", op: "write", args: { key: "k" }, allowed: ["crash_after"] },
+            () => ++rows,
+            (n) => n,
+          );
+          return { status: "completed", followUps: [] };
+        } catch (err) {
+          if (inv.isCrashed() && event.attempt < 3)
+            return { status: "crashed", followUps: [{ ...event, attempt: event.attempt + 1 }] };
+          return { status: "errored", followUps: [] };
+        }
+      },
+      async finish(_spec, hooks) {
+        faultsAt.push(rows);
+        hooks.snapshot(hooks.bookkeeping(), "W", { tables: { rows: [{ n: rows }] } });
+      },
+    };
+  }
+  const deepSpec: ScenarioSpec = {
+    ...spec,
+    name: "deep",
+    invariants: [
+      {
+        kind: "atMostOncePerKey",
+        name: "written-once",
+        effect: { target: "W", op: "write", kind: "result" },
+        key: "args.key",
+      },
+    ],
+  };
+
+  test("a fault as likely at the twentieth eligible point as at the first", async () => {
+    const verdict = await explore(deepSpec, deepPlatform(20), {
+      seed: "deep",
+      maxRuns: 100,
+      leakCheckRuns: 0,
+      now: () => 0,
+    });
+    expect(verdict.kind).toBe("VIOLATED");
+  });
+
+  test("a run that redelivery made longer does not leave later runs without a fault", async () => {
+    // Crashing the write redelivers, which doubles a run's eligible points. Every run after the
+    // first still injects its fault, rather than often drawing a point it never reaches.
+    const holds = await explore(
+      {
+        ...deepSpec,
+        invariants: [
+          {
+            kind: "atMostOncePerKey",
+            name: "reads-distinct",
+            effect: { target: "none" },
+            key: "k",
+          },
+        ],
+      },
+      deepPlatform(5),
+      { seed: "longer", maxRuns: 60, leakCheckRuns: 0, now: () => 0 },
+    );
+    expect(holds.kind).toBe("BOUNDED");
+    // All but the first run and the share kept fault-free (10% by default) inject their fault.
+    expect(holds.reached.faultsInjected).toBeGreaterThanOrEqual(0.8 * (holds.reached.runs - 1));
+  });
+
+  test("a fault reaches deep points of a path that only some seeds take", async () => {
+    // Half the seeds take a one-effect path, half a ten-effect one; the bug needs a fault at the
+    // ten-effect path's last point. A first run on the short path must not hide the long one.
+    let rows = 0;
+    const branching: Platform = {
+      name: "branching",
+      assumptions: [],
+      async reset() {
+        rows = 0;
+      },
+      initialEvents: () => [{ id: "m1", attempt: 1, data: null }],
+      restrictEvents: (s) => s,
+      async deliver(event, hooks) {
+        const invocation = `${event.id}#${event.attempt}`;
+        const inv = hooks.startInvocation(invocation);
+        const long = event.attempt === 1 ? Math.random() < 0.5 : true;
+        try {
+          for (let i = 0; i < (long ? 9 : 1); i++)
+            hooks.effectSync(
+              { invocation, target: "R", op: "read", args: i, allowed: ["error"] },
+              () => null,
+              () => null,
+            );
+          hooks.effectSync(
+            {
+              invocation,
+              target: "W",
+              op: "write",
+              args: { key: "k" },
+              allowed: long ? ["crash_after"] : [],
+            },
+            () => ++rows,
+            (n) => n,
+          );
+          return { status: "completed", followUps: [] };
+        } catch {
+          if (inv.isCrashed() && event.attempt < 3)
+            return { status: "crashed", followUps: [{ ...event, attempt: event.attempt + 1 }] };
+          return { status: "errored", followUps: [] };
+        }
+      },
+    };
+    for (const seed of ["short-first-1", "short-first-2", "short-first-3"]) {
+      const verdict = await explore(deepSpec, branching, {
+        seed,
+        maxRuns: 200,
+        leakCheckRuns: 0,
+        now: () => 0,
+      });
+      expect(verdict.kind, seed).toBe("VIOLATED");
+    }
+  });
+
+  test("the first run injects no fault, and faultProbability 0 none at all", async () => {
+    const first = new Set<number>();
+    const platform = deepPlatform(3);
+    await explore(deepSpec, platform, {
+      seed: "first",
+      maxRuns: 1,
+      leakCheckRuns: 0,
+      now: () => 0,
+    });
+    first.add(platform.faultsAt[0] ?? -1);
+    expect([...first]).toEqual([1]);
+    const none = await explore(deepSpec, deepPlatform(3), {
+      seed: "none",
+      maxRuns: 20,
+      leakCheckRuns: 0,
+      faultProbability: 0,
+      now: () => 0,
+    });
+    expect(none.reached.faultsInjected).toBe(0);
   });
 });

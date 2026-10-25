@@ -27,6 +27,7 @@ import {
   type FaultKind,
   type Invocation,
   type JsonValue,
+  nextInt,
   type PrngState,
   type RunHooks,
   type Schedule,
@@ -93,6 +94,12 @@ export interface RunOptions {
   readonly faultProbability: number;
   /** Makes the choices (explore mode): faults and turns are picked, not drawn from the seed. */
   readonly chooser?: Chooser;
+  /**
+   * Explore mode: the eligible points (counted from 0) to fault, kinds drawn
+   * from the seed (see `planFaults`). Without one, each eligible point takes
+   * a fault with probability `faultProbability`.
+   */
+  readonly faultPlan?: readonly number[];
 }
 
 class InvocationState implements Invocation {
@@ -167,6 +174,7 @@ export class Run implements RunHooks {
   private logState: EffectLog = emptyLog;
   private readonly faults: FaultDecision[] = [];
   private effectIndex = 0;
+  private eligibleSeen = 0;
   private prng: PrngState;
   private readonly invocations = new Map<string, InvocationState>();
   private readonly reasons: string[] = [];
@@ -356,7 +364,21 @@ export class Run implements RunHooks {
     return inv;
   }
 
+  /** Effect points so far that could take a fault (see `RunOptions.faultPlan`). */
+  get eligiblePoints(): number {
+    return this.eligibleSeen;
+  }
+
   private decide(point: EffectPoint, ordinal: number): FaultKind | null {
+    const position = point.allowed.length > 0 ? this.eligibleSeen++ : -1;
+    const plan = this.options.faultPlan;
+    if (plan && this.options.mode === "explore" && !this.options.chooser) {
+      if (position < 0 || this.faults.length >= this.options.bounds.maxFaultsPerRun) return null;
+      if (!plan.includes(position)) return null;
+      const [i, next] = nextInt(this.prng, point.allowed.length);
+      this.prng = next;
+      return point.allowed[i] ?? null;
+    }
     const chooser = this.options.chooser;
     if (chooser && this.options.mode === "explore") {
       if (point.allowed.length === 0 || this.faults.length >= this.options.bounds.maxFaultsPerRun)

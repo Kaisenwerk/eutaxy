@@ -510,6 +510,24 @@ and by the effect's ordinal within that invocation (not by a global index),
 so a schedule stays valid when other invocations are removed. Replay follows
 a schedule exactly; exploration records one.
 
+**Seeded exploration** places faults by position, not by a chance at each
+point. The first run injects none: it checks the scenario as it runs
+without faults and counts its _eligible_ points (effect points that may
+take a fault). Every later run draws from the seed how many faults it
+injects (one up to `maxFaultsPerRun`), at which eligible points and, for
+each, a kind among its allowed faults. The first fault is uniform over the
+most points a run without faults has had, which a run reaches before its
+first fault; the others come after it, uniform up to the most points any run
+has had, since an earlier fault (a redelivery) can make a run longer. Every point is then as likely to be faulted
+as any other: a fault that a chance at each point would place on the
+first point it reaches can land on a Workflow's last step just as often.
+A chosen position that a run does not reach is not injected.
+`faultProbability` is the share of those later runs that inject faults
+(default 0.9). The runs it leaves without faults keep measuring the path
+without faults, which can vary with the seed (randomness, the order of
+turns): a first run that happened to take a short path does not hide the
+deeper points of a longer one.
+
 **Exhaustive exploration** (`explore(..., { exhaustive: true })`, `eutaxy
 check --exhaustive`) runs every schedule within the bounds once instead of
 drawing schedules from the seed. A run's nondeterminism is a sequence of

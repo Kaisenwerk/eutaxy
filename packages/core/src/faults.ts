@@ -60,3 +60,35 @@ export function decideFault(
   const [i, s2] = nextInt(s1, allowed.length);
   return [allowed[i] ?? null, s2];
 }
+
+/**
+ * Where one seeded run injects its faults: with probability `probability`,
+ * one up to `maxFaults` distinct positions, in increasing order; otherwise
+ * none. Positions count the run's eligible points (those that may take a
+ * fault) from 0. The first is uniform over the `baseline` points a run
+ * without faults has, which every run reaches before its first fault; the
+ * others come after it, uniform up to `longest`, the most any run has had
+ * (earlier faults, a redelivery say, can make a run longer). Pure.
+ */
+export function planFaults(
+  state: PrngState,
+  baseline: number,
+  longest: number,
+  maxFaults: number,
+  probability: number,
+): readonly [readonly number[], PrngState] {
+  if (baseline <= 0 || maxFaults <= 0) return [[], state];
+  const [p, s1] = nextFloat(state);
+  if (p >= probability) return [[], s1];
+  let [k, s] = nextInt(s1, maxFaults);
+  const more = k;
+  let first: number;
+  [first, s] = nextInt(s, baseline);
+  const room = Math.max(longest, baseline) - first - 1;
+  const chosen = new Set<number>([first]);
+  while (chosen.size < 1 + Math.min(more, room)) {
+    [k, s] = nextInt(s, room);
+    chosen.add(first + 1 + k);
+  }
+  return [[...chosen].sort((a, b) => a - b), s];
+}
