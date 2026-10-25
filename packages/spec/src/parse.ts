@@ -370,6 +370,7 @@ class Body {
     for (let i = s; i < e; i++) {
       const t = this.tokens[i] as Token;
       const prev = i > s ? this.tokens[i - 1] : undefined;
+      this.checkToken(t, prev);
       if (t.kind === "op") {
         if (t.op === "equiv" || t.op === "nequiv") {
           if (!this.at(i, base))
@@ -377,27 +378,13 @@ class Body {
               `${t.text} only joins an atom's two sides; in nested positions call Object.is`,
             );
           equations.push(i);
-        } else if (t.op === "neq") this.fail("≠ is not Lemma: write ≢ (not the same value) or !==");
-        else if (t.op === "forall" || t.op === "exists")
-          this.fail("quantifiers nest only in the prefix");
-        else if (connectives.has(t.op as LemmaOp))
+        } else if (connectives.has(t.op as LemmaOp))
           this.fail(
             `${t.text} inside a JavaScript expression: use && || ! there, or parenthesize the whole formula`,
           );
         else this.fail(`${t.text} belongs in a binder group, not the property body`);
       }
-      if (
-        t.kind === "ident" &&
-        (t.text === "forall" || t.text === "exists") &&
-        !isPunct(prev, ".") &&
-        !isPunct(prev, "?.")
-      )
-        this.fail("quantifiers nest only in the prefix");
-      // A template's substitutions are nested expressions under the same rules.
-      if (t.kind === "template") for (const sub of templateSubstitutions(t.text)) this.nested(sub);
       if (t.kind !== "punct") continue;
-      if (t.text === "==" || t.text === "!=")
-        this.fail(`loose ${t.text} is not allowed: use ≡ / ≢ or === / !==`);
       if (assignments.has(t.text) && !this.inParameterList(i))
         this.fail(`assignments are not allowed in a property (${t.text})`);
       if (!this.at(i, base)) continue;
@@ -427,6 +414,28 @@ class Body {
     };
   }
 
+  /**
+   * What no position in a property allows, for one token of an atom or of
+   * an expression nested in one: ≠, quantifiers, loose equality; a
+   * template's substitutions are nested expressions under the same rules.
+   */
+  private checkToken(t: Token, prev: Token | undefined): void {
+    if (t.kind === "op") {
+      if (t.op === "neq") this.fail("≠ is not Lemma: write ≢ (not the same value) or !==");
+      if (t.op === "forall" || t.op === "exists") this.fail("quantifiers nest only in the prefix");
+    }
+    if (
+      t.kind === "ident" &&
+      (t.text === "forall" || t.text === "exists") &&
+      !isPunct(prev, ".") &&
+      !isPunct(prev, "?.")
+    )
+      this.fail("quantifiers nest only in the prefix");
+    if (t.kind === "template") for (const sub of templateSubstitutions(t.text)) this.nested(sub);
+    if (t.kind === "punct" && (t.text === "==" || t.text === "!="))
+      this.fail(`loose ${t.text} is not allowed: use ≡ / ≢ or === / !==`);
+  }
+
   /** Check an expression nested in an atom (a template substitution): what no position allows. */
   private nested(text: string): void {
     let tokens: Token[];
@@ -449,28 +458,15 @@ class Body {
       }
     });
     tokens.forEach((t, i) => {
-      const prev = tokens[i - 1];
+      this.checkToken(t, tokens[i - 1]);
       if (t.kind === "op") {
         if (t.op === "equiv" || t.op === "nequiv")
           this.fail(`${t.text} only joins an atom's two sides; in nested positions call Object.is`);
-        if (t.op === "neq") this.fail("≠ is not Lemma: write ≢ (not the same value) or !==");
-        if (t.op === "forall" || t.op === "exists")
-          this.fail("quantifiers nest only in the prefix");
         this.fail(
           `${t.text} inside a JavaScript expression: use && || ! there, or parenthesize the whole formula`,
         );
       }
-      if (
-        t.kind === "ident" &&
-        (t.text === "forall" || t.text === "exists") &&
-        !isPunct(prev, ".") &&
-        !isPunct(prev, "?.")
-      )
-        this.fail("quantifiers nest only in the prefix");
-      if (t.kind === "template") for (const sub of templateSubstitutions(t.text)) this.nested(sub);
       if (t.kind !== "punct") return;
-      if (t.text === "==" || t.text === "!=")
-        this.fail(`loose ${t.text} is not allowed: use ≡ / ≢ or === / !==`);
       if (assignments.has(t.text)) {
         const open = enclosing[i] ?? -1;
         const close = open >= 0 ? match.get(open) : undefined;
