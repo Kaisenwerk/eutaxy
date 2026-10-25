@@ -16,13 +16,9 @@ design describes what they built. Patch work has no gate of its own: each
 item ships as a `0.5.x` release once `pnpm check` and the corpora pass,
 and v0.6's gate closes the next phase.
 
-In this order. The first two came out of a full review before 0.5.0 and
-go before the provers, because the prover phase builds on the engine's run
+In this order. The first came out of a full review before 0.5.0 and goes
+before the provers, because the prover phase builds on the engine's run
 loop and the public facade, which are cheaper to reshape now than after.
-- Oversized modules split along their seams: `engine/run.ts` into the
-  effect protocol, frames and the concurrent scheduler;
-  `cloudflare/platform.ts` into HTTP and queue delivery beside `alarms.ts`;
-  `core/invariants.ts` into selectors, state invariants and `refines`.
 - Smaller simplifications: one token check shared by the spec parser's
   atoms and template substitutions; unused core exports dropped; per-package
   nits.
