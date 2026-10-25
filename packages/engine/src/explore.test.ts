@@ -179,6 +179,39 @@ describe("explore", () => {
     expect(verdict.kind).toBe("BOUNDED");
     expect(verdict.reached.runs).toBeLessThanOrEqual(6); // at most 4 within budget + the 2-run leak check
   });
+
+  test("budgetMs replaces the scenario's budget, in either direction", async () => {
+    const run = (scenarioBudget: number, budgetMs: number) => {
+      let t = 0;
+      return explore(
+        { ...spec, invariants: [all], bounds: { ...spec.bounds, budgetMs: scenarioBudget } },
+        createFakePlatform(buggyConsumer, { idempotent: true }),
+        { seed: "budget", now: () => (t += 100), faultProbability: 0, maxRuns: 12, budgetMs },
+      );
+    };
+    const shorter = await run(1_000_000, 350);
+    expect(shorter.reached.runs).toBeLessThanOrEqual(6);
+    const longer = await run(350, 1_000_000);
+    expect(longer.reached.runs).toBeGreaterThanOrEqual(12); // the run cap, not the clock, ends it
+  });
+
+  test("budgetMs is also the time an effect's real I/O may take", { timeout: 10_000 }, async () => {
+    const verdict = await explore(spec, createFakePlatform(buggyConsumer, { hangInsert: "o-1" }), {
+      seed: "hang",
+      faultProbability: 0,
+      budgetMs: 50,
+    });
+    expect(verdict.kind === "UNSUPPORTED" && verdict.reason).toContain(
+      "D1:DB run did not complete within 50 ms",
+    );
+  });
+
+  test("budgetMs must be a positive number", async () => {
+    for (const budgetMs of [0, -1, Number.NaN, Number.POSITIVE_INFINITY])
+      await expect(
+        explore(spec, createFakePlatform(buggyConsumer), { seed: "x", budgetMs }),
+      ).rejects.toThrow("budgetMs must be a positive finite number");
+  });
 });
 
 describe("state invariants over the end-of-run snapshot", () => {

@@ -12,6 +12,11 @@ describe("generated check test", () => {
     );
   });
 
+  test("passes the time budget through when one is given", () => {
+    const src = checkTestSource({ seed: "s", budgetMs: 60_000, scenarioImport: "../x.sim.ts" });
+    expect(src).toContain('seed: "s", budgetMs: 60000 });');
+  });
+
   test("the vitest config points the Cloudflare plugin at the wrangler file", () => {
     const src = vitestConfigSource(
       "/p/wrangler.jsonc",

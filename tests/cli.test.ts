@@ -83,6 +83,16 @@ describe("eutaxy check", () => {
     ]);
     expect(bad.status).toBe(3);
     expect(bad.stderr).toContain("--max-runs must be a positive integer");
+    for (const budget of ["soon", "0", "-5"]) {
+      const r = eutaxy([
+        "check",
+        "corpus/differential/d1-ledger/scenario.sim.ts",
+        "--budget-ms",
+        budget,
+      ]);
+      expect(r.status).toBe(3);
+      expect(r.stderr).toContain("--budget-ms must be a positive integer");
+    }
     expect(
       eutaxy(["check", "corpus/differential/d1-ledger/scenario.sim.ts", "--max-runs", "0"]).status,
     ).toBe(3);

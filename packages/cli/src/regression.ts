@@ -8,6 +8,11 @@ export interface CloudflareRegressionOptions {
   readonly workerPath: string;
   /** D1 binding name to schema file path, imported with `?raw`. */
   readonly schemaPaths: Readonly<Record<string, string>>;
+  /**
+   * The time budget the check ran with, when it replaced the scenario's: the
+   * replay gets the same, so I/O that finished within it does not time out.
+   */
+  readonly budgetMs?: number;
   /** The platform's retry limit, when the scenario was checked with a non-default one. */
   readonly maxRetries?: number;
   /** The scenario sets up Durable Objects: pass the Cloudflare test helpers to the platform. */
@@ -52,7 +57,10 @@ export function cloudflareRegressionTest(
   return emitRegressionTest(verdict, {
     imports,
     platform: `createCloudflarePlatform({ env, ${handler}, schemas: ${schemas}${retries}${objects}${exports} })`,
-    scenario: "scenario",
+    scenario:
+      options.budgetMs === undefined
+        ? "scenario"
+        : `{ ...scenario, bounds: { ...scenario.bounds, budgetMs: ${options.budgetMs} } }`,
     ...(options.expect ? { expect: options.expect } : {}),
     ...(options.engineModule ? { engineModule: options.engineModule } : {}),
     ...(options.specModules && options.specModules.length > 0

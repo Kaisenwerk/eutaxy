@@ -27,6 +27,8 @@ export interface CheckOptions {
   readonly wrangler?: string;
   readonly seed?: string;
   readonly maxRuns?: number;
+  /** Replaces the scenario's time budget. */
+  readonly budgetMs?: number;
   /** Run every schedule within the bounds once instead of drawing them from the seed. */
   readonly exhaustive?: boolean;
   readonly json: boolean;
@@ -124,6 +126,7 @@ export async function runCheck(o: CheckOptions): Promise<number> {
       checkTestSource({
         seed: o.seed ?? name,
         ...(o.maxRuns === undefined ? {} : { maxRuns: o.maxRuns }),
+        ...(o.budgetMs === undefined ? {} : { budgetMs: o.budgetMs }),
         ...(o.exhaustive ? { exhaustive: true } : {}),
         scenarioImport: `../${basename(scenarioPath)}`,
       }),
@@ -167,6 +170,7 @@ export async function runCheck(o: CheckOptions): Promise<number> {
         scenarioPath: toPosix(relative(outDir, scenarioPath)),
         workerPath: toPosix(relative(outDir, resolve(dir, transport.worker.entry))),
         schemaPaths,
+        ...(o.budgetMs === undefined ? {} : { budgetMs: o.budgetMs }),
         ...(transport.setup.some((s) => s.kind === "durable_object")
           ? { durableObjects: true }
           : {}),

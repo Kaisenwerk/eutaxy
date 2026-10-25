@@ -139,6 +139,7 @@ export interface WorkerdCheckInput {
   readonly specLoaders: Readonly<Record<string, () => Promise<SpecEntry>>>;
   readonly seed: string;
   readonly maxRuns?: number;
+  readonly budgetMs?: number;
   readonly exhaustive?: boolean;
 }
 
@@ -170,6 +171,7 @@ export async function checkInWorkerd(input: WorkerdCheckInput): Promise<CheckTra
     verdict = await check(scenario, platform, {
       seed: input.seed,
       ...(input.maxRuns === undefined ? {} : { maxRuns: input.maxRuns }),
+      ...(input.budgetMs === undefined ? {} : { budgetMs: input.budgetMs }),
       ...(input.exhaustive ? { exhaustive: true } : {}),
     });
   } finally {

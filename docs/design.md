@@ -803,7 +803,12 @@ The emitter in `report` knows no platform: the Cloudflare entry point
 supplies the imports and the platform expression.
 
 Default exploration budget is time-based (a few seconds) with the bounds
-actually reached reported in the verdict, rather than a fixed count.
+actually reached reported in the verdict, rather than a fixed count. A
+time budget makes how many runs fit depend on the machine, so a seed alone
+does not fix the verdict: CI and tests that assert one replace the
+scenario's budget with a generous one (`budgetMs` in the explore options,
+`--budget-ms` on the command line) and cap the runs (`maxRuns`,
+`--max-runs`), so the run cap ends exploration.
 
 ## Trust anchors and self-verification
 

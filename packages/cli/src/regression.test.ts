@@ -54,4 +54,14 @@ describe("cloudflareRegressionTest", () => {
       "createCloudflarePlatform({ env, handler, schemas: {  }, maxRetries: 0 })",
     );
   });
+
+  test("replays under the time budget the check ran with, when it replaced the scenario's", () => {
+    const options = { scenarioPath: "./s.sim.js", workerPath: "./w.js", schemaPaths: {} };
+    expect(cloudflareRegressionTest(verdict, options)).toContain(
+      "restrictSpec(platform, scenario, keptEvents)",
+    );
+    expect(cloudflareRegressionTest(verdict, { ...options, budgetMs: 60000 })).toContain(
+      "restrictSpec(platform, { ...scenario, bounds: { ...scenario.bounds, budgetMs: 60000 } }, keptEvents)",
+    );
+  });
 });

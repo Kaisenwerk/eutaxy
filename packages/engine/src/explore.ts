@@ -30,6 +30,14 @@ export interface ExploreOptions {
   /** Hard cap on runs, in addition to the scenario's time budget. */
   readonly maxRuns?: number;
   /**
+   * Replaces the scenario's `budgetMs` for this exploration: the real time
+   * exploring and shrinking may take, and the real time one effect's I/O
+   * may take before it counts as hung. With a generous budget and
+   * `maxRuns`, the run cap ends exploration, so a seed decides the verdict
+   * on any machine.
+   */
+  readonly budgetMs?: number;
+  /**
    * The share of seeded runs after the first (which injects none) that
    * inject faults (see `planFaults`). Default 0.9: the runs without faults
    * also check the scenario as it runs without them, and measure how many
@@ -61,7 +69,7 @@ const engineAssumptions: readonly string[] = [
   "faults: crash_before, crash_after, ambiguous, error at any effect point; redelivery per the platform's queue model",
   "Date, Math.random, crypto.randomUUID, crypto.getRandomValues, performance.now and timers are virtualised per run from the seed; time starts at 2026-01-01T00:00:00Z and advances 1 ms per effect and to each timer's due time",
   "timers fire only while the invocation is idle (no effect in flight), in due order; an invocation waiting on something outside Eutaxy makes the run UNSUPPORTED",
-  "an effect whose real I/O takes longer than the scenario's budgetMs is treated as hung: the run is UNSUPPORTED and names the effect",
+  "an effect whose real I/O takes longer than the time budget (the scenario's budgetMs, or the budgetMs option replacing it) is treated as hung: the run is UNSUPPORTED and names the effect",
   "while an effect performs real I/O, timers the library schedules inside that I/O are real (backoff, timeouts) and timers the handler schedules meanwhile stay virtual, told apart by async context; without async context support every timer stays virtual",
   "module-level state cannot be reset between runs; before BOUNDED the first runs are replayed in reverse order and any difference makes the run UNSUPPORTED (module_state_leak)",
   "outbound fetch never reaches the network: requests are answered from the scenario's declared externals, an external's dedupeBy guarantee is honoured by replaying the first response per key, and an undeclared host makes the run UNSUPPORTED",
@@ -227,10 +235,15 @@ export async function replay(
 }
 
 export async function explore(
-  spec: ScenarioSpec,
+  scenario: ScenarioSpec,
   platform: Platform,
   options: ExploreOptions,
 ): Promise<ScenarioVerdict> {
+  const budgetMs = options.budgetMs;
+  if (budgetMs !== undefined && !(Number.isFinite(budgetMs) && budgetMs > 0))
+    throw new Error(`budgetMs must be a positive finite number, got ${budgetMs}`);
+  const spec =
+    budgetMs === undefined ? scenario : { ...scenario, bounds: { ...scenario.bounds, budgetMs } };
   const now = options.now ?? (() => Date.now());
   const maxRuns = options.maxRuns ?? 100;
   // The runs kept fault-free re-measure the path without faults, which can vary with the seed.

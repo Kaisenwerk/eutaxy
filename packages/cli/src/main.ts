@@ -10,6 +10,7 @@ Options:
   --wrangler <path>     wrangler config (default: wrangler.jsonc/json/toml beside the scenario)
   --seed <seed>         exploration seed (default: the scenario file name)
   --max-runs <n>        cap on exploration runs in addition to the scenario's time budget
+  --budget-ms <n>       replace the scenario's time budget (with --max-runs, the run cap decides)
   --exhaustive          run every schedule within the bounds once (with partial-order reduction)
   --json                print the versioned JSON report instead of text
   --out <path>          where to write the regression test on a violation
@@ -57,12 +58,19 @@ export async function main(argv: readonly string[], io: Io): Promise<number> {
     io.stderr(`--max-runs must be a positive integer, got ${JSON.stringify(maxRunsText)}\n`);
     return exitCodes.error;
   }
+  const budgetText = str("budget-ms");
+  const budgetMs = budgetText === undefined ? undefined : Number(budgetText);
+  if (budgetMs !== undefined && !(Number.isInteger(budgetMs) && budgetMs > 0)) {
+    io.stderr(`--budget-ms must be a positive integer, got ${JSON.stringify(budgetText)}\n`);
+    return exitCodes.error;
+  }
   return runCheck({
     scenario,
     cwd: io.cwd,
     ...(str("wrangler") ? { wrangler: str("wrangler") as string } : {}),
     ...(str("seed") ? { seed: str("seed") as string } : {}),
     ...(maxRuns === undefined ? {} : { maxRuns }),
+    ...(budgetMs === undefined ? {} : { budgetMs }),
     exhaustive: flags["exhaustive"] === true,
     json: flags["json"] === true,
     ...(str("out") ? { out: str("out") as string } : {}),
