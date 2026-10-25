@@ -136,18 +136,12 @@ export function validateScenario(spec: ScenarioSpec): readonly string[] {
       }
     });
   }
-  for (const k of [
-    "maxFaultsPerRun",
-    "maxRedeliveries",
-    "maxConcurrentInvocations",
-    "budgetMs",
-  ] as const) {
-    if (k === "maxFaultsPerRun" || k === "maxRedeliveries") {
-      const v = spec.bounds[k];
-      if (!(Number.isInteger(v) && v >= 0))
-        errors.push(`bounds.${k} must be a non-negative integer`);
-    } else if (!isPositiveInt(spec.bounds[k]))
-      errors.push(`bounds.${k} must be a positive integer`);
+  for (const k of ["maxFaultsPerRun", "maxRedeliveries"] as const) {
+    const v = spec.bounds[k];
+    if (!(Number.isInteger(v) && v >= 0)) errors.push(`bounds.${k} must be a non-negative integer`);
+  }
+  for (const k of ["maxConcurrentInvocations", "budgetMs"] as const) {
+    if (!isPositiveInt(spec.bounds[k])) errors.push(`bounds.${k} must be a positive integer`);
   }
   return errors;
 }

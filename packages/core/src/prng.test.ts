@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { fork, nextFloat, nextInt, nextU32, type PrngState, seedPrng } from "./prng.ts";
+import { nextFloat, nextInt, nextU32, type PrngState, seedPrng } from "./prng.ts";
 
 function take(state: PrngState, n: number): number[] {
   const out: number[] = [];
@@ -92,17 +92,5 @@ describe("nextInt", () => {
     for (const bad of [0, -1, 1.5, Number.NaN, 2 ** 32 + 1]) {
       expect(() => nextInt(s, bad)).toThrow(RangeError);
     }
-  });
-});
-
-describe("fork", () => {
-  test("parent continues and child is an independent, deterministic stream", () => {
-    const s = seedPrng("fork");
-    const [p1, c1] = fork(s);
-    const [p2, c2] = fork(s);
-    expect(p1).toEqual(p2);
-    expect(c1).toEqual(c2);
-    expect(take(c1, 100)).not.toEqual(take(p1, 100));
-    expect(take(c1, 100)).not.toEqual(take(s, 100));
   });
 });

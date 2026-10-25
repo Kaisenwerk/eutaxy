@@ -12,14 +12,6 @@ import { nextFloat, nextInt, type PrngState } from "./prng.ts";
  */
 export type FaultKind = "crash_before" | "crash_after" | "ambiguous" | "error" | "cut_off";
 
-export const allFaults: readonly FaultKind[] = [
-  "crash_before",
-  "crash_after",
-  "ambiguous",
-  "error",
-  "cut_off",
-];
-
 export interface FaultDecision {
   /** The invocation the effect belongs to, e.g. "msg-1#2". */
   readonly invocation: string;

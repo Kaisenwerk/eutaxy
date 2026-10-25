@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import type { Schedule } from "./faults.ts";
-import { shrinkCandidates, shrinkSize } from "./shrink.ts";
+import { shrinkCandidates } from "./shrink.ts";
 
 const schedule: Schedule = {
   seed: 1,
@@ -29,11 +29,5 @@ describe("shrinkCandidates", () => {
   test("never removes the last event", () => {
     const cands = shrinkCandidates({ schedule: { seed: 1, faults: [] }, keepIds: ["only"] });
     expect(cands).toEqual([]);
-  });
-
-  test("size orders by events first", () => {
-    expect(shrinkSize({ schedule, keepIds: ["a"] })).toBeLessThan(
-      shrinkSize({ schedule: { seed: 1, faults: [] }, keepIds: ["a", "b"] }),
-    );
   });
 });

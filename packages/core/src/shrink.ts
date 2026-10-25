@@ -36,8 +36,3 @@ export function shrinkCandidates(state: ShrinkState): readonly ShrinkState[] {
   }
   return out;
 }
-
-/** Fewer events, then fewer faults: the order that keeps shrinking monotone. */
-export function shrinkSize(state: ShrinkState): number {
-  return state.keepIds.length * 1000 + state.schedule.faults.length;
-}

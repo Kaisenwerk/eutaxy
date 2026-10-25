@@ -11,7 +11,6 @@ export {
   serializeLog,
 } from "./effect-log.ts";
 export {
-  allFaults,
   decideFault,
   type FaultDecision,
   type FaultKind,
@@ -37,7 +36,7 @@ export type {
   Platform,
   RunHooks,
 } from "./platform.ts";
-export { fork, nextFloat, nextInt, nextU32, type PrngState, seedPrng } from "./prng.ts";
+export { nextFloat, nextInt, nextU32, type PrngState, seedPrng } from "./prng.ts";
 export { decisionTarget, type Refines } from "./refines.ts";
 export {
   type Bounds,
@@ -50,7 +49,7 @@ export {
   type WorkerRef,
 } from "./scenario.ts";
 export { type EffectSelector, getPath, matches, selectEffects } from "./selectors.ts";
-export { type ShrinkState, shrinkCandidates, shrinkSize } from "./shrink.ts";
+export { type ShrinkState, shrinkCandidates } from "./shrink.ts";
 export {
   type Checked,
   type Counterexample,
@@ -72,7 +71,7 @@ export {
   type Unique,
 } from "./state.ts";
 export { type JsonExtra, toJson } from "./to-json.ts";
-export { bytesEqual, utf8Encode } from "./utf8.ts";
+export { utf8Encode } from "./utf8.ts";
 export {
   type Bounded,
   type BoundsReached,

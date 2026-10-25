@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { appendEffect, digestLog, type EffectLog, emptyLog, serializeLog } from "./effect-log.ts";
 import { nextInt, type PrngState, seedPrng } from "./prng.ts";
-import { bytesEqual, utf8Encode } from "./utf8.ts";
+import { utf8Encode } from "./utf8.ts";
 
 /**
  * A stand-in for a simulated run: a scripted consumer that draws every choice
@@ -76,7 +76,7 @@ describe("effect log", () => {
     const first = utf8Encode(serializeLog(scriptedRun("seed-A", 500)));
     const second = utf8Encode(serializeLog(scriptedRun("seed-A", 500)));
     expect(first.length).toBeGreaterThan(10_000);
-    expect(bytesEqual(first, second)).toBe(true);
+    expect(first).toEqual(second);
     expect(digestLog(scriptedRun("seed-A", 500))).toBe(digestLog(scriptedRun("seed-A", 500)));
   });
 

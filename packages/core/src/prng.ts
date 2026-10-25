@@ -83,16 +83,3 @@ export function nextInt(state: PrngState, bound: number): readonly [number, Prng
     if (u < limit) return [u % bound, s];
   }
 }
-
-/**
- * Split one generator into two independent streams: the first element is the
- * continuation of the parent, the second a freshly seeded child.
- */
-export function fork(state: PrngState): readonly [PrngState, PrngState] {
-  const [a, s1] = nextU32(state);
-  const [b, s2] = nextU32(s1);
-  const next = splitmix32((a ^ Math.imul(b, 0x9e3779b1)) >>> 0);
-  const child: [number, number, number, number] = [next(), next(), next(), next()];
-  if (child[0] === 0 && child[1] === 0 && child[2] === 0 && child[3] === 0) child[0] = 1;
-  return [s2, child];
-}

@@ -1,5 +1,14 @@
 import { describe, expect, test } from "vitest";
-import { allFaults, decideFault } from "./faults.ts";
+import { decideFault, type FaultKind } from "./faults.ts";
+
+const allFaults: readonly FaultKind[] = [
+  "crash_before",
+  "crash_after",
+  "ambiguous",
+  "error",
+  "cut_off",
+];
+
 import { seedPrng } from "./prng.ts";
 
 describe("decideFault", () => {

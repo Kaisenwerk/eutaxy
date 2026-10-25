@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { bytesEqual, utf8Encode } from "./utf8.ts";
+import { utf8Encode } from "./utf8.ts";
 
 // The reference encoder exists at runtime (Node, workerd); core itself does not depend on it.
 declare const TextEncoder: new () => { encode(s: string): Uint8Array };
@@ -22,15 +22,7 @@ describe("utf8Encode", () => {
       `${lone}😀`, // unpaired then a valid pair
     ];
     for (const s of samples) {
-      expect(bytesEqual(utf8Encode(s), new TextEncoder().encode(s))).toBe(true);
+      expect(utf8Encode(s)).toEqual(new TextEncoder().encode(s));
     }
-  });
-});
-
-describe("bytesEqual", () => {
-  test("compares length and content", () => {
-    expect(bytesEqual(Uint8Array.from([1, 2]), Uint8Array.from([1, 2]))).toBe(true);
-    expect(bytesEqual(Uint8Array.from([1, 2]), Uint8Array.from([1, 3]))).toBe(false);
-    expect(bytesEqual(Uint8Array.from([1]), Uint8Array.from([1, 0]))).toBe(false);
   });
 });
