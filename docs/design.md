@@ -617,8 +617,12 @@ removing one fault and then removing one input event, keeping a candidate
 only when replay still violates the same invariant for the same keys.
 Invariants whose expectations were derived from the input (per-message
 `atLeastOnce`) are re-derived for the remaining events, so a shrunk scenario
-cannot "violate" merely because its expectations went stale. The verdict
-reports the kept events, the shrunk schedule and the replayed shrunk trace.
+cannot "violate" merely because its expectations went stale. Randomness is
+one stream per run, so when the keys are random ids (an object stored under
+`crypto.randomUUID()`), removing an earlier event shifts the ids drawn after
+it and the candidate is dropped; such a violation can keep more events than
+it needs. The verdict reports the kept events, the shrunk schedule and the
+replayed shrunk trace.
 
 **Virtual clock and globals.** For the duration of a run the engine
 replaces `Date`, `Math.random`, `crypto.randomUUID`,

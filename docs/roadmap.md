@@ -27,7 +27,11 @@ In this order.
   timeouts measured in virtual time with latency on scripted externals,
   `createBatch`, rollback handlers, pausing and terminating instances),
   when a target needs them.
-- The R2 model.
+- One random stream per invocation, when a shrunk violation that keeps
+  extra events gets in a target's way: randomness is one stream per run,
+  so dropping an earlier event shifts the random ids drawn after it, and a
+  violation keyed on them cannot shrink past it. Fault positions are
+  already per invocation; every committed trace changes with it.
 
 ## v0.6 — Provers (next)
 
