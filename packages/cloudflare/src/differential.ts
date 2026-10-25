@@ -20,11 +20,8 @@ import {
   type VirtualClock,
 } from "@eutaxy/engine";
 import { resetD1, snapshotD1 } from "./d1.ts";
-import {
-  type CloudflarePlatformOptions,
-  createCloudflarePlatform,
-  requestFor,
-} from "./platform.ts";
+import { requestFor } from "./http.ts";
+import { type CloudflarePlatformOptions, createCloudflarePlatform } from "./platform.ts";
 import type { HttpDrive, HttpRequestSpec, QueueDrive } from "./scenario.ts";
 
 /** A type, not an interface, so it is JSON data the comparison takes as it is. */

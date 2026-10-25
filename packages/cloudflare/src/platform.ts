@@ -10,14 +10,13 @@
 import type {
   DeliveryResult,
   EventRef,
-  FaultKind,
   JsonValue,
   Platform,
   RunHooks,
   ScenarioSpec,
 } from "@eutaxy/core";
-import { CrashSignal, InjectedEffectError } from "@eutaxy/engine";
 import { alarmSource, deliverAlarm } from "./alarms.ts";
+import type { RunningWorker } from "./background.ts";
 import { type ProxyContext, proxyD1, resetD1, snapshotD1 } from "./d1.ts";
 import {
   alarmRunner,
@@ -29,25 +28,14 @@ import {
   resetNamespace,
   snapshotNamespace,
 } from "./durable-objects.ts";
+import { deliverRequest } from "./http.ts";
+import { deliverMessage } from "./queues.ts";
 import {
   type DurableObjectSetup,
   defaultAlarmsPerObject,
   type HttpDrive,
-  type HttpRequestSpec,
   type QueueDrive,
-  retryDelayMs,
 } from "./scenario.ts";
-
-const ACK: readonly FaultKind[] = ["crash_before", "crash_after"];
-const CUT_OFF: readonly FaultKind[] = ["cut_off"];
-/** The response point: a crash before it is a response the caller never saw. */
-const RESPOND: readonly FaultKind[] = ["crash_before"];
-/**
- * With a caller deadline the answer can also arrive too late: `ambiguous`
- * here means it was sent, the caller counted it as failed, and the handler
- * carried on.
- */
-const RESPOND_WITH_DEADLINE: readonly FaultKind[] = ["crash_before", "ambiguous"];
 
 /** The Worker's default export, as far as the platform drives it. */
 export interface WorkerHandler {
@@ -57,38 +45,6 @@ export interface WorkerHandler {
 
 /** The former name of `WorkerHandler`, kept for callers written against 0.1. */
 export type QueueHandler = WorkerHandler;
-
-/** The URL inbound requests are addressed to; handlers read only the path. */
-export const requestOrigin = "https://worker.test";
-
-/** Build the `Request` a drive entry describes. */
-export function requestFor(r: HttpRequestSpec): Request {
-  const headers = new Headers(r.headers);
-  let body: string | null = null;
-  if (r.body !== undefined) {
-    if (typeof r.body === "string") body = r.body;
-    else {
-      // Any JSON value, `null` included, travels as application/json.
-      body = JSON.stringify(r.body);
-      if (!headers.has("content-type")) headers.set("content-type", "application/json");
-    }
-  }
-  return new Request(`${requestOrigin}${r.path}`, { method: r.method, headers, body });
-}
-
-/** A compact record of a response for the effect log: status, ok, and a bounded body. */
-export async function summarizeResponse(response: Response): Promise<JsonValue> {
-  const text = await response.clone().text();
-  let body: JsonValue = text.length > 1000 ? `${text.slice(0, 1000)}…` : text;
-  if (text && (response.headers.get("content-type") ?? "").includes("json")) {
-    try {
-      body = JSON.parse(text) as JsonValue;
-    } catch {
-      // keep the text
-    }
-  }
-  return { status: response.status, ok: response.ok, body };
-}
 
 export interface CloudflarePlatformOptions {
   /** The bindings from `cloudflare:workers`. */
@@ -124,11 +80,6 @@ function isBindingLike(value: unknown): boolean {
   return names.some(
     (k) => k !== "constructor" && typeof (value as Record<string, unknown>)[k] === "function",
   );
-}
-
-/** Deep-copy JSON data so a handler that mutates its message cannot leak into other runs. */
-function cloneJson(value: JsonValue): JsonValue {
-  return JSON.parse(JSON.stringify(value)) as JsonValue;
 }
 
 const assumptions: readonly string[] = [
@@ -213,6 +164,7 @@ export function createCloudflarePlatform(options: CloudflarePlatformOptions): Pl
       return value;
     },
   });
+  const worker: RunningWorker = { handler: options.handler, env: proxiedEnv };
 
   return {
     name: "cloudflare",
@@ -343,275 +295,8 @@ export function createCloudflarePlatform(options: CloudflarePlatformOptions): Pl
         });
       }
       return drive.kind === "http"
-        ? await deliverRequest(event, hooks, spec, drive, invocation)
-        : await deliverMessage(event, hooks, spec, drive, invocation);
+        ? await deliverRequest(event, hooks, spec, drive, invocation, worker)
+        : await deliverMessage(event, hooks, spec, drive, invocation, worker, maxRetries);
     },
   };
-
-  /** The `ExecutionContext` handed to a handler; `waitUntil` work is collected to run after it returns. */
-  function executionContext(background: Promise<unknown>[]): ExecutionContext {
-    return {
-      waitUntil: (promise: Promise<unknown>) => {
-        background.push(
-          promise.then(
-            () => undefined,
-            () => undefined,
-          ),
-        );
-      },
-      passThroughOnException: () => {},
-      props: {},
-    } as unknown as ExecutionContext;
-  }
-
-  /**
-   * Background work extends the invocation but never changes the acknowledgement or the response.
-   * A cut-off here is the isolate dying after them: work not yet started is lost.
-   */
-  async function drainBackground(
-    hooks: RunHooks,
-    inv: { isCrashed(): boolean; readonly crashed: Promise<void> },
-    invocation: string,
-    target: string,
-    background: readonly Promise<unknown>[],
-  ): Promise<boolean> {
-    if (background.length === 0 || inv.isCrashed()) return false;
-    try {
-      hooks.effectSync(
-        {
-          invocation,
-          target,
-          op: "background",
-          args: { pending: background.length },
-          allowed: CUT_OFF,
-        },
-        () => null,
-        () => null,
-      );
-      await Promise.race([hooks.settle(Promise.all(background), invocation), inv.crashed]);
-      return false;
-    } catch (err) {
-      if (!(err instanceof CrashSignal)) throw err;
-      return true;
-    }
-  }
-
-  async function deliverRequest(
-    event: EventRef,
-    hooks: RunHooks,
-    spec: ScenarioSpec,
-    drive: HttpDrive,
-    invocation: string,
-  ): Promise<DeliveryResult> {
-    const req = event.data as unknown as HttpRequestSpec;
-    const target = `Http:${req.path}`;
-    const inv = hooks.startInvocation(invocation);
-    // Virtual time: when the caller sent this attempt, for its deadline.
-    const started = Date.now();
-    const background: Promise<unknown>[] = [];
-    const handler = options.handler.fetch;
-    if (!handler) throw new Error("the Worker has no fetch() handler");
-    const args: JsonValue = { requestId: event.id, method: req.method, path: req.path };
-    const deadline = drive.deadlineMs;
-    // The caller gives up at its deadline even when the answer comes later still.
-    const lateAt = deadline === undefined ? undefined : started + deadline;
-
-    /** The caller decides once: it accepts the answer, or gives up at `at` and resends or stops. */
-    let decided = false;
-    const giveUp = (at: number): void => {
-      if (decided) return;
-      decided = true;
-      const redeliveries = event.attempt - 1;
-      if (redeliveries < drive.retries && redeliveries < spec.bounds.maxRedeliveries) {
-        const resendAt = Math.max(at + retryDelayMs(drive, event.attempt), Date.now());
-        hooks.enqueue({
-          ...event,
-          attempt: event.attempt + 1,
-          ...(resendAt > Date.now() ? { at: resendAt } : {}),
-        });
-      } else {
-        hooks.effectSync(
-          {
-            invocation: hooks.bookkeeping(),
-            target,
-            op: "gave_up",
-            args: { requestId: event.id, attempts: event.attempt },
-            allowed: [],
-          },
-          () => null,
-          () => null,
-        );
-      }
-    };
-    // A virtual timer: at the deadline the caller gives up, whatever the handler is doing.
-    const deadlineTimer =
-      deadline === undefined || lateAt === undefined
-        ? undefined
-        : setTimeout(() => giveUp(lateAt), deadline);
-
-    let response: Response | undefined;
-    const outcome = Promise.resolve()
-      .then(() =>
-        handler.call(options.handler, requestFor(req), proxiedEnv, executionContext(background)),
-      )
-      .then(
-        (r) => {
-          response = r;
-          return "completed" as const;
-        },
-        (err: unknown) =>
-          err instanceof CrashSignal ? ("crashed" as const) : ("errored" as const),
-      );
-    let status = await Promise.race([
-      hooks.settle(outcome, invocation),
-      inv.crashed.then(() => "crashed" as const),
-    ]);
-
-    let summary: { status: number; ok: boolean } | null = null;
-    let read: { status: number; ok: boolean; body: JsonValue } | "crashed" | "errored" = "errored";
-    if (status === "completed" && response) {
-      // The body is read before the point so the record is complete; the point itself is the send.
-      // Streaming bodies run handler code: a crash inside it abandons the read, an error fails the delivery.
-      read = await Promise.race([
-        hooks.settle(summarizeResponse(response), invocation).then(
-          (s) => s as { status: number; ok: boolean; body: JsonValue },
-          (err: unknown) =>
-            err instanceof CrashSignal ? ("crashed" as const) : ("errored" as const),
-        ),
-        inv.crashed.then(() => "crashed" as const),
-      ]);
-      if (read === "crashed" || read === "errored") status = read;
-    }
-    let late = lateAt !== undefined && Date.now() > lateAt;
-    const allowed = deadline === undefined ? RESPOND : RESPOND_WITH_DEADLINE;
-    if (status === "completed" && typeof read === "object") {
-      const s = read;
-      try {
-        hooks.effectSync(
-          { invocation, target, op: "response", args, allowed },
-          () => s,
-          (v) => v,
-        );
-        summary = s;
-      } catch (err) {
-        if (err instanceof CrashSignal) status = "crashed";
-        else if (err instanceof InjectedEffectError) {
-          // Sent, but after the caller's deadline: the handler carries on, the caller resends.
-          summary = s;
-          late = true;
-        } else throw err;
-      }
-    } else if (status === "errored") {
-      // Cloudflare answers an uncaught exception with a 500 (workers runtime behaviour); the caller sees that.
-      const s = { status: 500, ok: false, body: "" };
-      hooks.effectSync(
-        { invocation, target, op: "response", args, allowed: [] },
-        () => s,
-        (v) => v,
-      );
-      summary = s;
-    }
-
-    // The caller decides as soon as it has an answer or gives up, before background work ends.
-    if (deadlineTimer !== undefined) clearTimeout(deadlineTimer);
-    const accepted =
-      summary !== null && !late && (drive.retryOn === "5xx" ? summary.status < 500 : summary.ok);
-    if (accepted) decided = true;
-    else giveUp(late && lateAt !== undefined ? lateAt : Date.now());
-
-    if (await drainBackground(hooks, inv, invocation, target, background)) status = "crashed";
-    return { status, followUps: [] };
-  }
-
-  async function deliverMessage(
-    event: EventRef,
-    hooks: RunHooks,
-    spec: ScenarioSpec,
-    drive: QueueDrive,
-    invocation: string,
-  ): Promise<DeliveryResult> {
-    {
-      const queueTarget = `Queue:${drive.queue}`;
-      const inv = hooks.startInvocation(invocation);
-      /** Cloudflare honours the first ack or retry decision per message; later ones are ignored. */
-      const state: { decision: "ack" | "retry" | null } = { decision: null };
-      const background: Promise<unknown>[] = [];
-
-      /** Records the call; the result says whether it took effect (the first decision wins). */
-      const decide = (op: "ack" | "retry", args: JsonValue): void => {
-        hooks.effectSync(
-          { invocation, target: queueTarget, op, args, allowed: ACK },
-          () => {
-            if (state.decision !== null) return false;
-            state.decision = op;
-            return true;
-          },
-          (effective) => ({ effective }),
-        );
-      };
-      const message: Message<unknown> = {
-        id: event.id,
-        timestamp: new Date(),
-        body: cloneJson(event.data),
-        attempts: event.attempt,
-        ack: () => decide("ack", { messageId: event.id, implicit: false, body: event.data }),
-        retry: () => decide("retry", { messageId: event.id, body: event.data }),
-      };
-      const batch: MessageBatch<unknown> = {
-        queue: drive.queue,
-        messages: [message],
-        metadata: { metrics: { backlogCount: 0, backlogBytes: 0 } },
-        ackAll: () => message.ack(),
-        retryAll: () => message.retry(),
-      };
-      const execution = executionContext(background);
-
-      const handler = options.handler.queue;
-      if (!handler) throw new Error("the Worker has no queue() handler");
-      const outcome = Promise.resolve()
-        .then(() => handler.call(options.handler, batch, proxiedEnv, execution))
-        .then(
-          () => "completed" as const,
-          (err: unknown) =>
-            err instanceof CrashSignal ? ("crashed" as const) : ("errored" as const),
-        );
-      let status = await Promise.race([
-        hooks.settle(outcome, invocation),
-        inv.crashed.then(() => "crashed" as const),
-      ]);
-
-      if (status === "completed" && state.decision === null) {
-        try {
-          decide("ack", { messageId: event.id, implicit: true, body: event.data });
-        } catch (err) {
-          if (err instanceof CrashSignal) status = "crashed";
-          else throw err;
-        }
-      }
-
-      if (await drainBackground(hooks, inv, invocation, queueTarget, background))
-        status = "crashed";
-
-      const followUps: EventRef[] = [];
-      if (state.decision !== "ack") {
-        const redeliveries = event.attempt - 1;
-        if (event.attempt <= maxRetries && redeliveries < spec.bounds.maxRedeliveries) {
-          followUps.push({ ...event, attempt: event.attempt + 1 });
-        } else {
-          hooks.effectSync(
-            {
-              invocation: hooks.bookkeeping(),
-              target: queueTarget,
-              op: "dead_letter",
-              args: { messageId: event.id, attempts: event.attempt },
-              allowed: [],
-            },
-            () => null,
-            () => null,
-          );
-        }
-      }
-      return { status, followUps };
-    }
-  }
 }
