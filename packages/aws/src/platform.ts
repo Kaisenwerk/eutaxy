@@ -19,11 +19,6 @@ import type {
 } from "@eutaxy/core";
 import { CrashSignal } from "@eutaxy/engine";
 import { resetTables, scenarioTables, snapshotTables, type TableSpec } from "./dynamodb.ts";
-import type { SqsDrive } from "./scenario.ts";
-import { installSdkProxy } from "./sdk.ts";
-
-const DELETE: readonly FaultKind[] = ["crash_before", "crash_after"];
-
 import {
   batchFailed,
   type LambdaContext,
@@ -33,6 +28,10 @@ import {
   type SqsRecord,
   sqsInvocation,
 } from "./lambda.ts";
+import type { SqsDrive } from "./scenario.ts";
+import { installSdkProxy } from "./sdk.ts";
+
+const DELETE: readonly FaultKind[] = ["crash_before", "crash_after"];
 
 export type { LambdaContext, SqsBatchResponse, SqsEvent, SqsHandler, SqsRecord };
 
