@@ -35,12 +35,21 @@ In this order.
 
 ## v0.6 — Provers (next)
 
-- `TESTED` rung; `Prover` interface, ladder and aggregation.
+The `TESTED` rung and the ladder up to it (`CHECKED`, then `TESTED`) are
+done; the design describes them. The `PROVEN` rung runs where an engine can
+be spawned, on the Node side of `eutaxy check`, not inside workerd, which is
+where the first two rungs run.
+- `Prover` interface shaped by the first engine, the `PROVEN` rung on the
+  ladder, aggregation across engines (`CONFLICT`).
 - First-party `prover-lean` engine on the initial subset (immutable data,
   algebraic types, structural recursion, bounded integers, quantifier-free
   arithmetic), with its contract corpus and translation validation; proof
   cache; `eutaxy prover install lean`.
 - MCP server and GitHub Action over the JSON schema.
+- When a target needs them: `TESTED` draws for record and tagged-union
+  binders, once Lemma or an Eutaxy extension has such domains; a
+  configurable number of draws on the command line (the API takes
+  `inputs`).
 
 `checkSpecModule`, `lemmaBool`, `lemmaUnresolved`, `ModulePredicates` and
 `QueueHandler` (the former name of `WorkerHandler`) leave the public facade

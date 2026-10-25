@@ -25,12 +25,13 @@ generated inputs and proving them in Lean 4 are the next phase.
 ## Verdicts
 
 A scenario gets `VIOLATED`, `BOUNDED` or `UNSUPPORTED`. A spec gets
-`CHECKED` (held on every input the simulator passed), `REFUTED` (with the
-call that breaks it) or `UNKNOWN`; `TESTED`, `PROVEN` and `CONFLICT` come
-with the provers. Every verdict carries what it rests on: seed and bounds,
-or the inputs it was checked on, and the assumptions. Nothing is ever
-reported as verified when it was only explored: `BOUNDED` and `CHECKED` are
-not proofs.
+`CHECKED` (held on every input the simulator passed), `TESTED` (held on
+those and on inputs generated from the property's domains), `REFUTED`
+(with the input that breaks it, shrunk) or `UNKNOWN`; `PROVEN` and
+`CONFLICT` come with the provers. Every verdict carries what it rests on:
+seed and bounds, or the inputs it was checked on, and the assumptions.
+Nothing is ever reported as verified when it was only explored or sampled:
+`BOUNDED`, `CHECKED` and `TESTED` are not proofs.
 
 ## Repository
 

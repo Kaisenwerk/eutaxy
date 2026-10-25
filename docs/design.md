@@ -193,6 +193,48 @@ yet) are `UNKNOWN` (`unsupported`) at this rung. Exploration stops at a
 scenario's first violation, so a run that ends `VIOLATED` passes fewer
 inputs than one that ends `BOUNDED`.
 
+**`TESTED`** evaluates the same compiled predicate on assignments drawn
+from the binders' domains and guards, after the exploration and with its
+seed, so the same seed draws the same assignments on every machine and a
+verdict carries the seed it rests on. Each property derives its own stream
+from the seed and its name, so adding a property does not change what the
+others see. Draws are biased the way bugs are distributed: most integers
+are small, some are medium or large, a few are the range's ends; doubles
+include the fractions, the magnitudes and the special values (`NaN`, the
+infinities, `-0`) a guard admits, since `number` is the JavaScript type;
+integers stay within what a double holds exactly; bigints go beyond it;
+strings are short texts over letters, digits, punctuation and a few
+multi-unit characters, and under a regex guard they are drawn by walking
+the pattern (literals, classes, groups, alternation, quantifiers, anchors),
+with sampling over the pattern's characters as the fallback for syntax the
+walker refuses (lookaround, backreferences, property escapes); the real
+`RegExp` has the last word on every draw. Assignments are counted
+distinct, as `CHECKED` counts them (two booleans are two inputs, however
+often they are drawn). The rung stops at a set number of distinct
+assignments inside the claim (100 unless configured), or after twenty
+times as many draws, which is `UNKNOWN` (`gave_up`) when none was inside:
+preconditions sampling cannot meet lower the verdict, never pass. A
+property that could not be evaluated on any input, the simulator's or a
+drawn one (a non-boolean atom, say), is malformed and stays `UNKNOWN`
+(`unsupported`) whatever the other rung found: inputs that happen to miss
+the fault do not make the property look sound. An assignment where the claim is false is shrunk, one binder
+at a time toward zero (or the guard's nearest end), shorter and plainer
+strings, and `false`, as long as the property still fails, and reported as
+`REFUTED` at the `TESTED` rung with the shrunk assignment; it has no call,
+since the simulator did not make one. A guard no draw can meet is
+`UNKNOWN` (`gave_up`) too. The rung calls the function outside the
+simulator, so it assumes the function is pure, and a function that does
+not terminate on a drawn input hangs the check; `@total` stays `UNKNOWN`
+here.
+
+The ladder runs `CHECKED`, then `TESTED`. A counterexample at either rung
+is `REFUTED`, the simulator's first, with its call. When both hold the
+verdict is `TESTED` and says on how many of the simulator's inputs it also
+held; when sampling gives up, `CHECKED` stands and says why it is not
+`TESTED`; when neither decided, one `UNKNOWN` names both reasons. The
+verdict kinds and `rung` values a report can carry grow within a schema
+version; a field removed or re-typed bumps it.
+
 **Scenario specs** (`*.sim.ts`) are TypeScript files whose default export is
 a `ScenarioSpec`: plain data naming the Worker (entry and wrangler config),
 how to drive it, the state to set up before each run, the declared
@@ -794,7 +836,10 @@ Adapter rules:
 | `eutaxy prover install <name>` | Download a pinned prover toolchain                                              |
 
 Every command takes `--json`, printing one object in a versioned schema
-(`schemaVersion` 1, canonical JSON) for CI and coding agents. A failing check
+(`schemaVersion` 1, canonical JSON) for CI and coding agents; within a
+version, new verdict kinds and optional fields may appear, so a consumer
+switches on `kind` with a default, and a removed or re-typed field bumps the
+version. A failing check
 writes a Vitest file that replays the shrunk schedule on the restricted
 scenario inside workerd and expects the invariants to hold, so it fails
 while the bug exists and passes once fixed; `expectHolds` and `check` from

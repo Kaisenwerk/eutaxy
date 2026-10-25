@@ -17,7 +17,11 @@ changes nothing and the caller is asked to retry.
 **The core's bug: an off-by-one.** `decideRefund` rejects a refund that
 brings the total exactly to the captured amount (`>=` where `>` was
 meant). Rejecting is safe, so no system invariant notices; the Lemma
-property `full-refund-allowed` on `decideRefund` is REFUTED at the
-`CHECKED` rung on an input the simulator passed (600 refunded, 400
-asked, 1000 captured) whenever one refund landed before the other. The
-other two properties are CHECKED on the same inputs.
+property `full-refund-allowed` on `decideRefund` is REFUTED. In the
+sequential scenario the simulator itself passes an input that shows it
+(600 refunded, 400 asked, 1000 captured) once one refund has landed
+before the other, and the `CHECKED` rung reports that call. In the
+concurrent scenario the violation stops the exploration before the
+simulator reaches such an input, and the `TESTED` rung finds one among the
+inputs it generates and shrinks it. The other two properties hold on the
+simulator's inputs and on the generated ones, so they are TESTED.
