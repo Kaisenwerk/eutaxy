@@ -2,13 +2,13 @@ import { extractSpecs, type FunctionSpec, type PredicateOutcome } from "@eutaxy/
 import { describe, expect, test } from "vitest";
 import {
   checkedRung,
-  checkSpecModule,
   inDomain,
   lemmaBool,
   lemmaUnresolved,
   markerVerdicts,
   render,
 } from "./checked.ts";
+import { checkSpecModule } from "./ladder.ts";
 
 const source = `
 /**

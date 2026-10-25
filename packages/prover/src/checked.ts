@@ -13,7 +13,6 @@ import {
   type Binder,
   endpointNumber,
   type FunctionSpec,
-  type ModuleSpecs,
   type NamedProperty,
   type PredicateOutcome,
 } from "@eutaxy/spec";
@@ -62,10 +61,47 @@ export function render(value: unknown): string {
   }
 }
 
+/** What evaluating a predicate on one assignment came to. */
+export type Evaluation =
+  | { readonly outcome: PredicateOutcome }
+  | { readonly outcome: "refuted"; readonly error: string }
+  /** The property, not the function, is at fault: it cannot be evaluated at any rung. */
+  | { readonly malformed: string };
+
+/**
+ * One assignment through a predicate. An atom that is not a boolean, or a
+ * name nothing defines, is a malformed property. Any other throw, the
+ * function's own included (JSON.parse's SyntaxError, say), means the claim
+ * is not true there. A ReferenceError counts as malformed: compiled
+ * TypeScript under test hardly throws one, a name the property's scope
+ * analysis missed does, and that must never pass for a refutation.
+ */
+export function evaluate(
+  predicate: (...binders: unknown[]) => PredicateOutcome,
+  values: readonly unknown[],
+): Evaluation {
+  try {
+    return { outcome: predicate(...values) };
+  } catch (err) {
+    if (err instanceof AtomNotBoolean || err instanceof ReferenceError)
+      return { malformed: String(err) };
+    return { outcome: "refuted", error: String(err) };
+  }
+}
+
+/** A finite integer endpoint's value, exact: underscores and the `n` suffix dropped. */
+export function endpointBigInt(value: string): bigint {
+  return BigInt(value.replace(/_/g, "").replace(/n$/, ""));
+}
+
 function bound(value: string, integral: boolean): number | bigint {
-  if (integral && !value.endsWith("∞")) return BigInt(value.replace(/_/g, "").replace(/n$/, ""));
+  if (integral && !value.endsWith("∞")) return endpointBigInt(value);
   return endpointNumber(value);
 }
+
+/** How every rung words an `UNKNOWN` for a property that cannot be evaluated; the ladder recognizes it. */
+export const malformedReason = (detail: string): string =>
+  `the property could not be evaluated: ${detail}`;
 
 /** Whether a value lies in a binder's domain and guard. */
 export function inDomain(b: Binder, v: unknown): boolean {
@@ -161,34 +197,17 @@ export function checkedRung(input: CheckedInput): SpecVerdict {
       call: `${fn.name}(${call.args.map(render).join(", ")})`,
       ...(error === undefined ? {} : { error }),
     });
-    let outcome: PredicateOutcome;
-    try {
-      outcome = predicate(...values);
-    } catch (err) {
-      // An atom that is not a boolean, or a name nothing defines, is a malformed property. Any other throw, the function's own
-      // included (JSON.parse's SyntaxError, say), means the claim is not true there.
-      // A ReferenceError, likewise: compiled TypeScript under test hardly throws one, a name the
-      // property's scope analysis missed does, and that must never pass for a refutation.
-      if (err instanceof AtomNotBoolean || err instanceof ReferenceError)
-        return unknown("unsupported", `the property could not be evaluated: ${String(err)}`);
+    const result = evaluate(predicate, values);
+    if ("malformed" in result) return unknown("unsupported", malformedReason(result.malformed));
+    if (result.outcome === "refuted")
       return {
         ...base,
         kind: "REFUTED",
         rung: "CHECKED",
-        counterexample: counterexample(String(err)),
+        counterexample: counterexample("error" in result ? result.error : undefined),
         assumptions: [],
       };
-    }
-
-    if (outcome === "refuted")
-      return {
-        ...base,
-        kind: "REFUTED",
-        rung: "CHECKED",
-        counterexample: counterexample(),
-        assumptions: [],
-      };
-    if (outcome === "discarded") discarded++;
+    if (result.outcome === "discarded") discarded++;
     else held++;
   }
   if (held === 0)
@@ -233,42 +252,4 @@ export function markerVerdicts(module: string, fn: FunctionSpec): SpecVerdict[] 
       reason: "Lemma has not fixed what @throws claims yet",
     });
   return out;
-}
-
-/** Compiled predicates of a module, by function and property name. */
-export interface ModulePredicates {
-  readonly [fn: string]: { readonly [property: string]: (...binders: never[]) => PredicateOutcome };
-}
-
-/** Every spec verdict for one module, from what was observed of its calls. */
-export function checkSpecModule(
-  module: string,
-  specs: ModuleSpecs,
-  predicates: ModulePredicates,
-  observed: {
-    readonly calls: readonly { readonly function: string; readonly args: readonly unknown[] }[];
-    readonly unobservable: { readonly [fn: string]: string };
-  },
-): SpecVerdict[] {
-  return specs.functions.flatMap((fn) => {
-    const calls = observed.calls.filter((c) => c.function === fn.name);
-    // Own properties only: a function named toString must not find Object.prototype's.
-    const unobservable = Object.hasOwn(observed.unobservable, fn.name)
-      ? observed.unobservable[fn.name]
-      : undefined;
-    const own = Object.hasOwn(predicates, fn.name) ? predicates[fn.name] : undefined;
-    return [
-      ...fn.ensures.map((property) =>
-        checkedRung({
-          module,
-          fn,
-          property,
-          calls,
-          predicate: own && Object.hasOwn(own, property.name) ? own[property.name] : undefined,
-          ...(unobservable === undefined ? {} : { unobservable }),
-        }),
-      ),
-      ...markerVerdicts(module, fn),
-    ];
-  });
 }

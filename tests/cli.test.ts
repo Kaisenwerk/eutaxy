@@ -109,7 +109,7 @@ describe("eutaxy check", () => {
       counterexample?: { call: string; binders: { name: string; value: string }[] };
     }
 
-    test("observes the core: refines catches the lost update, the specs are CHECKED on the inputs seen", () => {
+    test("observes the core: refines catches the lost update, the specs run the ladder", () => {
       const out = mkdtempSync(join(tmpdir(), "eutaxy-cli-"));
       try {
         const outFile = join(out, "refund.regression.test.ts");
@@ -129,11 +129,22 @@ describe("eutaxy check", () => {
         };
         expect(report.verdict.kind).toBe("VIOLATED");
         expect(report.verdict.violation.keys[0]).toBe("stale_read");
+        // The two sound properties hold on the simulator's inputs and on generated ones; the
+        // off-by-one is found on a generated input, since the violation stopped the exploration
+        // before the simulator reached one that shows it.
         expect(report.specs.map((s) => [s.property, s.kind])).toEqual([
-          ["within-captured", "CHECKED"],
-          ["adds-the-amount", "CHECKED"],
-          ["full-refund-allowed", "UNKNOWN"],
+          ["within-captured", "TESTED"],
+          ["adds-the-amount", "TESTED"],
+          ["full-refund-allowed", "REFUTED"],
         ]);
+        const refuted = report.specs[2] as SpecJson & { rung: string };
+        expect(refuted.rung).toBe("TESTED");
+        expect(refuted.counterexample?.call).toBeUndefined();
+        const [captured, refunded, amount] = (refuted.counterexample?.binders ?? []).map((b) =>
+          Number(b.value),
+        ) as [number, number, number];
+        expect(refunded + amount).toBe(captured);
+        expect(amount).toBeGreaterThan(0);
         // The regression test observes the core during its replay, so refines sees the decisions.
         expect(readFileSync(outFile, "utf8")).toContain('observeCore(core_0, ["decideRefund"])');
       } finally {

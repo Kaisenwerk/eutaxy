@@ -267,6 +267,24 @@ describe("spec verdicts", () => {
     },
     {
       ...base,
+      property: "c",
+      text: "forall (x: int) { g(x) }",
+      kind: "TESTED",
+      inputs: 100,
+      discarded: 7,
+      seed: "corpus",
+      checked: 2,
+    },
+    {
+      ...base,
+      property: "d",
+      text: "forall (x: int) { h(x) }",
+      kind: "REFUTED",
+      rung: "TESTED",
+      counterexample: { binders: [{ name: "x", value: "1" }] },
+    },
+    {
+      ...base,
       property: "@total",
       text: "@total",
       kind: "UNKNOWN",
@@ -277,11 +295,15 @@ describe("spec verdicts", () => {
 
   test("text: one line each, the counterexample under a refutation", () => {
     expect(renderSpecs(specs).split("\n")).toEqual([
-      "Specs (CHECKED means held on the inputs the simulator passed; it is not a proof)",
+      "Specs (CHECKED means held on the inputs the simulator passed, TESTED on generated ones too; neither is a proof)",
       "  CHECKED  decideRefund a: held on 3 input(s), 1 outside the claim",
       "  REFUTED  decideRefund b: false at decideRefund(1000, 800, 400)",
       "           c = 1000, r = 800, a = 400",
       "           forall (c r a: int) { f(c, r, a) }",
+      "  TESTED   decideRefund c: held on 100 generated input(s) and 2 the simulator passed, 7 outside the claim",
+      "  REFUTED  decideRefund d: false on a generated input",
+      "           x = 1",
+      "           forall (x: int) { h(x) }",
       "  UNKNOWN  decideRefund @total: unsupported: needs a prover",
     ]);
     expect(renderSpecs([])).toBe("");
@@ -291,6 +313,12 @@ describe("spec verdicts", () => {
     const verdict = JSON.parse(renderJson(bounded)) as Record<string, unknown>;
     expect("specs" in verdict).toBe(false);
     const withSpecs = JSON.parse(renderJson(bounded, specs)) as { specs: { kind: string }[] };
-    expect(withSpecs.specs.map((s) => s.kind)).toEqual(["CHECKED", "REFUTED", "UNKNOWN"]);
+    expect(withSpecs.specs.map((s) => s.kind)).toEqual([
+      "CHECKED",
+      "REFUTED",
+      "TESTED",
+      "REFUTED",
+      "UNKNOWN",
+    ]);
   });
 });

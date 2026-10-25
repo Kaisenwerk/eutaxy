@@ -29,7 +29,9 @@ export function renderJson(verdict: ScenarioVerdict, specs: readonly SpecVerdict
 /** Spec verdicts as text: one line each, a counterexample under a refutation. */
 export function renderSpecs(specs: readonly SpecVerdict[]): string {
   if (specs.length === 0) return "";
-  const out = ["Specs (CHECKED means held on the inputs the simulator passed; it is not a proof)"];
+  const out = [
+    "Specs (CHECKED means held on the inputs the simulator passed, TESTED on generated ones too; neither is a proof)",
+  ];
   for (const v of specs) {
     const what = `${v.function} ${v.property}`;
     switch (v.kind) {
@@ -38,11 +40,15 @@ export function renderSpecs(specs: readonly SpecVerdict[]): string {
           `  CHECKED  ${what}: held on ${v.inputs} input(s)${v.discarded > 0 ? `, ${v.discarded} outside the claim` : ""}`,
         );
         break;
+      case "TESTED":
+        out.push(
+          `  TESTED   ${what}: held on ${v.inputs} generated input(s)${v.checked === undefined ? "" : ` and ${v.checked} the simulator passed`}${v.discarded > 0 ? `, ${v.discarded} outside the claim` : ""}`,
+        );
+        break;
       case "REFUTED": {
         const c = v.counterexample;
-        out.push(
-          `  REFUTED  ${what}: false at ${c.call}${c.error ? `, which threw ${c.error}` : ""}`,
-        );
+        const where = c.call === undefined ? "on a generated input" : `at ${c.call}`;
+        out.push(`  REFUTED  ${what}: false ${where}${c.error ? `, which threw ${c.error}` : ""}`);
         out.push(`           ${c.binders.map((b) => `${b.name} = ${b.value}`).join(", ")}`);
         out.push(`           ${v.text.replace(/\s+/g, " ")}`);
         break;

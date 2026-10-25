@@ -177,8 +177,11 @@ export async function checkInWorkerd(input: WorkerdCheckInput): Promise<CheckTra
   } finally {
     for (const o of observers) o.restore();
   }
+  // CHECKED on the calls the exploration recorded, then TESTED on inputs drawn from the check's seed.
   const specs: SpecVerdict[] = selected.flatMap((m, i) =>
-    checkSpecModule(m.key, m.specs, m.predicates, observers[i] as ReturnType<typeof observeCore>),
+    checkSpecModule(m.key, m.specs, m.predicates, observers[i] as ReturnType<typeof observeCore>, {
+      tested: { seed: input.seed },
+    }),
   );
   return {
     report: JSON.parse(renderJson(verdict, specs)) as unknown,

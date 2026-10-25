@@ -32,6 +32,7 @@ export {
   type SpecUnknown,
   type SpecVerdict,
   type StateQuery,
+  type Tested,
   type Unique,
   type Unsupported,
   type Violated,
@@ -47,7 +48,13 @@ export {
   replay,
   restrictSpec,
 } from "@eutaxy/engine";
-export { checkedRung } from "@eutaxy/prover";
+export {
+  checkedRung,
+  type LadderOptions,
+  specLadder,
+  type TestedOptions,
+  testedRung,
+} from "@eutaxy/prover";
 
 /** @deprecated Internal to `eutaxy check` since 0.5.1; removed in 0.6.0. */
 export const checkSpecModule = prover.checkSpecModule;
