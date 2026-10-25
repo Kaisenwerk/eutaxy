@@ -6,7 +6,7 @@
 import type { AtLeastOnce, EffectLog, ScenarioSpec } from "@eutaxy/core";
 import { explore, Run, restrictSpec, runOnce } from "@eutaxy/engine";
 import { describe, expect, test } from "vitest";
-import { createCloudflarePlatform, type QueueHandler, type WorkerHandler } from "./platform.ts";
+import { createCloudflarePlatform, type WorkerHandler } from "./platform.ts";
 import { atLeastOncePerMessage, http, queue } from "./scenario.ts";
 
 const acked: AtLeastOnce = {
@@ -36,7 +36,7 @@ function spec(overrides: Partial<ScenarioSpec> = {}): ScenarioSpec {
   };
 }
 
-type Handler = NonNullable<QueueHandler["queue"]>;
+type Handler = NonNullable<WorkerHandler["queue"]>;
 
 function platformFor(handler: Handler, env: object = {}) {
   return createCloudflarePlatform({ env, handler: { queue: handler }, schemas: {} });

@@ -2,7 +2,7 @@
 import type { ScenarioSpec } from "@eutaxy/core";
 import { describe, expect, test } from "vitest";
 import { runDifferential } from "./differential.ts";
-import type { QueueHandler, WorkerHandler } from "./platform.ts";
+import type { WorkerHandler } from "./platform.ts";
 import { http, queue } from "./scenario.ts";
 
 function spec(messages = 2): ScenarioSpec {
@@ -29,7 +29,7 @@ function spec(messages = 2): ScenarioSpec {
   };
 }
 
-type Handler = NonNullable<QueueHandler["queue"]>;
+type Handler = NonNullable<WorkerHandler["queue"]>;
 
 async function diff(handler: Handler) {
   return runDifferential(spec(), { env: {}, handler: { queue: handler }, schemas: {} });
