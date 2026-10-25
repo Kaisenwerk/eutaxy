@@ -11,9 +11,11 @@ import { type EffectSelector, getPath, keyOf, selectEffects } from "./selectors.
 import {
   checkEveryRow,
   checkImplies,
+  checkReferences,
   checkUnique,
   type EveryRow,
   type Implies,
+  type References,
   type Unique,
 } from "./state.ts";
 
@@ -54,7 +56,14 @@ export function recomputePerMessageExpected(
   });
 }
 
-export type Invariant = AtMostOncePerKey | AtLeastOnce | EveryRow | Implies | Unique | Refines;
+export type Invariant =
+  | AtMostOncePerKey
+  | AtLeastOnce
+  | EveryRow
+  | Implies
+  | Unique
+  | References
+  | Refines;
 
 export interface Violation {
   readonly invariant: string;
@@ -84,6 +93,8 @@ export function checkInvariant(log: EffectLog, inv: Invariant): Violation | null
       return checkImplies(log, inv);
     case "unique":
       return checkUnique(log, inv);
+    case "references":
+      return checkReferences(log, inv);
     case "atMostOncePerKey": {
       const seen = new Map<string, number>();
       for (const e of selectEffects(log, inv.effect)) {

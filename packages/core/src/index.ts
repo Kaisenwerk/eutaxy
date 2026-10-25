@@ -65,6 +65,7 @@ export {
   type Implies,
   lastSnapshot,
   queryRows,
+  type References,
   type Row,
   type RowCondition,
   rowMatches,

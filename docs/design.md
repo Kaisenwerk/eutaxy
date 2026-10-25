@@ -251,7 +251,10 @@ a _key_ is a dot path into the payload. The library starts with
 _state_ invariants over a snapshot of D1 taken after the last event and
 recorded into the log: `everyRow` (every row a state query selects satisfies
 a list of column conditions) and `implies` (every selected effect, keyed by
-a path into its payload, has a row whose column equals that key). A missing
+a path into its payload, has a row whose column equals that key). `unique` (no
+two selected rows share a value) and `references` (every selected row has
+a row in another snapshot that points at it, as a foreign key does: no
+R2 object without the D1 row that names it) cover the state on their own. A missing
 snapshot is a violation, never a silent pass. Effect payload conventions per
 binding are documented in the `cloudflare` package README. Every payload
 value goes through one summarizer, core's `toJson`, which is exact for JSON

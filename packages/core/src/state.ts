@@ -56,6 +56,21 @@ export interface Unique {
   readonly path: string;
 }
 
+/**
+ * Every row the query returns is pointed at: some row of `in` has its
+ * `column` equal to the row's value at `path`, as with a foreign key. Rows
+ * where the value is absent or null are skipped. Catches orphans across two
+ * stores, e.g. "no stored object without the row that names it".
+ */
+export interface References {
+  readonly kind: "references";
+  readonly name: string;
+  readonly query: StateQuery;
+  readonly path: string;
+  readonly in: StateQuery;
+  readonly column: string;
+}
+
 export type Row = { readonly [column: string]: JsonValue };
 
 /** The tables in the last snapshot recorded for a target, or undefined when none was. */
@@ -194,5 +209,42 @@ export function checkImplies(log: EffectLog, inv: Implies): Violation | null {
     message: `${inv.when.target} ${inv.when.op ?? "*"} happened for key(s) ${missing.join(", ")} but ${inv.state.table}.${inv.column} in ${inv.state.target} has no such row`,
     keys: missing,
     evidence,
+  };
+}
+
+export function checkReferences(log: EffectLog, inv: References): Violation | null {
+  const rows = queryRows(log, inv.query);
+  const targets = queryRows(log, inv.in);
+  for (const [q, r] of [
+    [inv.query, rows],
+    [inv.in, targets],
+  ] as const) {
+    if (r === undefined)
+      return {
+        invariant: inv.name,
+        message: `no snapshot of ${q.target} was recorded`,
+        keys: [],
+        evidence: [],
+      };
+  }
+  const pointedAt = new Set<string>();
+  for (const t of targets ?? []) {
+    const v = t[inv.column];
+    if (v !== undefined && v !== null) pointedAt.add(canonicalJson(v));
+  }
+  const orphans = new Set<string>();
+  for (const r of rows ?? []) {
+    const v = getPath(r as JsonValue, inv.path);
+    if (v === undefined || v === null) continue;
+    const k = canonicalJson(v);
+    if (!pointedAt.has(k)) orphans.add(k);
+  }
+  if (orphans.size === 0) return null;
+  const missing = [...orphans];
+  return {
+    invariant: inv.name,
+    message: `${missing.length} row(s) of ${inv.query.table} in ${inv.query.target} have no row of ${inv.in.table} in ${inv.in.target} whose ${inv.column} names them: ${missing.slice(0, 3).join(", ")}${missing.length > 3 ? ", …" : ""}`,
+    keys: missing,
+    evidence: [...snapshotSeq(log, inv.query.target), ...snapshotSeq(log, inv.in.target)],
   };
 }

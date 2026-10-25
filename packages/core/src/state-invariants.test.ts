@@ -6,6 +6,7 @@ import {
   type Implies,
   lastSnapshot,
   queryRows,
+  type References,
   rowMatches,
   type Unique,
 } from "./state.ts";
@@ -183,5 +184,49 @@ describe("unique", () => {
 
   test("without a snapshot it is a violation, as for everyRow", () => {
     expect(checkInvariant(emptyLog, oneSlotPerProject)?.message).toContain("no snapshot");
+  });
+});
+
+describe("references", () => {
+  const objectsHaveVersions: References = {
+    kind: "references",
+    name: "objects-have-versions",
+    query: { target: "R2:FILES", table: "objects" },
+    path: "key",
+    in: { target: "D1:DB", table: "versions" },
+    column: "object_key",
+  };
+  const snap = (log: EffectLog, target: string, tables: Record<string, unknown[]>) =>
+    appendEffect(log, {
+      kind: "snapshot",
+      invocation: "platform",
+      target,
+      op: "snapshot",
+      payload: { tables: tables as never },
+    });
+
+  test("holds when every selected row is pointed at, and names the ones that are not", () => {
+    let log = snap(emptyLog, "R2:FILES", {
+      objects: [{ key: "t/1" }, { key: "t/2" }, { key: "t/3" }],
+    });
+    log = snap(log, "D1:DB", { versions: [{ object_key: "t/1" }, { object_key: "t/3" }] });
+    const v = checkInvariant(log, objectsHaveVersions);
+    expect(v?.keys).toEqual(['"t/2"']);
+    expect(v?.message).toContain("no row of versions in D1:DB");
+    expect(v?.evidence).toEqual([0, 1]);
+    const fixed = snap(log, "D1:DB", {
+      versions: [{ object_key: "t/1" }, { object_key: "t/2" }, { object_key: "t/3" }],
+    });
+    expect(checkInvariant(fixed, objectsHaveVersions)).toBeNull();
+  });
+
+  test("skips rows without the value, and a missing snapshot is a violation", () => {
+    let log = snap(emptyLog, "R2:FILES", { objects: [{ key: null }, {}] });
+    log = snap(log, "D1:DB", { versions: [] });
+    expect(checkInvariant(log, objectsHaveVersions)).toBeNull();
+    const noVersions = snap(emptyLog, "R2:FILES", { objects: [{ key: "t/1" }] });
+    expect(checkInvariant(noVersions, objectsHaveVersions)?.message).toContain(
+      "no snapshot of D1:DB",
+    );
   });
 });
