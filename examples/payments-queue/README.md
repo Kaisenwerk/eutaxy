@@ -22,11 +22,13 @@ VIOLATED  payments  (seed payments)
 Invariant payment-recorded-once is violated: D1:DB run happened twice for key "o-2" ...
 
 Schedule (run seed ...), events kept: msg-2
-  crash_before at msg-2#1 effect #1 (Queue:payments ack)
+  ambiguous at msg-2#1 effect #0 (D1:DB run)
 ```
 
-The invocation died after the insert committed but before `ack()`, the
-queue redelivered the message, and the order was recorded twice. The trace
+The insert committed but its answer was lost, so the handler threw, the
+queue redelivered the message, and the order was recorded twice. (With
+`--seed example` it reports the other way to get there: a crash between
+the insert and `ack()`.) The trace
 below the schedule shows every effect; a regression test,
 `payments.regression.test.ts`, is written next to the scenario and fails
 until the bug is fixed.
