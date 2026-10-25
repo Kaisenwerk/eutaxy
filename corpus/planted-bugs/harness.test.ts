@@ -88,8 +88,12 @@ describe("planted-bug corpus", () => {
           const d1 = ((wrangler["d1_databases"] as { binding: string }[] | undefined) ?? []).map(
             (d) => d.binding,
           );
+          const r2 = ((wrangler["r2_buckets"] as { binding: string }[] | undefined) ?? []).map(
+            (b) => b.binding,
+          );
           for (const s of spec.setup) {
             if (s.kind === "d1") expect(d1).toContain(s["binding"]);
+            if (s.kind === "r2") expect(r2).toContain(s["binding"]);
           }
           if (spec.drive.kind === "queue") {
             const consumers = (
@@ -108,6 +112,8 @@ describe("planted-bug corpus", () => {
                 return [inv.query.target];
               case "implies":
                 return [inv.when.target, inv.state.target];
+              case "references":
+                return [inv.query.target, inv.in.target];
               default:
                 return [];
             }
@@ -115,6 +121,8 @@ describe("planted-bug corpus", () => {
           for (const t of targets) {
             const m = /^D1:(.+)$/.exec(t);
             if (m) expect(d1).toContain(m[1]);
+            const b = /^R2:(.+)$/.exec(t);
+            if (b) expect(r2).toContain(b[1]);
           }
         },
       );

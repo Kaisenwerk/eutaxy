@@ -1,0 +1,8 @@
+{
+  "expect": {
+    "verdict": "VIOLATED",
+    "invariant": "every-object-recorded"
+  },
+  "fault": "a crash or failure after the R2 put and before the D1 insert committed: crash_after or ambiguous on the put, or crash_before or error on the insert (the seed decides which is found first)",
+  "description": "An upload handler puts the file in R2 under a fresh key, then inserts the row that names it. A failure in between leaves an object no row names, and the client's retry uploads under another key, so the first object is orphaned for good."
+}

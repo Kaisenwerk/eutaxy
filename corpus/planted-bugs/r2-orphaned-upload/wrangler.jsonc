@@ -1,0 +1,7 @@
+{
+  "name": "planted-r2-orphaned-upload",
+  "main": "worker.ts",
+  "compatibility_date": "2026-10-01",
+  "r2_buckets": [{ "binding": "FILES", "bucket_name": "attachments" }],
+  "d1_databases": [{ "binding": "DB", "database_name": "attachments", "database_id": "local" }]
+}
