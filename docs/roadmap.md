@@ -23,7 +23,16 @@ In this order.
   use key-value storage so far);
   dynamic partial-order reduction if real scenarios lose the sleep-set
   reduction too often.
-- R2 and Workflows models.
+- Seeded exploration that reaches deep effect points: each point takes the
+  run's one fault with probability 0.5, so a fault rarely lands past the
+  first few points, and a Workflow's later steps are almost never faulted
+  (the Workflows corpus entry relies on exhaustive exploration). Place the
+  fault by the run's own count of effect points instead.
+- Workflows, beyond the model (`waitForEvent` and `sendEvent`, step
+  timeouts measured in virtual time with latency on scripted externals,
+  `createBatch`, rollback handlers, pausing and terminating instances),
+  when a target needs them.
+- The R2 model.
 
 ## v0.6 — Provers (next)
 
