@@ -2,7 +2,7 @@
  * Differential check: the same fault-free scenario run once through Eutaxy's
  * proxies and once against the raw bindings, with the queue model (or the
  * HTTP caller's retry policy) applied by hand on the raw side. Any difference in the per-attempt decisions or in
- * the final D1 state is a bug in the proxies or the platform model, not in
+ * the final D1 and R2 state is a bug in the proxies or the platform model, not in
  * the Worker. The raw side shares Eutaxy's *reading* of Cloudflare's queue
  * semantics; what it does not share is any proxy code.
  */
@@ -23,7 +23,8 @@ import { executionContext } from "./background.ts";
 import { isD1, resetD1, snapshotD1 } from "./d1.ts";
 import { requestFor } from "./http.ts";
 import { type CloudflarePlatformOptions, createCloudflarePlatform } from "./platform.ts";
-import type { HttpDrive, HttpRequestSpec, QueueDrive } from "./scenario.ts";
+import { isR2, resetR2, snapshotR2 } from "./r2.ts";
+import type { HttpDrive, HttpRequestSpec, QueueDrive, R2Setup } from "./scenario.ts";
 
 /** A type, not an interface, so it is JSON data the comparison takes as it is. */
 export type AttemptRecord = {
@@ -98,6 +99,55 @@ function countingD1(real: D1Database, io: { n: number }, clock: VirtualClock): D
   });
 }
 
+/**
+ * The same for an R2 bucket: each call advances the clock as its proxied
+ * effect does, and reading a body it gave counts as I/O in flight but does
+ * not advance the clock (the proxy reads it inside the get). Reads through
+ * the body's own stream are not counted: wrapping it would lose the known
+ * length a copy's put needs, and Miniflare answers them within the settle
+ * loop's real tick (checked with an 8 MB body).
+ */
+function countingR2(real: R2Bucket, io: { n: number }, clock: VirtualClock): R2Bucket {
+  const track = async <T>(p: Promise<T>, advance: boolean): Promise<T> => {
+    io.n++;
+    try {
+      return await p;
+    } finally {
+      io.n--;
+      if (advance) clock.advance(effectLatencyMs);
+    }
+  };
+  const reads = ["arrayBuffer", "bytes", "text", "json", "blob"];
+  const counted = (o: unknown): unknown => {
+    if (o === null || typeof o !== "object" || !("body" in o)) return o;
+    return new Proxy(o, {
+      get(t, prop) {
+        // The object's own getters (body, etag) need the object itself as receiver.
+        const v = Reflect.get(t, prop) as unknown;
+        if (typeof prop === "string" && reads.includes(prop) && typeof v === "function")
+          return (...a: unknown[]) =>
+            track((v as (...x: unknown[]) => Promise<unknown>).apply(t, a), false);
+        return typeof v === "function" ? (v as (...x: unknown[]) => unknown).bind(t) : v;
+      },
+    });
+  };
+  return new Proxy(real, {
+    get(t, prop, r) {
+      const v = Reflect.get(t, prop, r) as unknown;
+      if (
+        prop === "put" ||
+        prop === "delete" ||
+        prop === "get" ||
+        prop === "head" ||
+        prop === "list"
+      )
+        return async (...a: unknown[]) =>
+          counted(await track((v as (...x: unknown[]) => Promise<unknown>).apply(t, a), true));
+      return typeof v === "function" ? (v as (...x: unknown[]) => unknown).bind(t) : v;
+    },
+  });
+}
+
 async function snapshotAll(
   spec: ScenarioSpec,
   options: CloudflarePlatformOptions,
@@ -105,6 +155,12 @@ async function snapshotAll(
   const env = options.env as Record<string, unknown>;
   const out: Record<string, { readonly [table: string]: readonly JsonValue[] }> = {};
   for (const step of spec.setup) {
+    if (step.kind === "r2") {
+      const binding = (step as R2Setup).binding;
+      const real = env[binding];
+      if (isR2(real)) out[binding] = { objects: await snapshotR2(real) };
+      continue;
+    }
     if (step.kind !== "d1") continue;
     const binding = String(step["binding"]);
     const real = env[binding];
@@ -157,6 +213,12 @@ async function rawSide(spec: ScenarioSpec, options: CloudflarePlatformOptions): 
   const drive = spec.drive as QueueDrive | HttpDrive;
   const maxRetries = options.maxRetries ?? 3;
   for (const step of spec.setup) {
+    if (step.kind === "r2") {
+      const setup = step as R2Setup;
+      const real = env[setup.binding];
+      if (isR2(real)) await resetR2(real, setup.objects);
+      continue;
+    }
     if (step.kind !== "d1") continue;
     const binding = String(step["binding"]);
     const schema = options.schemas[binding];
@@ -179,14 +241,16 @@ async function rawSide(spec: ScenarioSpec, options: CloudflarePlatformOptions): 
     () => patched.clock.advance(effectLatencyMs), // the proxied side advances per effect; match it
   );
   const io = { n: 0 };
-  const counting = new Map<string, D1Database>();
+  const counting = new Map<string, D1Database | R2Bucket>();
   const countedEnv = new Proxy(env, {
     get(target, prop, receiver) {
       const value = Reflect.get(target, prop, receiver) as unknown;
-      if (typeof prop !== "string" || !isD1(value)) return value;
+      if (typeof prop !== "string" || !(isD1(value) || isR2(value))) return value;
       let c = counting.get(prop);
       if (!c) {
-        c = countingD1(value, io, patched.clock);
+        c = isD1(value)
+          ? countingD1(value, io, patched.clock)
+          : countingR2(value, io, patched.clock);
         counting.set(prop, c);
       }
       return c;

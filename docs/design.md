@@ -404,6 +404,29 @@ Faults injected at every effect boundary:
   be called (a method) or awaited (an RPC getter); either is one effect.
   A result that is not plain data (an RPC capability) makes the run
   `UNSUPPORTED`, since calls on it would bypass the proxy.
+- R2: reads, writes, deletes and listings are strongly consistent, the
+  last writer to complete wins, a conditional `put` whose precondition
+  fails stores nothing and returns `null`, and a conditional `get` whose
+  precondition fails returns the object without a body (Cloudflare, R2:
+  Consistency model, Workers API reference). The bucket is Miniflare's
+  real one; each `put`, `delete`, `get`, `head` and `list` is one effect
+  (writes take `crash_before`, `crash_after`, `ambiguous` and `error`,
+  reads all but `ambiguous`). A body is read inside its `get`'s effect,
+  since reading it later is I/O the run cannot see, and handed back as an
+  object with the same fields and body methods. Objects carry a random
+  `version` and the wall-clock `uploaded`; the proxy gives each version a
+  stand-in, counted in the order the run first sees versions, and the
+  virtual time it first saw it, and every later answer about that version
+  uses them, so traces stay byte-identical. Each `r2Bucket` setup step empties its
+  bucket and seeds it before a run, and its objects are snapshotted after
+  it (`R2:<binding>`, table `objects`: key, size, etag, metadata, and the
+  text of a small text object). A body the proxy handed out and the Worker
+  passes back to `put` (copying an object) is written from its buffered
+  bytes, since the runtime's `put` needs a stream of known length.
+  Multipart uploads make the run `UNSUPPORTED`, as do conditions on the
+  upload time (`uploadedBefore`, `uploadedAfter`, `If-Modified-Since`):
+  the store would compare its real time, not the stand-in the Worker saw.
+  So does an R2 binding without a setup step.
 - Workflows: an instance runs its class's `run(event, step)`; each
   `step.do` is retried on failure (by default 5 retries, 10 s apart with
   exponential backoff), its result is persisted under its name and count,
@@ -788,7 +811,7 @@ word comes from anchors it does not control.
 - **Differential corpus** (`corpus/differential`): fault-free scenarios run
   twice inside workerd, once through Eutaxy's proxies and once with the
   handler called directly on the raw bindings; the per-attempt decisions
-  and the final D1 tables must agree. Any divergence is a bug in Eutaxy's
+  and the final D1 tables and R2 objects must agree. Any divergence is a bug in Eutaxy's
   proxies or platform model. The raw side shares Eutaxy's reading of the
   queue semantics but none of the proxy code. The proxied side and the
   comparison are platform-neutral and live in `engine`; each platform

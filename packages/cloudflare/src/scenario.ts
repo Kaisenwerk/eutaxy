@@ -17,6 +17,7 @@ import {
   type Invariant,
   type JsonValue,
   type PlatformData,
+  type References,
   type Refines,
   type RowCondition,
   type ScenarioSpec,
@@ -26,6 +27,7 @@ import {
   validateScenario,
   type WorkerRef,
 } from "@eutaxy/core";
+import type { R2Seed } from "./r2.ts";
 
 /** One queue message to deliver; `id` defaults to its position. */
 export interface QueueMessage {
@@ -148,6 +150,52 @@ export function durableObject(
   };
 }
 
+/** An R2 bucket the scenario uses: emptied, then seeded with these objects, before each run. */
+export interface R2Setup extends PlatformData {
+  readonly kind: "r2";
+  readonly binding: string;
+  readonly objects: Readonly<Record<string, R2Seed>>;
+}
+
+export function r2Bucket(binding: string, objects: Readonly<Record<string, R2Seed>> = {}): R2Setup {
+  return { kind: "r2", binding, objects };
+}
+
+/**
+ * Selects an R2 bucket's operations that completed, a `put` by default; a
+ * put whose `onlyIf` failed stored nothing and is not selected, as a D1
+ * write that changed no row is not.
+ */
+export function r2Op(
+  binding: string,
+  op: "put" | "delete" | "get" | "head" | "list" = "put",
+): EffectSelector {
+  const target = `R2:${binding}`;
+  return op === "put"
+    ? { target, op, kind: "result", where: { "result.stored": true } }
+    : { target, op, kind: "result" };
+}
+
+/** A bucket's objects at the end of the run as rows `{ key, size, etag, customMetadata, httpMetadata, text? }`. */
+export function r2Rows(binding: string, where?: readonly RowCondition[]): StateQuery {
+  const target = `R2:${binding}`;
+  return where ? { target, table: "objects", where } : { target, table: "objects" };
+}
+
+/**
+ * Every row the query returns is named by some row of `in` (its `column`
+ * equals the row's value at `path`), as with a foreign key.
+ */
+export function references(
+  name: string,
+  query: StateQuery,
+  path: string,
+  inQuery: StateQuery,
+  column: string,
+): References {
+  return { kind: "references", name, query, path, in: inQuery, column };
+}
+
 /** A Workflow binding, and the class (an export of the Worker module) its instances run. */
 export interface WorkflowSetup extends PlatformData {
   readonly kind: "workflow";
@@ -213,7 +261,7 @@ export interface CloudflareScenarioInput {
         readonly queue: string;
         readonly messages: readonly QueueMessage[];
       };
-  readonly setup?: readonly (D1Setup | DurableObjectSetup | WorkflowSetup)[];
+  readonly setup?: readonly (D1Setup | DurableObjectSetup | R2Setup | WorkflowSetup)[];
   readonly externals?: readonly ExternalDecl[];
   readonly invariants: readonly Invariant[];
   readonly bounds?: Partial<Bounds>;

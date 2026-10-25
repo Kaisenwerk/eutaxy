@@ -30,11 +30,13 @@ import {
 } from "./durable-objects.ts";
 import { deliverRequest } from "./http.ts";
 import { deliverMessage } from "./queues.ts";
+import { isR2, proxyR2, resetR2, snapshotR2, VersionBook } from "./r2.ts";
 import {
   type DurableObjectSetup,
   defaultAlarmsPerObject,
   type HttpDrive,
   type QueueDrive,
+  type R2Setup,
   type WorkflowSetup,
 } from "./scenario.ts";
 import {
@@ -90,7 +92,8 @@ const assumptions: readonly string[] = [
   "platform model: Cloudflare Queues at-least-once delivery; the first ack or retry decision per message wins; unacked messages are redelivered up to max_retries then dead-lettered",
   "D1 statements run against Miniflare's SQLite; each run/first/all/raw/batch/exec is one effect",
   "message.timestamp is the virtual clock's time at delivery",
-  "only D1, Durable Object and Workflow bindings are proxied; touching any other binding makes the run UNSUPPORTED",
+  "only D1, Durable Object, R2 and Workflow bindings are proxied; touching any other binding makes the run UNSUPPORTED",
+  "R2 buckets are Miniflare's real ones, emptied and seeded before each run and snapshotted after it; R2 is strongly consistent and the last writer wins (developers.cloudflare.com/r2/reference/consistency/); each put, delete, get, head and list is one effect, a body is read inside its get, and an object's version and upload time are stand-ins so traces repeat; multipart uploads and conditions on the upload time are not modelled",
   "Durable Objects are the real objects workerd runs (storage, transactions, input and output gates are the runtime's own); each stub call is one effect: crash_before or error means it never reached the object, ambiguous means the object committed and the caller lost the answer, crash_after means the caller died after it; in a concurrent run an object's own outbound I/O during a call is a turn, so another event may enter the object meanwhile (its input gate is open then), except while it holds the gate with blockConcurrencyWhile, when its effects run at once; storage operations are not turns (the input gate holds other events during them); the object's own binding calls are not recorded; objects are cleared, seeded and evicted before each run and their storage is snapshotted after it (developers.cloudflare.com/durable-objects/api/storage-api/)",
   "Durable Object alarms are taken over so none is scheduled on the real clock and fire in virtual time: one alarm per object, a later setAlarm replaces it, setAlarm in a transaction applies on commit, the alarm survives eviction, alarm() is one effect (crash_before: it never ran; crash_after: it ran and counts as failed; error: it threw), and a failed alarm is retried after 2 s, 4 s, 8 s ... up to six retries and maxRedeliveries, with retryCount and isRetry (developers.cloudflare.com/durable-objects/api/base/#alarm); each object's alarm fires at most alarmsPerObject times per run (default 3)",
   "Workflows are a model of the engine, never the local one, running the scenario's own class: create is one effect that queues the instance; each step.do attempt is two effect points around its callback, which runs as the instance's own code (step, crash_before: the engine restarts before it; step_result, crash_after: it ran and committed but its result was not persisted, so it runs again; ambiguous: the attempt ran but counted as failed, as a timeout does); a failed attempt is retried after its delay in virtual time (defaults 5 retries, 10 s, exponential, merged field by field with a step's config), up to its limit and maxRedeliveries, except a NonRetryableError; a restart re-runs run() from the start with the persisted step and sleep results, so code outside steps repeats; step timeouts are not measured (developers.cloudflare.com/workflows/build/rules-of-workflows/, /workflows/build/sleeping-and-retrying/)",
@@ -142,6 +145,10 @@ export function createCloudflarePlatform(options: CloudflarePlatformOptions): Pl
     return r;
   };
   const workflowProxies = new Map<string, object>();
+  /** The R2 buckets the current scenario sets up, and their proxies' version stand-ins. */
+  let r2Bindings = new Set<string>();
+  const r2Proxies = new Map<string, R2Bucket>();
+  const versions = new VersionBook();
   const namespace = (binding: string): DurableObjectNamespace => {
     const real = env[binding];
     if (!isDurableObjectNamespace(real))
@@ -177,6 +184,18 @@ export function createCloudflarePlatform(options: CloudflarePlatformOptions): Pl
         }
         return p;
       }
+      if (isR2(value)) {
+        if (!r2Bindings.has(prop))
+          ctx.hooks.unsupported(
+            `R2 binding ${prop} needs an r2Bucket() setup step, which empties it before each run`,
+          );
+        let p = r2Proxies.get(prop);
+        if (!p) {
+          p = proxyR2(value, prop, ctx, versions);
+          r2Proxies.set(prop, p);
+        }
+        return p;
+      }
       if (isWorkflowBinding(value)) {
         if (!workflowClasses.has(prop)) {
           ctx.hooks.unsupported(
@@ -207,12 +226,22 @@ export function createCloudflarePlatform(options: CloudflarePlatformOptions): Pl
       resetBindings = new Set();
       alarmLimits = new Map();
       workflowClasses = new Map();
+      r2Bindings = new Set();
+      versions.clear();
       for (const state of bindingStates.values()) state.clear();
       for (const registry of registries.values()) registry.clear();
       for (const step of spec.setup) {
         if (step.kind === "workflow") {
           const setup = step as WorkflowSetup;
           workflowClasses.set(setup.binding, setup);
+          continue;
+        }
+        if (step.kind === "r2") {
+          const setup = step as R2Setup;
+          const real = env[setup.binding];
+          if (!isR2(real)) throw new Error(`env.${setup.binding} is not an R2 bucket`);
+          r2Bindings.add(setup.binding);
+          await resetR2(real, setup.objects);
           continue;
         }
         if (step.kind === "durable_object") {
@@ -253,6 +282,15 @@ export function createCloudflarePlatform(options: CloudflarePlatformOptions): Pl
 
     async finish(spec: ScenarioSpec, hooks: RunHooks): Promise<void> {
       for (const step of spec.setup) {
+        if (step.kind === "r2") {
+          const binding = (step as R2Setup).binding;
+          const real = env[binding];
+          if (isR2(real))
+            hooks.snapshot(hooks.bookkeeping(), `R2:${binding}`, {
+              tables: { objects: await snapshotR2(real) },
+            });
+          continue;
+        }
         if (step.kind === "workflow") {
           const binding = (step as WorkflowSetup).binding;
           hooks.snapshot(hooks.bookkeeping(), `Workflow:${binding}`, {
