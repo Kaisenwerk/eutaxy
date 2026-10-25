@@ -35,7 +35,15 @@ import {
   defaultAlarmsPerObject,
   type HttpDrive,
   type QueueDrive,
+  type WorkflowSetup,
 } from "./scenario.ts";
+import {
+  deliverWorkflow,
+  isWorkflowBinding,
+  proxyWorkflow,
+  WorkflowRegistry,
+  workflowSource,
+} from "./workflows.ts";
 
 /** The Worker's default export, as far as the platform drives it. */
 export interface WorkerHandler {
@@ -61,6 +69,11 @@ export interface CloudflarePlatformOptions {
    * seeds and snapshots the real objects through them.
    */
   readonly durableObjects?: DurableObjectTestHelpers;
+  /**
+   * The Worker module's exports (`import * as worker from "./worker.ts"`),
+   * where the classes `workflow` setup steps name are found.
+   */
+  readonly exports?: Readonly<Record<string, unknown>>;
 }
 
 function isBindingLike(value: unknown): boolean {
@@ -77,9 +90,10 @@ const assumptions: readonly string[] = [
   "platform model: Cloudflare Queues at-least-once delivery; the first ack or retry decision per message wins; unacked messages are redelivered up to max_retries then dead-lettered",
   "D1 statements run against Miniflare's SQLite; each run/first/all/raw/batch/exec is one effect",
   "message.timestamp is the virtual clock's time at delivery",
-  "only D1 and Durable Object bindings are proxied; touching any other binding makes the run UNSUPPORTED",
+  "only D1, Durable Object and Workflow bindings are proxied; touching any other binding makes the run UNSUPPORTED",
   "Durable Objects are the real objects workerd runs (storage, transactions, input and output gates are the runtime's own); each stub call is one effect: crash_before or error means it never reached the object, ambiguous means the object committed and the caller lost the answer, crash_after means the caller died after it; in a concurrent run an object's own outbound I/O during a call is a turn, so another event may enter the object meanwhile (its input gate is open then), except while it holds the gate with blockConcurrencyWhile, when its effects run at once; storage operations are not turns (the input gate holds other events during them); the object's own binding calls are not recorded; objects are cleared, seeded and evicted before each run and their storage is snapshotted after it (developers.cloudflare.com/durable-objects/api/storage-api/)",
   "Durable Object alarms are taken over so none is scheduled on the real clock and fire in virtual time: one alarm per object, a later setAlarm replaces it, setAlarm in a transaction applies on commit, the alarm survives eviction, alarm() is one effect (crash_before: it never ran; crash_after: it ran and counts as failed; error: it threw), and a failed alarm is retried after 2 s, 4 s, 8 s ... up to six retries and maxRedeliveries, with retryCount and isRetry (developers.cloudflare.com/durable-objects/api/base/#alarm); each object's alarm fires at most alarmsPerObject times per run (default 3)",
+  "Workflows are a model of the engine, never the local one, running the scenario's own class: create is one effect that queues the instance; each step.do attempt is two effect points around its callback, which runs as the instance's own code (step, crash_before: the engine restarts before it; step_result, crash_after: it ran and committed but its result was not persisted, so it runs again; ambiguous: the attempt ran but counted as failed, as a timeout does); a failed attempt is retried after its delay in virtual time (defaults 5 retries, 10 s, exponential, merged field by field with a step's config), up to its limit and maxRedeliveries, except a NonRetryableError; a restart re-runs run() from the start with the persisted step and sleep results, so code outside steps repeats; step timeouts are not measured (developers.cloudflare.com/workflows/build/rules-of-workflows/, /workflows/build/sleeping-and-retrying/)",
   "state invariants read a snapshot of every D1 binding named in setup, taken after the last event",
   "work passed to ctx.waitUntil runs after the handler returns and never affects acknowledgement or the response; a cut_off fault at that point loses work not yet started, and an effect in flight commits without its continuation",
   "concurrent invocations (maxConcurrentInvocations above 1) share one isolate's module state and bindings, and another may run while one awaits I/O (developers.cloudflare.com/workers/reference/how-workers-works/); queue consumers run concurrently up to max_concurrency (developers.cloudflare.com/queues/configuration/consumer-concurrency/)",
@@ -116,6 +130,18 @@ export function createCloudflarePlatform(options: CloudflarePlatformOptions): Pl
   };
   /** Per binding, alarm firings allowed per object in the current run. */
   let alarmLimits = new Map<string, number>();
+  /** The Workflow bindings the current scenario sets up, with the class each runs. */
+  let workflowClasses = new Map<string, WorkflowSetup>();
+  const registries = new Map<string, WorkflowRegistry>();
+  const registryFor = (binding: string): WorkflowRegistry => {
+    let r = registries.get(binding);
+    if (!r) {
+      r = new WorkflowRegistry();
+      registries.set(binding, r);
+    }
+    return r;
+  };
+  const workflowProxies = new Map<string, object>();
   const namespace = (binding: string): DurableObjectNamespace => {
     const real = env[binding];
     if (!isDurableObjectNamespace(real))
@@ -151,6 +177,21 @@ export function createCloudflarePlatform(options: CloudflarePlatformOptions): Pl
         }
         return p;
       }
+      if (isWorkflowBinding(value)) {
+        if (!workflowClasses.has(prop)) {
+          ctx.hooks.unsupported(
+            `Workflow binding ${prop} needs a workflow() setup step naming its class`,
+          );
+          // Never the real binding: its engine would run the class on the real clock.
+          return proxyWorkflow(prop, ctx, new WorkflowRegistry());
+        }
+        let p = workflowProxies.get(prop);
+        if (!p) {
+          p = proxyWorkflow(prop, ctx, registryFor(prop));
+          workflowProxies.set(prop, p);
+        }
+        return p;
+      }
       if (isBindingLike(value)) ctx.hooks.unsupported(`binding ${prop} is not proxied`);
       return value;
     },
@@ -165,8 +206,15 @@ export function createCloudflarePlatform(options: CloudflarePlatformOptions): Pl
     async reset(spec: ScenarioSpec): Promise<void> {
       resetBindings = new Set();
       alarmLimits = new Map();
+      workflowClasses = new Map();
       for (const state of bindingStates.values()) state.clear();
+      for (const registry of registries.values()) registry.clear();
       for (const step of spec.setup) {
+        if (step.kind === "workflow") {
+          const setup = step as WorkflowSetup;
+          workflowClasses.set(setup.binding, setup);
+          continue;
+        }
         if (step.kind === "durable_object") {
           const setup = step as DurableObjectSetup;
           resetBindings.add(setup.binding);
@@ -205,6 +253,13 @@ export function createCloudflarePlatform(options: CloudflarePlatformOptions): Pl
 
     async finish(spec: ScenarioSpec, hooks: RunHooks): Promise<void> {
       for (const step of spec.setup) {
+        if (step.kind === "workflow") {
+          const binding = (step as WorkflowSetup).binding;
+          hooks.snapshot(hooks.bookkeeping(), `Workflow:${binding}`, {
+            tables: { instances: registryFor(binding).rows() },
+          });
+          continue;
+        }
         if (step.kind === "durable_object") {
           const setup = step as DurableObjectSetup;
           const binding = setup.binding;
@@ -248,6 +303,30 @@ export function createCloudflarePlatform(options: CloudflarePlatformOptions): Pl
       const drive = spec.drive as QueueDrive | HttpDrive;
       const invocation = `${event.id}#${event.attempt}`;
       hooksRef = hooks;
+      if (event.source === workflowSource) {
+        const { binding, id } = event.data as { binding: string; id: string };
+        const setup = workflowClasses.get(binding);
+        // A binding with no setup step was already reported when the Worker touched it.
+        if (!setup) return { status: "errored", followUps: [] };
+        const className = setup.className;
+        const cls = options.exports?.[className];
+        const instance = registryFor(binding).instances.get(id);
+        if (typeof cls !== "function" || !instance) {
+          hooks.unsupported(
+            `Workflow ${binding}: class ${className} is not among the Worker module's exports; pass them as createCloudflarePlatform({ ..., exports })`,
+          );
+          return { status: "errored", followUps: [] };
+        }
+        return deliverWorkflow(event, hooks, {
+          binding,
+          ...(setup.name === undefined ? {} : { name: setup.name }),
+          instance,
+          cls,
+          env: proxiedEnv,
+          maxFaultsPerRun: spec.bounds.maxFaultsPerRun,
+          maxRedeliveries: spec.bounds.maxRedeliveries,
+        });
+      }
       if (event.source === alarmSource) {
         const binding = String((event.data as { binding?: unknown }).binding ?? "");
         return deliverAlarm(event, hooks, spec.bounds.maxRedeliveries, {

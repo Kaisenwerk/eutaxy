@@ -49,4 +49,8 @@ export {
   snapshotD1,
   unique,
   type WorkerHandler,
+  type WorkflowSetup,
+  workflow,
+  workflowRows,
+  workflowStep,
 } from "@eutaxy/cloudflare";

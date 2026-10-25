@@ -45,4 +45,8 @@ export {
   queueAck,
   refines,
   unique,
+  type WorkflowSetup,
+  workflow,
+  workflowRows,
+  workflowStep,
 } from "./scenario.ts";

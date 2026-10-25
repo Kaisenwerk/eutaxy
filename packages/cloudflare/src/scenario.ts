@@ -148,6 +148,44 @@ export function durableObject(
   };
 }
 
+/** A Workflow binding, and the class (an export of the Worker module) its instances run. */
+export interface WorkflowSetup extends PlatformData {
+  readonly kind: "workflow";
+  readonly binding: string;
+  readonly className: string;
+  /** The Workflow's `name` in the wrangler config, which instances see as `event.workflowName`. */
+  readonly name?: string;
+}
+
+export function workflow(
+  binding: string,
+  className: string,
+  options: { readonly name?: string } = {},
+): WorkflowSetup {
+  return {
+    kind: "workflow",
+    binding,
+    className,
+    ...(options.name === undefined ? {} : { name: options.name }),
+  };
+}
+
+/** Selects a Workflow's step attempts, optionally of one step; a failed attempt's result carries its error. */
+export function workflowStep(binding: string, step?: string): EffectSelector {
+  return {
+    target: `Workflow:${binding}`,
+    op: "step_result",
+    kind: "result",
+    ...(step === undefined ? {} : { where: { "args.step": step } }),
+  };
+}
+
+/** A Workflow's instances at the end of the run as rows `{ id, status, params, output?, error? }`. */
+export function workflowRows(binding: string, where?: readonly RowCondition[]): StateQuery {
+  const target = `Workflow:${binding}`;
+  return where ? { target, table: "instances", where } : { target, table: "instances" };
+}
+
 /** Alarm firings per object per run when the setup does not say. */
 export const defaultAlarmsPerObject = 3;
 
@@ -175,7 +213,7 @@ export interface CloudflareScenarioInput {
         readonly queue: string;
         readonly messages: readonly QueueMessage[];
       };
-  readonly setup?: readonly (D1Setup | DurableObjectSetup)[];
+  readonly setup?: readonly (D1Setup | DurableObjectSetup | WorkflowSetup)[];
   readonly externals?: readonly ExternalDecl[];
   readonly invariants: readonly Invariant[];
   readonly bounds?: Partial<Bounds>;

@@ -5,13 +5,15 @@
 **Public surface.** Scenario construction: `defineScenario`, `queue`,
 `http`, `d1Schema`, `d1Write`, `d1Read`, `d1Param`, `atMostOncePerKey`, `atLeastOnce`,
 `atLeastOncePerMessage`, `external`, `fetchCall`, `httpResponse`,
-`durableObject` (with `alarmsPerObject`), `refines` (with the scenario's
+`durableObject` (with `alarmsPerObject`), `workflow` (a Workflow binding and the class its instances run), `workflowStep`, `refines` (with the scenario's
 `specs` naming the core's module, which is what records its decisions). Running: `createCloudflarePlatform` (D1 proxy, Durable
 Object stub proxy with the `durableObjects` test helpers from
 `cloudflare:test`, queue delivery with at-least-once semantics, inbound
-request delivery under the caller's retry policy, end-of-run D1 and
-Durable Object snapshots), `check`, `expectHolds`, `runDifferential`.
-State invariants: `d1Rows`, `durableObjectRows`, `everyRow`, `implies`,
+request delivery under the caller's retry policy, Workflows as a model of
+the engine running the scenario's own class (`exports`: the Worker
+module's exports; `workflows.ts`), end-of-run D1, Durable Object and
+Workflow snapshots), `check`, `expectHolds`, `runDifferential`.
+State invariants: `d1Rows`, `durableObjectRows`, `workflowRows`, `everyRow`, `implies`,
 `unique`, `queueAck`; `snapshotD1`.
 
 **Effect conventions** (what the proxies record, and what selectors match):

@@ -401,11 +401,83 @@ Faults injected at every effect boundary:
   be called (a method) or awaited (an RPC getter); either is one effect.
   A result that is not plain data (an RPC capability) makes the run
   `UNSUPPORTED`, since calls on it would bypass the proxy.
+- Workflows: an instance runs its class's `run(event, step)`; each
+  `step.do` is retried on failure (by default 5 retries, 10 s apart with
+  exponential backoff), its result is persisted under its name and count,
+  and the engine may restart an instance, re-running `run` from the start
+  with the persisted results, so code outside steps can repeat and a step
+  whose result was not persisted runs again (Cloudflare, Workflows: Rules
+  of Workflows, Sleeping and retrying). `create` with an id that exists
+  throws `(instance.already_exists)`, and `get` of an unknown id throws
+  `instance.not_found` (Workers API; the messages are Miniflare's). Here
+  the engine is a model, the one exception to running the real local
+  implementation: the local engine runs steps on its own real-time clock
+  and retry loop, so it cannot be restarted between a step committing and
+  its result being persisted, which is the case that matters. The
+  instance runs the scenario's own class, constructed with the proxied
+  env: workerd refuses to construct a `WorkflowEntrypoint` subclass
+  without a native `ExecutionContext`, so for that one synchronous
+  `new` the class's base is a plain stand-in that sets `ctx` and `env`
+  (the class's own constructor and field initialisers run as written;
+  `WorkflowEntrypoint.prototype` holds no methods), and the base is put
+  back at once. The binding is proxied and never reaches the real engine:
+  `create` is one effect (`crash_before` and `error`: not created;
+  `ambiguous`: created, the caller lost the answer; `crash_after`: the
+  caller died after it) that queues the instance as an event, and an
+  instance is one invocation per engine attempt. Each `step.do` attempt
+  is two asynchronous effect points (the engine reads and persists the
+  step asynchronously, so other events may run between steps) around its
+  callback, which runs as the instance's
+  own code (its effects are ordinary effects of the invocation and its
+  timers are virtual): `step` before it, where `crash_before` restarts the
+  instance before the step runs, and `step_result` after it, where
+  `crash_after` restarts it after the step ran and committed but before
+  its result was persisted (so it runs again), and `ambiguous` is an
+  attempt that ran but counted as failed (a timeout, which code sees as
+  the engine's `WorkflowTimeoutError`), retried after its
+  delay in virtual time. A callback that throws is retried the same way,
+  up to its limit and `maxRedeliveries`; a `NonRetryableError` (an `Error` so
+  named, or whose message starts so, as the engine checks) is rethrown as
+  thrown and neither retried nor persisted, so after a restart its
+  callback runs again, as in the engine. A step's config is merged with the defaults field by
+  field and the backoff applies to a delay function's value too, as in
+  Miniflare's engine; the model keeps the documented 10 s delay where the
+  local engine waits 1 s. An instance restarts after each crash, so at
+  most `maxFaultsPerRun` times; a step's attempt count and the retry
+  config its first attempt resolved are persisted with it, and a pending
+  sleep's or retry's deadline before it waits, so a restart goes on
+  counting, keeps the config and waits only the rest. As in Miniflare,
+  `create` without params gives an empty payload (an explicit `null`
+  stays `null`), an id is up to 100 letters, digits, `-` and `_`, not
+  starting with `-` (otherwise "Workflow instance has invalid id"), and
+  `sleepUntil` a past time throws; durations are read as the
+  engine reads them (a year is 365.25 days, a numeric string is
+  milliseconds), and a step marked `sensitive: "output"` keeps the setting
+  and has its output redacted in the trace; a step name over 256 characters or
+  with a control character, or a step config the engine rejects (a zero
+  timeout, a negative limit, an unknown backoff) is the engine's fatal error, and makes the run
+  `UNSUPPORTED` too, since whether code can catch it is not documented. `event.workflowName` is the name the
+  `workflow` setup step gives (the wrangler config's `name`); reading it
+  without one makes the run `UNSUPPORTED`. `step.sleep` and `step.sleepUntil` wait in
+  virtual time and, like steps, are not repeated after a restart; a sleep
+  is known by its name and duration, as the engine keys it, so a restart
+  that computes another duration sleeps again. Each
+  instance's id, status, params and output are snapshotted after the run
+  (`Workflow:<binding>`, table `instances`). Current limits: step
+  timeouts are not measured (a timed-out attempt is the `ambiguous`
+  fault); a finished `sleepUntil` replayed after its time (Miniflare's
+  engine throws there, and production behaviour is not documented), a step
+  returning a stream or more than about 1 MiB (the engine refuses it, and
+  Eutaxy cannot measure the stored size exactly), a retry delay function that throws, `waitForEvent`, `sendEvent`, rollback handlers, `createBatch`
+  and pausing, resuming, terminating or restarting an instance make the
+  run `UNSUPPORTED`, as does a Workflow binding without a `workflow`
+  setup step naming its class.
 
 **Fidelity rules:**
 - Proxies intercept calls but execute them against the real local
   implementation (Miniflare's D1 and storage), so SQL and storage semantics
-  come for free.
+  come for free. The Workflows engine is the exception (see above); the
+  corpus checks the model against the local engine on fault-free runs.
 - An allowlist of proxied bindings; anything else (Cache API, service
   bindings, AI, Hyperdrive, raw sockets) makes the run `UNSUPPORTED`.
 - Determinism-breaking APIs that are not virtualised (`WeakRef`,
