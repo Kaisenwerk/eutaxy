@@ -30,6 +30,19 @@ describe("cloudflareRegressionTest", () => {
     expect(src).not.toContain("maxRetries");
   });
 
+  test("passes the Worker module's exports when the scenario sets up Workflows", () => {
+    const src = cloudflareRegressionTest(verdict, {
+      scenarioPath: "./scenario.sim.js",
+      workerPath: "./worker.js",
+      schemaPaths: {},
+      workflows: true,
+    });
+    expect(src).toContain('import * as worker from "./worker.js";');
+    expect(src).toContain(
+      "createCloudflarePlatform({ env, handler: worker.default, schemas: {  }, exports: worker })",
+    );
+  });
+
   test("reproduces a non-default retry limit", () => {
     const src = cloudflareRegressionTest(verdict, {
       scenarioPath: "./scenario.sim.js",

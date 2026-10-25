@@ -12,6 +12,8 @@ export interface CloudflareRegressionOptions {
   readonly maxRetries?: number;
   /** The scenario sets up Durable Objects: pass the Cloudflare test helpers to the platform. */
   readonly durableObjects?: boolean;
+  /** The scenario sets up Workflows: pass the Worker module's exports, where their classes are. */
+  readonly workflows?: boolean;
   readonly expect?: "holds" | "violates";
   readonly engineModule?: string;
   /** Core modules to observe during the replay (import path, functions), for `refines`. */
@@ -35,7 +37,9 @@ export function cloudflareRegressionTest(
     ...bindings.map(
       (b) => `import schema_${b} from ${JSON.stringify(`${options.schemaPaths[b]}?raw`)};`,
     ),
-    `import handler from ${JSON.stringify(options.workerPath)};`,
+    options.workflows
+      ? `import * as worker from ${JSON.stringify(options.workerPath)};`
+      : `import handler from ${JSON.stringify(options.workerPath)};`,
     ...(options.specModules ?? []).map(
       (m, i) => `import * as core_${i} from ${JSON.stringify(m.path)};`,
     ),
@@ -43,9 +47,11 @@ export function cloudflareRegressionTest(
   const schemas = `{ ${bindings.map((b) => `${b}: schema_${b}`).join(", ")} }`;
   const retries = options.maxRetries === undefined ? "" : `, maxRetries: ${options.maxRetries}`;
   const objects = options.durableObjects ? ", durableObjects: cloudflareTest" : "";
+  const handler = options.workflows ? "handler: worker.default" : "handler";
+  const exports = options.workflows ? ", exports: worker" : "";
   return emitRegressionTest(verdict, {
     imports,
-    platform: `createCloudflarePlatform({ env, handler, schemas: ${schemas}${retries}${objects} })`,
+    platform: `createCloudflarePlatform({ env, ${handler}, schemas: ${schemas}${retries}${objects}${exports} })`,
     scenario: "scenario",
     ...(options.expect ? { expect: options.expect } : {}),
     ...(options.engineModule ? { engineModule: options.engineModule } : {}),

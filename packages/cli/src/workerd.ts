@@ -149,12 +149,13 @@ export async function checkInWorkerd(input: WorkerdCheckInput): Promise<CheckTra
   const load = input.modules[globKey(scenario.worker.entry)];
   if (!load)
     throw new Error(`worker entry ${scenario.worker.entry} not found next to the scenario`);
-  const handler = ((await load()) as { default: WorkerHandler }).default;
+  const worker = (await load()) as { default: WorkerHandler } & Record<string, unknown>;
   const platform = createCloudflarePlatform({
     env: input.env,
-    handler,
+    handler: worker.default,
     schemas,
     durableObjects: input.durableObjects,
+    exports: worker,
   });
   const { selected, specErrors } = await selectSpecModules(
     scenario,
