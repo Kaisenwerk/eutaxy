@@ -285,6 +285,41 @@ describe("spec verdicts", () => {
     },
     {
       ...base,
+      property: "c2",
+      text: "forall (x: int) { g2(x) }",
+      kind: "TESTED",
+      inputs: 100,
+      discarded: 0,
+      seed: "corpus",
+      assumptions: [
+        "sampled",
+        "not PROVEN by lean: unavailable: no Lean toolchain found; install elan",
+      ],
+    },
+    {
+      ...base,
+      property: "e",
+      text: "forall (x: int) { e(x) }",
+      kind: "PROVEN",
+      engine: { name: "lean", version: "4.35.0" },
+      tested: 100,
+      checked: 2,
+      assumptions: ["number is modelled as the unbounded integers", "sampled with seed corpus"],
+    },
+    {
+      ...base,
+      property: "f",
+      text: "forall (x: int) { f(x) }",
+      kind: "CONFLICT",
+      proven: { name: "lean", version: "4.35.0" },
+      refuted: {
+        name: "other",
+        version: "1",
+        counterexample: { binders: [{ name: "x", value: "7" }] },
+      },
+    },
+    {
+      ...base,
       property: "@total",
       text: "@total",
       kind: "UNKNOWN",
@@ -295,7 +330,7 @@ describe("spec verdicts", () => {
 
   test("text: one line each, the counterexample under a refutation", () => {
     expect(renderSpecs(specs).split("\n")).toEqual([
-      "Specs (CHECKED means held on the inputs the simulator passed, TESTED on generated ones too; neither is a proof)",
+      "Specs (CHECKED means held on the inputs the simulator passed, TESTED on generated ones too; neither is a proof. PROVEN is one, by the named engine)",
       "  CHECKED  decideRefund a: held on 3 input(s), 1 outside the claim",
       "  REFUTED  decideRefund b: false at decideRefund(1000, 800, 400)",
       "           c = 1000, r = 800, a = 400",
@@ -304,6 +339,13 @@ describe("spec verdicts", () => {
       "  REFUTED  decideRefund d: false on a generated input",
       "           x = 1",
       "           forall (x: int) { h(x) }",
+      "  TESTED   decideRefund c2: held on 100 generated input(s)",
+      "           not PROVEN by lean: unavailable: no Lean toolchain found; install elan",
+      "  PROVEN   decideRefund e: by lean 4.35.0; also held on 100 generated input(s) and 2 the simulator passed",
+      "           number is modelled as the unbounded integers",
+      "           sampled with seed corpus",
+      "  CONFLICT decideRefund f: lean 4.35.0 proves it, other 1 refutes it; not resolved automatically",
+      "           x = 7",
       "  UNKNOWN  decideRefund @total: unsupported: needs a prover",
     ]);
     expect(renderSpecs([])).toBe("");
@@ -318,6 +360,9 @@ describe("spec verdicts", () => {
       "REFUTED",
       "TESTED",
       "REFUTED",
+      "TESTED",
+      "PROVEN",
+      "CONFLICT",
       "UNKNOWN",
     ]);
   });

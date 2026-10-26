@@ -30,7 +30,7 @@ export function renderJson(verdict: ScenarioVerdict, specs: readonly SpecVerdict
 export function renderSpecs(specs: readonly SpecVerdict[]): string {
   if (specs.length === 0) return "";
   const out = [
-    "Specs (CHECKED means held on the inputs the simulator passed, TESTED on generated ones too; neither is a proof)",
+    "Specs (CHECKED means held on the inputs the simulator passed, TESTED on generated ones too; neither is a proof. PROVEN is one, by the named engine)",
   ];
   for (const v of specs) {
     const what = `${v.function} ${v.property}`;
@@ -45,11 +45,36 @@ export function renderSpecs(specs: readonly SpecVerdict[]): string {
           `  TESTED   ${what}: held on ${v.inputs} generated input(s)${v.checked === undefined ? "" : ` and ${v.checked} the simulator passed`}${v.discarded > 0 ? `, ${v.discarded} outside the claim` : ""}`,
         );
         break;
+      case "PROVEN": {
+        const beside = [
+          ...(v.tested === undefined ? [] : [`${v.tested} generated input(s)`]),
+          ...(v.checked === undefined ? [] : [`${v.checked} the simulator passed`]),
+        ];
+        out.push(
+          `  PROVEN   ${what}: by ${v.engine.name} ${v.engine.version}${beside.length > 0 ? `; also held on ${beside.join(" and ")}` : ""}`,
+        );
+        break;
+      }
+      case "CONFLICT":
+        out.push(
+          `  CONFLICT ${what}: ${v.proven.name} ${v.proven.version} proves it, ${v.refuted.name} ${v.refuted.version} refutes it; not resolved automatically`,
+        );
+        if (v.refuted.counterexample)
+          out.push(
+            `           ${v.refuted.counterexample.binders.map((b) => `${b.name} = ${b.value}`).join(", ")}`,
+          );
+        break;
       case "REFUTED": {
         const c = v.counterexample;
-        const where = c.call === undefined ? "on a generated input" : `at ${c.call}`;
+        const where =
+          v.rung === "PROVEN"
+            ? `by ${v.engine?.name ?? "an engine"}`
+            : c.call === undefined
+              ? "on a generated input"
+              : `at ${c.call}`;
         out.push(`  REFUTED  ${what}: false ${where}${c.error ? `, which threw ${c.error}` : ""}`);
-        out.push(`           ${c.binders.map((b) => `${b.name} = ${b.value}`).join(", ")}`);
+        if (c.binders.length > 0)
+          out.push(`           ${c.binders.map((b) => `${b.name} = ${b.value}`).join(", ")}`);
         out.push(`           ${v.text.replace(/\s+/g, " ")}`);
         break;
       }
@@ -57,6 +82,10 @@ export function renderSpecs(specs: readonly SpecVerdict[]): string {
         out.push(`  UNKNOWN  ${what}: ${v.cause}: ${v.reason}`);
         break;
     }
+    // A proof rests on its engine's model of the language: every assumption is shown. Elsewhere, an
+    // engine that was asked and fell short says so under the verdict that stands.
+    for (const a of v.assumptions)
+      if (v.kind === "PROVEN" || a.startsWith("not PROVEN by ")) out.push(`           ${a}`);
   }
   return out.join("\n");
 }

@@ -93,7 +93,10 @@ describe.skipIf("unavailable" in toolchain && !required)("proveModule with the p
   test("proves what holds, gives up on what does not, proves @total by acceptance, leaves @throws alone", async () => {
     const r = await proveModule({ source: refund });
     expect(
-      r.results.map((x) => [x.property, x.outcome.kind === "PROVEN" ? "PROVEN" : x.outcome.cause]),
+      r.results.map((x) => [
+        x.property,
+        x.outcome.kind === "UNKNOWN" ? x.outcome.cause : x.outcome.kind,
+      ]),
     ).toEqual([
       ["within-captured", "PROVEN"],
       ["full-refund-allowed", "gave_up"],

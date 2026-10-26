@@ -8,49 +8,31 @@
  * `unavailable`. `@total` is proved by Lean accepting the definition.
  */
 
-import { extractSpecs, type FunctionSpec, type ModuleSpecs, type SpecError } from "@eutaxy/spec";
+import type {
+  ModuleProofs,
+  ProofOutcome,
+  PropertyProof,
+  Prover,
+  ProveInput as ProverInput,
+} from "@eutaxy/prover";
+import { extractSpecs, type FunctionSpec, type SpecError } from "@eutaxy/spec";
 import { type Emitted, emitModule } from "./emit.ts";
 import { checkLean, findLean, type LeanDiagnostic, leanVersion } from "./lean.ts";
 import { OutsideSubset, readSubset, type SubsetModule } from "./subset.ts";
 
 export const engineName = "lean";
 
-export type ProofOutcome =
-  | {
-      readonly kind: "PROVEN";
-      readonly engine: { readonly name: string; readonly version: string };
-      readonly assumptions: readonly string[];
-    }
-  | {
-      readonly kind: "UNKNOWN";
-      readonly cause: "gave_up" | "unsupported" | "unavailable";
-      readonly reason: string;
-    };
+export type { ModuleProofs, ProofOutcome, PropertyProof } from "@eutaxy/prover";
 
-export interface PropertyProof {
-  readonly function: string;
-  /** The `@ensures` name, or `@total`. */
-  readonly property: string;
-  readonly outcome: ProofOutcome;
-}
-
-export interface ModuleProofs {
-  readonly results: readonly PropertyProof[];
-  /** The Lean source checked, when the module was in the subset. */
-  readonly lean?: string;
-  /** Annotations that did not parse, with their lines: properties that were asked for and never checked. */
-  readonly specErrors: readonly SpecError[];
-}
-
-export interface ProveInput {
-  readonly source: string;
-  /** The annotated functions to prove; every annotated one when omitted. */
-  readonly functions?: readonly string[];
-  readonly timeoutMs?: number;
+export interface ProveInput extends ProverInput {
   /** Extra Lean lines appended after the theorems (translation checks). */
   readonly extra?: readonly string[];
-  /** Already extracted specs of the source, when the caller has them. */
-  readonly specs?: ModuleSpecs;
+}
+
+/** This engine's report, with the Lean it checked. */
+export interface LeanModuleProofs extends ModuleProofs {
+  /** The Lean source checked, when any function was in the subset. */
+  readonly lean?: string;
 }
 
 /** What every PROVEN verdict of this engine rests on. */
@@ -149,7 +131,7 @@ export function prepare(input: ProveInput): Prepared {
 }
 
 /** Prove a module's properties with the pinned Lean. */
-export async function proveModule(input: ProveInput): Promise<ModuleProofs> {
+export async function proveModule(input: ProveInput): Promise<LeanModuleProofs> {
   const { emitted, fns, outside, specErrors } = prepare(input);
   const inSubset = fns.filter((f) => !outside.has(f.name));
   const unsupported = fns
@@ -163,7 +145,7 @@ export async function proveModule(input: ProveInput): Promise<ModuleProofs> {
     );
   if (inSubset.length === 0) return { results: unsupported, specErrors };
   const lean = emitted.source;
-  const rest = (outcome: ProofOutcome): ModuleProofs => ({
+  const rest = (outcome: ProofOutcome): LeanModuleProofs => ({
     results: [...unsupported, ...allWith(inSubset, outcome)],
     lean,
     specErrors,
@@ -237,3 +219,13 @@ export async function proveModule(input: ProveInput): Promise<ModuleProofs> {
   }
   return { results, lean, specErrors };
 }
+
+/** The engine as a `Prover`: available when the pinned toolchain is installed. */
+export const leanProver: Prover = {
+  name: engineName,
+  async available() {
+    const toolchain = await findLean();
+    return "unavailable" in toolchain ? toolchain : { version: toolchain.version };
+  },
+  prove: (input) => proveModule(input),
+};

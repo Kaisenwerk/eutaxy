@@ -12,13 +12,15 @@ Options:
   --max-runs <n>        cap on exploration runs in addition to the scenario's time budget
   --budget-ms <n>       replace the scenario's time budget (with --max-runs, the run cap decides)
   --exhaustive          run every schedule within the bounds once (with partial-order reduction)
+  --prover <names>      also run the PROVEN rung with these engines on the scenario's specs
+                        (comma-separated; known: lean)
   --json                print the versioned JSON report instead of text
   --out <path>          where to write the regression test on a violation
   --no-regression       do not write a regression test
   --expect-violation    write a regression test that asserts the violation (for corpora)
   --keep                keep the generated .eutaxy/ files
 
-Exit codes: 0 BOUNDED, 1 VIOLATED or a REFUTED spec, 2 UNSUPPORTED, 3 error.
+Exit codes: 0 BOUNDED, 1 VIOLATED or a REFUTED or CONFLICT spec, 2 UNSUPPORTED, 3 error.
 `;
 
 export interface Io {
@@ -64,9 +66,14 @@ export async function main(argv: readonly string[], io: Io): Promise<number> {
     io.stderr(`--budget-ms must be a positive integer, got ${JSON.stringify(budgetText)}\n`);
     return exitCodes.error;
   }
+  const provers = (str("prover") ?? "")
+    .split(",")
+    .map((n) => n.trim())
+    .filter((n) => n.length > 0);
   return runCheck({
     scenario,
     cwd: io.cwd,
+    ...(provers.length > 0 ? { provers } : {}),
     ...(str("wrangler") ? { wrangler: str("wrangler") as string } : {}),
     ...(str("seed") ? { seed: str("seed") as string } : {}),
     ...(maxRuns === undefined ? {} : { maxRuns }),

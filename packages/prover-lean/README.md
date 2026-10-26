@@ -4,7 +4,8 @@
 one tactic script, translation validation. Runs on the Node side, over a
 process boundary: nothing here is loaded into workerd.
 
-**Public surface.** `proveModule` (an annotated module's properties through
+**Public surface.** `leanProver` (the engine as a `Prover`: `available` when
+the pinned toolchain is installed, `prove` is `proveModule`); `proveModule` (an annotated module's properties through
 the subset reader, the emitter and the pinned Lean; one Lean run per module,
 errors mapped to theorems by line; `PROVEN` with engine name, version and
 assumptions, or `UNKNOWN` as `gave_up` when a proof does not close or Lean

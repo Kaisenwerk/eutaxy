@@ -39,7 +39,7 @@ test("the pinned Lean toolchain is installed where it is required", () => {
   if (required) expect(toolchain, JSON.stringify(toolchain)).not.toHaveProperty("unavailable");
 });
 
-const outcomeName = (o: ProofOutcome): string => (o.kind === "PROVEN" ? "PROVEN" : o.cause);
+const outcomeName = (o: ProofOutcome): string => (o.kind === "UNKNOWN" ? o.cause : o.kind);
 
 /** Inputs drawn from a parameter's type: small integers, both booleans. */
 function drawArgs(types: readonly SubsetType[], count: number): unknown[][] {

@@ -20,4 +20,14 @@ export {
   type ModulePredicates,
   specLadder,
 } from "./ladder.ts";
+export {
+  aggregate,
+  type EngineId,
+  type EngineReport,
+  type ModuleProofs,
+  type ProofOutcome,
+  type PropertyProof,
+  type ProveInput,
+  type Prover,
+} from "./provers.ts";
 export { type TestedInput, type TestedOptions, testedRung } from "./tested.ts";

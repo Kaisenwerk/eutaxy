@@ -15,10 +15,12 @@ import {
   type SpecVerdict,
   type Violated,
 } from "@eutaxy/core";
+import { aggregate, type EngineReport, type Prover } from "@eutaxy/prover";
+import { leanProver } from "@eutaxy/prover-lean";
 import { renderSpecs, renderText } from "@eutaxy/report";
 import { checkTestSource, metaKey, vitestConfigSource } from "./generate.ts";
 import { cloudflareRegressionTest } from "./regression.ts";
-import { findSpecModules, specFiles } from "./specs.ts";
+import { findSpecModules, specFiles, specKey } from "./specs.ts";
 import type { CheckTransport } from "./workerd.ts";
 
 export interface CheckOptions {
@@ -31,6 +33,8 @@ export interface CheckOptions {
   readonly budgetMs?: number;
   /** Run every schedule within the bounds once instead of drawing them from the seed. */
   readonly exhaustive?: boolean;
+  /** Engines to run the PROVEN rung with, by name, on the scenario's spec modules. */
+  readonly provers?: readonly string[];
   readonly json: boolean;
   /** Where to write the regression test on a violation; default `<name>.regression.test.ts` beside the scenario. */
   readonly out?: string;
@@ -44,6 +48,40 @@ export interface CheckOptions {
 }
 
 export const exitCodes = { BOUNDED: 0, VIOLATED: 1, UNSUPPORTED: 2, error: 3 } as const;
+
+/** The engines `--prover` can name. */
+export const provers: Readonly<Record<string, Prover>> = { lean: leanProver };
+
+/**
+ * The PROVEN rung, on the Node side: each engine on each observed spec
+ * module's source, the outcomes folded into the simulator's verdicts.
+ * An engine that is not installed proves nothing and says so.
+ */
+export async function proveSpecs(
+  dir: string,
+  observed: readonly { readonly module: string; readonly functions: readonly string[] }[],
+  specs: readonly SpecVerdict[],
+  engines: readonly Prover[],
+): Promise<readonly SpecVerdict[]> {
+  let out = specs;
+  for (const m of observed) {
+    // Verdicts carry the module as a normalized key ("./domain.ts"); the observed path is as the scenario wrote it.
+    const key = specKey(m.module);
+    const source = readFileSync(resolve(dir, key), "utf8");
+    const annotated = m.functions.filter((f) =>
+      specs.some((v) => v.module === key && v.function === f),
+    );
+    if (annotated.length === 0) continue;
+    const reports: EngineReport[] = [];
+    for (const engine of engines)
+      reports.push({
+        engine: engine.name,
+        proofs: await engine.prove({ source, functions: annotated }),
+      });
+    out = aggregate(key, out, reports);
+  }
+  return out;
+}
 
 function findWrangler(dir: string, explicit: string | undefined, cwd: string): string | null {
   if (explicit) return resolve(cwd, explicit);
@@ -151,8 +189,24 @@ export async function runCheck(o: CheckOptions): Promise<number> {
     }
     const report = transport.report as { verdict: ScenarioVerdict; specs?: readonly SpecVerdict[] };
     const verdict = report.verdict;
-    const specs = report.specs ?? [];
-    if (o.json) o.stdout(`${canonicalJson(transport.report as JsonValue)}\n`);
+    let specs = report.specs ?? [];
+    if (o.provers && o.provers.length > 0) {
+      const engines: Prover[] = [];
+      for (const name of o.provers) {
+        const engine = provers[name];
+        if (!engine) {
+          o.stderr(`unknown prover ${name}; known: ${Object.keys(provers).join(", ")}\n`);
+          return exitCodes.error;
+        }
+        engines.push(engine);
+      }
+      specs = await proveSpecs(dir, transport.observed ?? [], specs, engines);
+    }
+    const printed =
+      o.provers && o.provers.length > 0
+        ? { ...(transport.report as object), specs }
+        : transport.report;
+    if (o.json) o.stdout(`${canonicalJson(printed as JsonValue)}\n`);
     else o.stdout(`${renderText(verdict)}\n${specs.length > 0 ? `\n${renderSpecs(specs)}\n` : ""}`);
 
     if (verdict.kind === "VIOLATED" && !o.noRegression) {
@@ -190,8 +244,11 @@ export async function runCheck(o: CheckOptions): Promise<number> {
       if (!o.json)
         o.stdout(`\nRegression test written to ${relative(o.cwd, outPath) || outPath}\n`);
     }
-    // A refuted spec fails the check like a violation does.
-    if (verdict.kind !== "VIOLATED" && specs.some((v) => v.kind === "REFUTED"))
+    // A refuted spec fails the check like a violation does; so does a conflict between engines.
+    if (
+      verdict.kind !== "VIOLATED" &&
+      specs.some((v) => v.kind === "REFUTED" || v.kind === "CONFLICT")
+    )
       return exitCodes.VIOLATED;
     return exitCodes[verdict.kind];
   } finally {

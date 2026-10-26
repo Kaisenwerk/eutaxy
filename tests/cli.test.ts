@@ -168,6 +168,64 @@ describe("eutaxy check", () => {
       expect(r.stdout).toContain("captured = 1000, refunded = 600, amount = 400");
     }, 180_000);
 
+    test("--prover lean: the refund example's sound properties are PROVEN, the off-by-one stays REFUTED", () => {
+      const probe = execFileSync(
+        process.execPath,
+        [
+          "--input-type=module",
+          "-e",
+          'import { findLean } from "./packages/prover-lean/src/index.ts"; const t = await findLean(); process.stdout.write("unavailable" in t ? "no" : "yes");',
+        ],
+        { cwd: root, encoding: "utf8" },
+      );
+      const hasLean = probe.trim() === "yes";
+      if (!hasLean && process.env["EUTAXY_REQUIRE_LEAN"] !== "1") return;
+      expect(hasLean, "the pinned Lean toolchain is required here").toBe(true);
+      const r = eutaxy([
+        "check",
+        `${entry}/sequential.sim.ts`,
+        "--json",
+        "--seed",
+        "corpus",
+        "--no-regression",
+        "--prover",
+        "lean",
+      ]);
+      expect(r.status, r.stderr).toBe(1);
+      const report = JSON.parse(r.stdout) as {
+        specs: (SpecJson & { engine?: { name: string } })[];
+      };
+      expect(report.specs.map((s) => [s.property, s.kind])).toEqual([
+        ["within-captured", "PROVEN"],
+        ["adds-the-amount", "PROVEN"],
+        ["full-refund-allowed", "REFUTED"],
+      ]);
+      expect(report.specs[0]?.engine).toEqual({ name: "lean", version: "4.35.0" });
+      const text = eutaxy([
+        "check",
+        `${entry}/sequential.sim.ts`,
+        "--seed",
+        "corpus",
+        "--no-regression",
+        "--prover",
+        "lean",
+      ]);
+      expect(text.stdout).toContain(
+        "PROVEN   decideRefund within-captured: by lean 4.35.0; also held on",
+      );
+      const unknown = eutaxy([
+        "check",
+        `${entry}/sequential.sim.ts`,
+        "--seed",
+        "corpus",
+        "--no-regression",
+        "--prover",
+        "nope",
+      ]);
+      expect(unknown.status).toBe(3);
+      expect(unknown.stderr).toContain("unknown prover nope");
+    }, 300_000);
+
     test("a specs module that does not exist is an error, not a pass", () => {
       const path = join(root, entry, "missing-spec.tmp.sim.ts");
       writeFileSync(

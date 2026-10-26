@@ -13,6 +13,8 @@ export {
 export {
   engineAssumptions,
   engineName,
+  type LeanModuleProofs,
+  leanProver,
   type ModuleProofs,
   type ProofOutcome,
   type PropertyProof,
