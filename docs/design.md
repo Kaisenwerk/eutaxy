@@ -760,15 +760,66 @@ over a process boundary.
 
 **First-party engine (`prover-lean`).** Eutaxy's own TypeScript-to-Lean 4
 engine, so that the strongest verdict never depends on an external
-project's roadmap. It accepts a defined pure subset of TypeScript
-(immutable data, algebraic types, structural recursion, bounded integers,
-quantifier-free arithmetic first), emits Lean 4 with the `SpecIR`
-obligations, discharges them with a curated tactic stack, and maps results
-back to source locations. The subset is specified operationally by a
-contract corpus and widens one characterised class at a time. Translation
-validation, where the emitted Lean must reproduce the program's behaviour on
-the corpus, is part of the engine's own tests. The Lean toolchain is an
-opt-in download; the Lean kernel, not Eutaxy, checks the proof.
+project's roadmap. It accepts a defined pure subset of TypeScript, emits
+Lean 4 with the `SpecIR` obligations as theorems, discharges them with one
+tactic script, and maps Lean's diagnostics back to properties. The subset
+is specified operationally by the contract corpus
+(`corpus/prover-contracts`: functions with known outcomes, provable, given
+up on, and outside the subset) and widens one characterised class at a
+time. Today it is: exported functions over `number` and `boolean`,
+returning those or a record type (`interface` or object `type`) declared in
+the module; bodies of `const` bindings, `if` with early returns and
+`return`; expressions from `+ - *`, comparisons, `&& || !`, the conditional
+operator, record literals, field reads and calls to the module's own
+functions. A function outside the subset, or one calling such a function,
+is `UNKNOWN` (`unsupported`) with the construct and the line, and the rest
+of the module still goes through; a record type outside it makes the
+functions that use it so. Properties are stated over `int` and `nat`
+binders as Lean `Int`, with `nat` and interval guards as hypotheses; a
+binder over `number` (doubles), `string` or `bigint` (a BigInt argument to
+a function over `number` throws in JavaScript) leaves that property
+`unsupported`.
+
+The engine's number model is an assumption every `PROVEN` carries:
+`number` is the unbounded integers, with no overflow, no fractions and no
+`NaN`; multiplication is emitted but a product of two variables is beyond
+the linear arithmetic the script decides, so such a claim is `gave_up`.
+Booleans stay `Bool` in terms, as in TypeScript, and become propositions
+(`= true`) where a formula needs one; comparisons are `decide`d. Lemma's
+`≡` (SameValue) is emitted as equality on booleans only: on records it is
+reference identity in JavaScript and on numbers it tells `-0` from `0`,
+neither of which the model has, so such a property is `unsupported` and
+`===` is the equality to write. A function that is used as a value
+anywhere in the module, not only called (assigned to in any form, aliased,
+passed on), may not be what its declaration says when called, so it and
+its callers are `unsupported` too, as is a record with a `__proto__` field. Every
+TypeScript name is emitted under a shape Lean's prelude never uses and
+that no other kind of name can take (`f_` functions, `R_` records, `v_`
+variables, `t_` theorems), so a function called `decide` or a parameter
+called `max` stays what the author meant and no parameter can shadow a
+function. The tactic script
+is the same for every theorem: booleans to propositions first, while the
+`Decidable` instances in the statement still match (unfolding under
+`decide` first leaves them stale), Bool binders cased, the module's
+definitions unfolded, each conditional split, then `omega` on what remains.
+A proof that does not close is `gave_up`, since Lean does not say whether
+the claim is false or the script weak; the `TESTED` rung is what refutes.
+`@total` is `PROVEN` when Lean accepts the definition, which it does only
+for functions that terminate. Translation validation is part of the
+engine's tests: for every corpus function, the Lean definition must compute
+what the TypeScript computes on inputs drawn from its parameter types,
+checked by Lean's kernel (`example … := by decide`).
+
+Lean runs over a process boundary. The engine is pinned to one release
+(`leanToolchain`), found through `elan`, Lean's toolchain manager, only
+when it already has that release, or through a bare `lean` of exactly that
+version; nothing is downloaded during a check, and a missing toolchain is
+`unavailable` with the command that installs it. One Lean run checks a
+whole module; a failed theorem does not hide another, since diagnostics are
+mapped to theorems by line, and an error outside every theorem means the
+emitted definitions did not compile, an engine gap reported as
+`unsupported`, never as a verdict. Timeouts are `gave_up`. The Lean kernel,
+not Eutaxy, checks the proof.
 
 **Third-party adapters** (Thales, LemmaScript) are optional, and exist for
 cross-checking and for code outside the first-party subset.
