@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.6.0](https://github.com/Kaisenwerk/eutaxy/compare/v0.5.1...v0.6.0) (2026-10-26)
+
+
+### ⚠ BREAKING CHANGES
+
+* **eutaxy:** `checkSpecModule`, `lemmaBool`, `lemmaUnresolved` and `ModulePredicates` are no longer exported from `eutaxy`; a test that imported them to check specs by hand uses `eutaxy check`, or `checkedRung`, `testedRung` and `specLadder`, instead. `QueueHandler` is no longer exported from `eutaxy/cloudflare`; write `WorkerHandler`.
+
+### Features
+
+* **core:** PROVEN and CONFLICT spec verdicts ([f3d6a24](https://github.com/Kaisenwerk/eutaxy/commit/f3d6a248a32730479f45ee8a8846bf00264bdeeb))
+* **core:** TESTED spec verdict and generated counterexamples ([e0e2834](https://github.com/Kaisenwerk/eutaxy/commit/e0e283484e848f6e730b8260fcf0a3fa04ee40cb))
+* **eutaxy:** close v0.6: the exports deprecated through 0.5.x leave the facade ([86a253b](https://github.com/Kaisenwerk/eutaxy/commit/86a253bda5aa95ff35ce97d72cff95e517a1b5cd))
+* **prover-lean:** first-party engine on the initial subset, checked by Lean 4.35.0 ([403b1dd](https://github.com/Kaisenwerk/eutaxy/commit/403b1dd98d75d395b68aa4a1ecf20503e278894a))
+* **prover-lean:** strings in the subset ([3a45175](https://github.com/Kaisenwerk/eutaxy/commit/3a45175ba7c60ee333c5e3b267278889639705b8))
+* **prover:** Prover interface, PROVEN rung in eutaxy check, aggregation ([4fcb42c](https://github.com/Kaisenwerk/eutaxy/commit/4fcb42ca1f55f3df289f04d1721fe5ce4c248e17))
+* **prover:** TESTED rung and the ladder from CHECKED to TESTED ([5b335ad](https://github.com/Kaisenwerk/eutaxy/commit/5b335ad480f9efb2606ea1ab98306c232f7ef1b6))
+* **spec:** export the tokenizer for engines that read annotated modules ([2524fcb](https://github.com/Kaisenwerk/eutaxy/commit/2524fcb9cc7ed320657aa46cfb0daebf18cf5ec0))
+
+
+### Bug Fixes
+
+* **eutaxy:** show the repository README and keywords on the npm page ([a200238](https://github.com/Kaisenwerk/eutaxy/commit/a200238fea00fddfe7b5fa6af95693ffd5d6620f))
+
 ## [0.5.1](https://github.com/Kaisenwerk/eutaxy/compare/v0.5.0...v0.5.1) (2026-10-25)
 
 
