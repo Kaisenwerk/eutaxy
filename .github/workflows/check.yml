@@ -24,4 +24,28 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Cache the pinned Lean toolchain
+        uses: actions/cache@v6
+        with:
+          path: ~/.elan
+          key: elan-${{ runner.os }}-${{ hashFiles('packages/prover-lean/src/lean.ts') }}
+      - name: Install the pinned Lean toolchain (prover-lean contract corpus)
+        # elan (Lean's toolchain manager) at a pinned release, checksum-verified, then the Lean release
+        # the engine is pinned to (leanToolchain in packages/prover-lean/src/lean.ts).
+        run: |
+          set -eu
+          TOOLCHAIN=$(sed -n 's/^export const leanToolchain = "\(.*\)";$/\1/p' packages/prover-lean/src/lean.ts)
+          test -n "$TOOLCHAIN"
+          if [ ! -x "$HOME/.elan/bin/elan" ]; then
+            ELAN_VERSION=v4.2.4
+            ELAN_SHA256=42b94d4244e8353142c456ec0e4ca6528fd898a6c604d4059f494e706e431f63
+            curl -sSfL -o /tmp/elan.tar.gz "https://github.com/leanprover/elan/releases/download/$ELAN_VERSION/elan-x86_64-unknown-linux-gnu.tar.gz"
+            echo "$ELAN_SHA256  /tmp/elan.tar.gz" | sha256sum -c -
+            tar -xzf /tmp/elan.tar.gz -C /tmp elan-init
+            /tmp/elan-init -y --no-modify-path --default-toolchain none
+          fi
+          "$HOME/.elan/bin/elan" toolchain install "$TOOLCHAIN"
+          "$HOME/.elan/bin/elan" run "$TOOLCHAIN" lean --version
       - run: pnpm check
+        env:
+          EUTAXY_REQUIRE_LEAN: "1"

@@ -1,0 +1,12 @@
+{
+  "name": "@eutaxy-corpus/prover-contracts",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@eutaxy/core": "workspace:*",
+    "@eutaxy/prover": "workspace:*",
+    "@eutaxy/prover-lean": "workspace:*",
+    "@eutaxy/spec": "workspace:*"
+  }
+}

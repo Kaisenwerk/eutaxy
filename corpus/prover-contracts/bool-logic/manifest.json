@@ -1,0 +1,7 @@
+{
+  "description": "Boolean parameters and results; iff, negation and SameValue on booleans.",
+  "expect": {
+    "decide": { "allowed-iff": "PROVEN", "reason-when-banned": "PROVEN", "reason-codes": "PROVEN" },
+    "either": { "xor": "PROVEN", "same-value": "PROVEN" }
+  }
+}

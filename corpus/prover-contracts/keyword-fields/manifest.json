@@ -1,0 +1,9 @@
+{
+  "description": "Record fields named like Lean keywords (from, end) are quoted in the structure, the literals and the reads.",
+  "expect": {
+    "span": {
+      "ordered": "PROVEN",
+      "length": "PROVEN"
+    }
+  }
+}

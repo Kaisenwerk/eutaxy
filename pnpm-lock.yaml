@@ -232,6 +232,21 @@ importers:
         specifier: 4.0.0
         version: 4.0.0
 
+  corpus/prover-contracts:
+    dependencies:
+      '@eutaxy/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@eutaxy/prover':
+        specifier: workspace:*
+        version: link:../../packages/prover
+      '@eutaxy/prover-lean':
+        specifier: workspace:*
+        version: link:../../packages/prover-lean
+      '@eutaxy/spec':
+        specifier: workspace:*
+        version: link:../../packages/spec
+
   examples/payments-queue:
     devDependencies:
       '@cloudflare/vitest-plugin':

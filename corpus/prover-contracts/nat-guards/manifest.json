@@ -1,0 +1,14 @@
+{
+  "description": "nat binders and interval guards become hypotheses; a bigint binder is unsupported until the subset has bigint.",
+  "expect": {
+    "withdraw": {
+      "never-negative": "PROVEN",
+      "at-most-balance": "PROVEN",
+      "exact-when-affordable": "PROVEN"
+    },
+    "twice": {
+      "small-double": "PROVEN",
+      "bigint-too": "unsupported"
+    }
+  }
+}

@@ -50,6 +50,9 @@
       "path": "corpus/lemma-conformance"
     },
     {
+      "path": "corpus/prover-contracts"
+    },
+    {
       "path": "examples/payments-queue"
     }
   ]

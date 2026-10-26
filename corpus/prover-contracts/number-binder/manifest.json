@@ -1,0 +1,11 @@
+{
+  "description": "Binders over number or string are refused per property; the integer properties on the same function are proved.",
+  "expect": {
+    "abs": {
+      "over-doubles": "unsupported",
+      "over-integers": "PROVEN",
+      "fixpoint": "PROVEN",
+      "needs-strings": "unsupported"
+    }
+  }
+}
