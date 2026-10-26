@@ -2,8 +2,8 @@
  * Spec verdicts: what is known about one property of one pure function.
  * Kept apart from scenario verdicts in every report. The ladder runs
  * `CHECKED` (held on every input the simulator passed), then `TESTED` (held
- * on inputs generated from the binders' domains); `PROVEN` comes with the
- * provers.
+ * on inputs generated from the binders' domains), then `PROVEN` (an engine
+ * proved it for every input); `CONFLICT` when engines disagree.
  */
 
 interface SpecVerdictBase {
@@ -50,9 +50,32 @@ export interface Counterexample {
 
 export interface Refuted extends SpecVerdictBase {
   readonly kind: "REFUTED";
-  /** The rung that found the counterexample. */
-  readonly rung: "CHECKED" | "TESTED";
+  /** The rung that found the counterexample: a rung of the simulator, or an engine by name. */
+  readonly rung: "CHECKED" | "TESTED" | "PROVEN";
+  /** The engine, when the rung is PROVEN. */
+  readonly engine?: { readonly name: string; readonly version: string };
   readonly counterexample: Counterexample;
+}
+
+/** Proved for every input by a named engine; the lower rungs' evidence is kept beside it. */
+export interface Proven extends SpecVerdictBase {
+  readonly kind: "PROVEN";
+  readonly engine: { readonly name: string; readonly version: string };
+  /** Generated inputs the TESTED rung held on, when it ran. */
+  readonly tested?: number;
+  /** Distinct inputs the simulator passed that the CHECKED rung held on, when it passed any. */
+  readonly checked?: number;
+}
+
+/** Two engines disagree: one proves, one refutes. Never resolved automatically. */
+export interface Conflict extends SpecVerdictBase {
+  readonly kind: "CONFLICT";
+  readonly proven: { readonly name: string; readonly version: string };
+  readonly refuted: {
+    readonly name: string;
+    readonly version: string;
+    readonly counterexample?: Counterexample;
+  };
 }
 
 export type SpecUnknownCause = "gave_up" | "unsupported" | "unavailable";
@@ -63,7 +86,7 @@ export interface SpecUnknown extends SpecVerdictBase {
   readonly reason: string;
 }
 
-export type SpecVerdict = Checked | Tested | Refuted | SpecUnknown;
+export type SpecVerdict = Checked | Tested | Proven | Refuted | Conflict | SpecUnknown;
 
 /** One line per spec verdict, for error messages; full rendering lives in `report`. */
 export function describeSpecVerdict(v: SpecVerdict): string {
@@ -73,6 +96,10 @@ export function describeSpecVerdict(v: SpecVerdict): string {
       return `CHECKED ${what}: held on ${v.inputs} input(s) the simulator passed`;
     case "TESTED":
       return `TESTED ${what}: held on ${v.inputs} generated input(s)`;
+    case "PROVEN":
+      return `PROVEN ${what}: by ${v.engine.name} ${v.engine.version}`;
+    case "CONFLICT":
+      return `CONFLICT ${what}: ${v.proven.name} proves it, ${v.refuted.name} refutes it`;
     case "REFUTED": {
       const c = v.counterexample;
       const where = c.call ?? c.binders.map((b) => `${b.name} = ${b.value}`).join(", ");

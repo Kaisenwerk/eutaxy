@@ -53,8 +53,10 @@ export { type EffectSelector, getPath, matches, selectEffects } from "./selector
 export { type ShrinkState, shrinkCandidates } from "./shrink.ts";
 export {
   type Checked,
+  type Conflict,
   type Counterexample,
   describeSpecVerdict,
+  type Proven,
   type Refuted,
   type SpecUnknown,
   type SpecUnknownCause,
