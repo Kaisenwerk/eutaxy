@@ -227,11 +227,23 @@ simulator, so it assumes the function is pure, and a function that does
 not terminate on a drawn input hangs the check; `@total` stays `UNKNOWN`
 here.
 
-The ladder runs `CHECKED`, then `TESTED`. A counterexample at either rung
-is `REFUTED`, the simulator's first, with its call. When both hold the
-verdict is `TESTED` and says on how many of the simulator's inputs it also
-held; when sampling gives up, `CHECKED` stands and says why it is not
-`TESTED`; when neither decided, one `UNKNOWN` names both reasons. The
+The ladder runs `CHECKED`, then `TESTED`, inside workerd; the `PROVEN`
+rung runs after them on the Node side of `eutaxy check`, where an engine
+can be spawned, when `--prover <name>` names one. A counterexample at
+either simulator rung is `REFUTED`, the simulator's first, with its call.
+When both hold the verdict is `TESTED` and says on how many of the
+simulator's inputs it also held; when sampling gives up, `CHECKED` stands
+and says why it is not `TESTED`; when neither decided, one `UNKNOWN` names
+both reasons. Engines are folded in by `aggregate`: one engine proving
+lifts the verdict to `PROVEN`, the lower rungs' counts kept beside it
+(`@total`, which no simulator rung decides, is proved this way); an engine
+refuting where nothing else did is `REFUTED` at the `PROVEN` rung; one
+proving and another refuting, or an engine proving against the simulator's
+own counterexample, is `CONFLICT`, which fails the check like a refutation
+and is never resolved automatically; an engine that gave up, could not run
+or does not take the function leaves the verdict as it was, with why among
+the assumptions, so a listed engine that is not installed costs nothing but
+the proof. The
 verdict kinds and `rung` values a report can carry grow within a schema
 version; a field removed or re-typed bumps it.
 

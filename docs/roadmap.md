@@ -39,13 +39,13 @@ Done so far, as the design describes: the `TESTED` rung and the ladder
 up to it (`CHECKED`, then `TESTED`); the first-party `prover-lean` engine
 on its initial subset (integers, booleans, records, conditionals, calls
 within the module), with its contract corpus and translation validation
-against the pinned Lean toolchain, which CI installs. The `PROVEN` rung
-runs where an engine can be spawned, on the Node side of `eutaxy check`,
-not inside workerd, which is where the first two rungs run.
-- `Prover` interface shaped by the engine, the `PROVEN` rung on the ladder
-  and in `eutaxy check` (the engine named on the command line; a listed
-  engine that is not installed is `UNKNOWN`), aggregation across engines
-  (`CONFLICT`); the refund example reaches `PROVEN`.
+against the pinned Lean toolchain, which CI installs; the `Prover`
+interface, the `PROVEN` rung in `eutaxy check --prover lean` and the
+aggregation across engines (`CONFLICT`). The refund example reaches
+`PROVEN` on its sound properties, which is the gate's second half; the
+gate passes when CI shows it so and the contract corpus green.
+- Close the phase: the gate commit (`Release-As: 0.6.0`) removes the
+  deprecated facade exports named below.
 - Widening the subset one corpus entry at a time: structural recursion,
   tagged unions (`type … = { kind: "a" } | …`), strings; the proof cache
   keyed by source, spec and engine version; `eutaxy prover install lean`.

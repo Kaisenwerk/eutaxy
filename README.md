@@ -27,10 +27,11 @@ generated inputs and proving them in Lean 4 are the next phase.
 A scenario gets `VIOLATED`, `BOUNDED` or `UNSUPPORTED`. A spec gets
 `CHECKED` (held on every input the simulator passed), `TESTED` (held on
 those and on inputs generated from the property's domains), `REFUTED`
-(with the input that breaks it, shrunk) or `UNKNOWN`; `PROVEN` comes with
-the provers, the first of which, Eutaxy's own TypeScript-to-Lean 4 engine,
-proves properties of a pure integer-and-boolean subset today, and
-`CONFLICT` with the second. Every verdict carries what it rests on:
+(with the input that breaks it, shrunk), `PROVEN` (for every input, by a
+named engine; `eutaxy check --prover lean` runs Eutaxy's own
+TypeScript-to-Lean 4 engine, which proves properties of a pure
+integer-and-boolean subset today), `CONFLICT` (engines disagree) or
+`UNKNOWN`. Every verdict carries what it rests on:
 seed and bounds, or the inputs it was checked on, and the assumptions.
 Nothing is ever reported as verified when it was only explored or sampled:
 `BOUNDED`, `CHECKED` and `TESTED` are not proofs.

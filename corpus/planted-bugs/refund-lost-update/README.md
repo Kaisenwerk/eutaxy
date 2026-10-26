@@ -24,4 +24,6 @@ before the other, and the `CHECKED` rung reports that call. In the
 concurrent scenario the violation stops the exploration before the
 simulator reaches such an input, and the `TESTED` rung finds one among the
 inputs it generates and shrinks it. The other two properties hold on the
-simulator's inputs and on the generated ones, so they are TESTED.
+simulator's inputs and on the generated ones, so they are TESTED, and with
+`--prover lean` the first-party engine proves them for every input:
+PROVEN.
