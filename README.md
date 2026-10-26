@@ -18,7 +18,7 @@ simulator actually passed them, and `refines` checks that the Worker carries
 out the core's decisions on state that was still current. Checking specs on
 generated inputs and proving them in Lean 4 are the next phase.
 
-**Status: 0.5, early.** The design is in
+**Status: 0.6, early.** The design is in
 [docs/design.md](docs/design.md); the phases and their gates are in
 [docs/roadmap.md](docs/roadmap.md).
 

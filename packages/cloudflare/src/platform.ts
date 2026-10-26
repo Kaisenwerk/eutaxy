@@ -53,9 +53,6 @@ export interface WorkerHandler {
   fetch?(request: Request, env: unknown, ctx: ExecutionContext): Response | Promise<Response>;
 }
 
-/** @deprecated The former name of `WorkerHandler`; removed in 0.6.0. */
-export type QueueHandler = WorkerHandler;
-
 export interface CloudflarePlatformOptions {
   /** The bindings from `cloudflare:workers`. */
   readonly env: object;

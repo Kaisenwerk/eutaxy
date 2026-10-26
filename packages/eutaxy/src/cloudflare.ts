@@ -40,7 +40,6 @@ export {
   httpResponse,
   implies,
   type QueueDrive,
-  type QueueHandler,
   type QueueMessage,
   queue,
   queueAck,

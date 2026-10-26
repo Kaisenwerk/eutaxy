@@ -1,5 +1,4 @@
 // eutaxy: the public API. Platform-specific entry points live under subpaths.
-import * as prover from "@eutaxy/prover";
 
 export {
   type AtLeastOnce,
@@ -65,15 +64,6 @@ export {
   type TestedOptions,
   testedRung,
 } from "@eutaxy/prover";
-
-/** @deprecated Internal to `eutaxy check` since 0.5.1; removed in 0.6.0. */
-export const checkSpecModule = prover.checkSpecModule;
-/** @deprecated Internal to `eutaxy check` since 0.5.1; removed in 0.6.0. */
-export const lemmaBool = prover.lemmaBool;
-/** @deprecated Internal to `eutaxy check` since 0.5.1; removed in 0.6.0. */
-export const lemmaUnresolved = prover.lemmaUnresolved;
-/** @deprecated Internal to `eutaxy check` since 0.5.1; removed in 0.6.0. */
-export type ModulePredicates = prover.ModulePredicates;
 export {
   emitRegressionTest,
   type RegressionTestOptions,

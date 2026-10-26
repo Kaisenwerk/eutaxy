@@ -13,7 +13,6 @@ export type { DurableObjectTestHelpers } from "./durable-objects.ts";
 export {
   type CloudflarePlatformOptions,
   createCloudflarePlatform,
-  type QueueHandler,
   type WorkerHandler,
 } from "./platform.ts";
 export {
