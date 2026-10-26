@@ -1,8 +1,23 @@
 {
   "description": "Strings: literals (escapes included), equality, + as joining, string-literal union types read as string, string fields.",
   "expect": {
-    "decideAccess": { "send-code-iff": "PROVEN", "two-outcomes": "PROVEN", "@total": "PROVEN" },
-    "networkKey": { "never-empty": "PROVEN", "distinct-networks": "PROVEN" },
-    "tag": { "kind-of-sign": "PROVEN", "code-kept": "PROVEN", "escapes": "PROVEN" }
+    "decideAccess": {
+      "sendCodeIff": "PROVEN",
+      "twoOutcomes": "PROVEN",
+      "decideAccessTotal": "PROVEN"
+    },
+    "networkKey": {
+      "neverEmpty": "PROVEN"
+    },
+    "tag": {
+      "kindOfSign": "PROVEN",
+      "codeKept": "PROVEN"
+    },
+    "label": {
+      "escapes": "PROVEN"
+    },
+    "sameNetwork": {
+      "distinctNetworks": "PROVEN"
+    }
   }
 }

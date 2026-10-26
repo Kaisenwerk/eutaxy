@@ -11,7 +11,8 @@
  * widens one characterised class at a time.
  */
 
-import { type Token, TokenizeError, templateSubstitutions, tokenize } from "@eutaxy/spec";
+import type { Arrow } from "@eutaxy/spec";
+import { type Token, TokenizeError, templateSubstitutions, tokenize } from "./tokens.ts";
 
 export class OutsideSubset extends Error {
   readonly line: number;
@@ -46,6 +47,8 @@ export type Expr =
   | { readonly kind: "var"; readonly name: string }
   | { readonly kind: "neg"; readonly operand: Expr }
   | { readonly kind: "not"; readonly operand: Expr }
+  /** `Number.isInteger(e)`: always true of an integer in the engines' integer model, the real predicate on doubles. */
+  | { readonly kind: "isInteger"; readonly operand: Expr }
   | { readonly kind: "binary"; readonly op: BinaryOp; readonly left: Expr; readonly right: Expr }
   | { readonly kind: "cond"; readonly test: Expr; readonly ifTrue: Expr; readonly ifFalse: Expr }
   | { readonly kind: "call"; readonly callee: string; readonly args: readonly Expr[] }
@@ -448,6 +451,8 @@ class FunctionParser {
   /** Every function the module declares, in the subset or not, for messages. */
   private readonly declared: ReadonlySet<string>;
   private readonly badRecords: BadRecords;
+  /** For a spec file's arrow: its local names for the module's functions (the keys are what `declared` and `functions` hold). */
+  private readonly aliases: ReadonlyMap<string, string> | undefined;
   readonly signatures = new Map<string, CalleeSignature>();
   constructor(
     r: Reader,
@@ -455,12 +460,14 @@ class FunctionParser {
     functions: ReadonlySet<string>,
     badRecords: BadRecords = new Map(),
     declared: ReadonlySet<string> = functions,
+    aliases?: ReadonlyMap<string, string>,
   ) {
     this.r = r;
     this.records = records;
     this.functions = functions;
     this.badRecords = badRecords;
     this.declared = declared;
+    this.aliases = aliases;
   }
 
   /** `export function name(params): Type` at the reader, up to and including the body's `{`. */
@@ -527,6 +534,11 @@ class FunctionParser {
    * `let`, `if (c) return a; rest` becomes a conditional, and the last
    * statement must return. Every path ends in a `return`.
    */
+  /** A statement block's statements up to its `}`, for an arrow's block body. */
+  blockBody(scope: Map<string, SubsetType>, returns: SubsetType): Expr {
+    return this.block(scope, returns);
+  }
+
   private block(scope: Map<string, SubsetType>, returns: SubsetType): Expr {
     const r: Reader = this.r;
     if (r.isWord("const")) {
@@ -689,7 +701,9 @@ class FunctionParser {
               ? "a call to a computed callee"
               : this.declared.has(e.name)
                 ? `a call to ${e.name}, which is outside the subset`
-                : `a call to ${e.name}, which this module does not declare`,
+                : this.aliases
+                  ? `a call to ${e.name}, which is not a function imported from the module beside the spec file`
+                  : `a call to ${e.name}, which this module does not declare`,
           );
         r.at++;
         const args: Expr[] = [];
@@ -698,7 +712,8 @@ class FunctionParser {
           if (r.isPunct(",")) r.at++;
         }
         r.at++;
-        e = { kind: "call", callee: e.name, args };
+        // A spec file's local name for a module function resolves to the function.
+        e = { kind: "call", callee: this.aliases?.get(e.name) ?? e.name, args };
         continue;
       }
       if (r.isWord("as") || r.isWord("satisfies")) r.fail(`the ${r.peek()?.text} operator`);
@@ -726,8 +741,26 @@ class FunctionParser {
         if (t.text === "true" || t.text === "false")
           return { kind: "bool", value: t.text === "true" };
         if (t.text === "null" || t.text === "undefined") r.fail(`${t.text}`, t);
+        if (
+          t.text === "Number" &&
+          !scope.has("Number") &&
+          !this.declared.has("Number") &&
+          r.isPunct(".") &&
+          r.isWord("isInteger", 1) &&
+          r.isPunct("(", 2)
+        ) {
+          r.at += 3;
+          const operand = this.expression(scope);
+          r.expectPunct(")");
+          return { kind: "isInteger", operand };
+        }
         if (scope.has(t.text) || this.declared.has(t.text)) return { kind: "var", name: t.text };
-        r.fail(`${t.text}, which is neither a parameter, a const nor a function of this module`, t);
+        r.fail(
+          this.aliases
+            ? `${t.text}, which is neither a parameter, a const nor a function imported from the module beside the spec file`
+            : `${t.text}, which is neither a parameter, a const nor a function of this module`,
+          t,
+        );
         break;
       case "punct":
         if (t.text === "(") {
@@ -840,6 +873,11 @@ export function typeOf(
       if (t.kind !== "bool") fail(`! on a ${t.kind}`);
       return { kind: "bool" };
     }
+    case "isInteger": {
+      const t = typeOf(e.operand, scope, ctx, fail);
+      if (t.kind !== "int") fail(`Number.isInteger on a ${t.kind}`);
+      return { kind: "bool" };
+    }
     case "cond": {
       const test = typeOf(e.test, scope, ctx, fail);
       if (test.kind !== "bool")
@@ -917,25 +955,178 @@ export function typeOf(
 }
 
 /**
- * One TypeScript expression (a Lemma atom or equation side, say) in a
- * scope of typed names, over a module already read. The whole text must
- * be the expression.
+ * A parser over text that is not the module: with `aliases`, the text is
+ * a spec file's, whose names for the module's functions are its own
+ * imports and nothing else; without, the text sees the module's names.
+ */
+function parserFor(
+  text: string,
+  module: SubsetModule,
+  aliases?: ReadonlyMap<string, string>,
+): { r: Reader; parser: FunctionParser } {
+  let tokens: Token[];
+  try {
+    tokens = tokenize(text);
+  } catch (err) {
+    if (!(err instanceof TokenizeError)) throw err;
+    throw new OutsideSubset(`could not be tokenized: ${err.message}`, 0);
+  }
+  const r = new Reader(tokens, () => 0);
+  const records = new Map(module.records.map((rec) => [rec.name, rec]));
+  const inSubset = new Set(module.functions.map((f) => f.name));
+  let functions: ReadonlySet<string>;
+  let declared: ReadonlySet<string>;
+  if (aliases) {
+    declared = new Set(aliases.keys());
+    functions = new Set([...aliases].filter(([, fn]) => inSubset.has(fn)).map(([local]) => local));
+  } else {
+    functions = inSubset;
+    declared = new Set([...inSubset, ...module.outside.map((o) => o.name)]);
+  }
+  const parser = new FunctionParser(r, records, functions, new Map(), declared, aliases);
+  for (const f of module.functions)
+    parser.signatures.set(f.name, { params: f.params, returns: f.returns });
+  return { r, parser };
+}
+
+/**
+ * One TypeScript expression (a claim's body, say) in a scope of typed
+ * names, over a module already read. The whole text must be the
+ * expression.
  */
 export function readExpression(
   text: string,
   scope: ReadonlyMap<string, SubsetType>,
   module: SubsetModule,
+  aliases?: ReadonlyMap<string, string>,
 ): Expr {
-  const r = new Reader(tokenize(text), () => 0);
-  const records = new Map(module.records.map((rec) => [rec.name, rec]));
-  const inSubset = new Set(module.functions.map((f) => f.name));
-  const declared = new Set([...inSubset, ...module.outside.map((o) => o.name)]);
-  const parser = new FunctionParser(r, records, inSubset, new Map(), declared);
-  for (const f of module.functions)
-    parser.signatures.set(f.name, { params: f.params, returns: f.returns });
+  const { r, parser } = parserFor(text, module, aliases);
   const e = parser.expression(scope);
   if (r.at < r.tokens.length) r.fail(`unexpected ${r.peek()?.text} after the expression`);
   return e;
+}
+
+/**
+ * The body of a spec file's arrow (`when` or `ensures`) as a boolean
+ * expression: an expression body as it is, a block body through the same
+ * statement reader as a function body (`const`, `if`, early returns).
+ * The scope maps the arrow's own parameter names to the binders' types;
+ * `aliases` maps the spec file's local names to the module's functions,
+ * and a free name that is neither is outside the subset: the spec file's
+ * scope is its imports, never the module's.
+ */
+export function readArrowBody(
+  arrow: Arrow,
+  scope: ReadonlyMap<string, SubsetType>,
+  module: SubsetModule,
+  aliases: ReadonlyMap<string, string> = new Map(),
+): Expr {
+  if (!arrow.block) return readExpression(arrow.body, scope, module, aliases);
+  const { r, parser } = parserFor(`${arrow.body}}`, module, aliases);
+  const e = parser.blockBody(new Map(scope), { kind: "bool" });
+  if (r.at < r.tokens.length) r.fail(`unexpected ${r.peek()?.text} after the block`);
+  return e;
+}
+
+/** Every name an expression binds or refers to: its variables and its lets. */
+function boundNames(e: Expr, out = new Set<string>()): Set<string> {
+  switch (e.kind) {
+    case "int":
+    case "bool":
+    case "string":
+      return out;
+    case "var":
+      out.add(e.name);
+      return out;
+    case "neg":
+    case "not":
+    case "isInteger":
+      return boundNames(e.operand, out);
+    case "binary":
+      boundNames(e.left, out);
+      return boundNames(e.right, out);
+    case "cond":
+      boundNames(e.test, out);
+      boundNames(e.ifTrue, out);
+      return boundNames(e.ifFalse, out);
+    case "call":
+      for (const a of e.args) boundNames(a, out);
+      return out;
+    case "field":
+      return boundNames(e.object, out);
+    case "record":
+      for (const f of e.fields) boundNames(f.value, out);
+      return out;
+    case "let":
+      out.add(e.name);
+      boundNames(e.value, out);
+      return boundNames(e.body, out);
+  }
+}
+
+/** A name not among `taken`: the name with underscores appended. */
+function fresh(name: string, taken: ReadonlySet<string>): string {
+  let out = `${name}_`;
+  while (taken.has(out)) out += "_";
+  return out;
+}
+
+/**
+ * The expression with its variables renamed (an arrow's own parameter
+ * names to the binders'). A `let` whose name is a rename's target would
+ * capture the renamed references in its body, so such a let is renamed to
+ * a fresh name first; a let whose name is a rename's source shadows it.
+ */
+export function renameVars(
+  e: Expr,
+  names: ReadonlyMap<string, string>,
+  taken: ReadonlySet<string> = new Set([...names.keys(), ...names.values(), ...boundNames(e)]),
+): Expr {
+  const go = (x: Expr): Expr => renameVars(x, names, taken);
+  switch (e.kind) {
+    case "int":
+    case "bool":
+    case "string":
+      return e;
+    case "var":
+      return { kind: "var", name: names.get(e.name) ?? e.name };
+    case "neg":
+    case "not":
+    case "isInteger":
+      return { kind: e.kind, operand: go(e.operand) };
+    case "binary":
+      return { kind: "binary", op: e.op, left: go(e.left), right: go(e.right) };
+    case "cond":
+      return { kind: "cond", test: go(e.test), ifTrue: go(e.ifTrue), ifFalse: go(e.ifFalse) };
+    case "call":
+      return { kind: "call", callee: e.callee, args: e.args.map(go) };
+    case "field":
+      return { kind: "field", object: go(e.object), field: e.field };
+    case "record":
+      return {
+        kind: "record",
+        fields: e.fields.map((f) => ({ name: f.name, value: go(f.value) })),
+      };
+    case "let": {
+      // A let binds its own name; a binder of that name is shadowed inside, as in the source.
+      const inner = new Map(names);
+      inner.delete(e.name);
+      let bound = e.name;
+      const targets = new Set(names.values());
+      if (targets.has(e.name)) {
+        // The let would capture a renamed reference: the let itself moves out of the way, to a name
+        // nothing in the expression uses (another let may already be spelled with the underscore).
+        bound = fresh(e.name, taken);
+        inner.set(e.name, bound);
+      }
+      return {
+        kind: "let",
+        name: bound,
+        value: go(e.value),
+        body: renameVars(e.body, inner, new Set([...taken, bound])),
+      };
+    }
+  }
 }
 
 /** The functions an expression calls. */
@@ -948,6 +1139,7 @@ function callees(e: Expr, out = new Set<string>()): Set<string> {
       return out;
     case "neg":
     case "not":
+    case "isInteger":
       return callees(e.operand, out);
     case "binary":
       callees(e.left, out);

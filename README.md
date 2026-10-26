@@ -75,8 +75,24 @@ A scenario drives the Worker through its `queue()` handler or, with
 interleave at their I/O, including a Durable Object's outbound I/O during
 a call (its storage operations hold other events, as the runtime's input
 gate does); alarms fire in virtual time. A scenario's `specs` names the
-modules of its pure core, whose Lemma specs are then checked on the inputs
-seen.
+modules of its pure core; each module's specs live in a spec file beside
+it (`domain.ts` has `domain.props.ts`), written in TypeScript so your own
+compiler checks them against the functions they describe:
+
+```ts
+import { forall } from "eutaxy/spec";
+import { decideRefund } from "./domain.ts";
+
+export const withinCaptured = forall(decideRefund, {
+  when: (captured, refunded) => 0 <= refunded && refunded <= captured,
+  ensures: (captured, refunded, amount) =>
+    decideRefund(captured, refunded, amount).refunded <= captured,
+});
+```
+
+Each property is checked on the inputs the simulator passed (`CHECKED`),
+then on inputs drawn from the parameter types (`TESTED`), and proved for
+every input by Lean 4 with `--prover lean` (`PROVEN`).
 
 It runs the scenario inside workerd through your Vitest and the Cloudflare
 Vitest plugin, prints the verdict with its trace and assumptions (or

@@ -9,13 +9,13 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { type PrngState, seedPrng } from "@eutaxy/core";
 import { generate } from "@eutaxy/prover";
+import { readSpecs, type SubsetType } from "@eutaxy/prover/reader";
 import {
   findLean,
   ident,
   type ProofOutcome,
   proveModule,
   readSubset,
-  type SubsetType,
   value,
 } from "@eutaxy/prover-lean";
 import type { Binder } from "@eutaxy/spec";
@@ -50,14 +50,14 @@ function drawArgs(types: readonly SubsetType[], count: number): unknown[][] {
     for (const t of types) {
       const binder: Binder =
         t.kind === "bool"
-          ? { name: "b", domain: "boolean" }
+          ? { name: "b", type: { kind: "boolean" } }
           : t.kind === "string"
-            ? { name: "s", domain: "string" }
+            ? { name: "s", type: { kind: "string" } }
             : {
                 name: "n",
-                domain: "int",
-                guard: {
-                  kind: "interval",
+                type: { kind: "number" },
+                hint: {
+                  integer: true,
                   lower: { value: "-50", inclusive: true },
                   upper: { value: "50", inclusive: true },
                 },
@@ -76,8 +76,12 @@ describe.skipIf("unavailable" in toolchain && !required)("prover contracts", () 
     const dir = join(root, entry);
     const manifest = JSON.parse(readFileSync(join(dir, "manifest.json"), "utf8")) as Manifest;
     const source = readFileSync(join(dir, "domain.ts"), "utf8");
+    const spec = readFileSync(join(dir, "domain.props.ts"), "utf8");
 
     test(`${entry}: ${manifest.description}`, async () => {
+      const specs = readSpecs({ module: source, spec, moduleSpecifiers: ["./domain.ts"] });
+      // A spec file that does not read is a broken entry, never a quiet unsupported.
+      expect(specs.errors).toEqual([]);
       // Translation validation for the functions the subset accepts: Lean must agree with TypeScript on drawn inputs.
       const extra: string[] = [];
       const subset = readSubset(source);
@@ -89,7 +93,7 @@ describe.skipIf("unavailable" in toolchain && !required)("prover contracts", () 
           (...a: unknown[]) => unknown
         >;
         for (const fn of subset.functions) {
-          // Inputs are drawn for integer and boolean parameters of exported functions; a record parameter is not drawn yet.
+          // Inputs are drawn for integer, boolean and string parameters of exported functions; a record parameter is not drawn yet.
           if (typeof module[fn.name] !== "function") continue;
           if (fn.params.some((p) => p.type.kind === "record")) continue;
           drawn++;
@@ -119,7 +123,7 @@ describe.skipIf("unavailable" in toolchain && !required)("prover contracts", () 
         ).length,
       );
       expect(exported).toBeGreaterThan(0);
-      const proofs = await proveModule({ source, extra });
+      const proofs = await proveModule({ source, specs, extra });
       const got: Record<string, Record<string, string>> = {};
       for (const r of proofs.results) {
         const byProperty = got[r.function] ?? {};

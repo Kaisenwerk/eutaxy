@@ -8,7 +8,7 @@ describe("generated check test", () => {
     expect(src).toContain('import.meta.glob("../**/*.sql"');
     expect(src).toContain('"!../**/*.sim.ts"');
     expect(src).toContain(
-      `task.meta[${JSON.stringify(metaKey)}] = await checkInWorkerd({ scenario, env, durableObjects, sqlFiles, modules, specLoaders, seed: "s", maxRuns: 5 });`,
+      `task.meta[${JSON.stringify(metaKey)}] = await checkInWorkerd({ scenario, env, durableObjects, sqlFiles, modules, specEntries, seed: "s", maxRuns: 5 });`,
     );
   });
 

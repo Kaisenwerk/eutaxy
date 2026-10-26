@@ -1,0 +1,16 @@
+{
+  "description": "A record binder is proved as a structure; nullable binders and functions over tagged unions are outside the engine's subset (the SMT engine takes them first).",
+  "expect": {
+    "bump": {
+      "bumpCounts": "PROVEN",
+      "lockedAtFive": "PROVEN"
+    },
+    "admit": {
+      "admitsMatches": "unsupported",
+      "nullRefused": "unsupported"
+    },
+    "decideAccess": {
+      "sendCodeIff": "unsupported"
+    }
+  }
+}

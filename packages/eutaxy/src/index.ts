@@ -72,17 +72,12 @@ export {
   renderText,
   renderTrace,
 } from "@eutaxy/report";
-export {
-  type Binder,
-  type Domain,
-  extractSpecs,
-  type Formula,
-  type FunctionSpec,
-  type Guard,
-  LemmaSyntaxError,
-  type ModuleSpecs,
-  type NamedProperty,
-  type Property,
-  parseProperty,
-  printProperty,
+export type {
+  Arrow,
+  Binder,
+  FunctionSpec,
+  Hint,
+  ModuleSpecs,
+  Property,
+  SpecType,
 } from "@eutaxy/spec";

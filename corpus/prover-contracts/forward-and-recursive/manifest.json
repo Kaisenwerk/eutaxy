@@ -5,16 +5,16 @@
       "positive": "PROVEN"
     },
     "fact": {
-      "non-negative": "unsupported"
+      "nonNegative": "unsupported"
     },
     "usesFact": {
-      "via-fact": "unsupported"
+      "viaFact": "unsupported"
     },
     "zero_": {
-      "not-shadowed": "PROVEN"
+      "notShadowed": "PROVEN"
     },
     "viaZero": {
-      "calls-zero": "PROVEN"
+      "callsZero": "PROVEN"
     }
   }
 }

@@ -1,25 +1,27 @@
-// @eutaxy/prover: the spec ladder. See README.md.
+// @eutaxy/prover: the spec ladder. See README.md. The reader lives under `@eutaxy/prover/reader`.
 export {
-  AtomNotBoolean,
   type CheckedInput,
   checkedRung,
   type Evaluation,
-  endpointBigInt,
   evaluate,
-  inDomain,
-  lemmaBool,
-  lemmaUnresolved,
-  markerVerdicts,
+  malformedReason,
+  type PredicateOutcome,
   render,
-  UnresolvedName,
 } from "./checked.ts";
-export { CannotGenerate, generate, regexAlphabet, shrinkCandidates } from "./generate.ts";
 export {
-  checkSpecModule,
-  type LadderOptions,
-  type ModulePredicates,
-  specLadder,
-} from "./ladder.ts";
+  CannotGenerate,
+  conforms,
+  endpointBigInt,
+  endpointNumber,
+  generate,
+  generateAssignment,
+  generateOf,
+  inDomain,
+  integerBound,
+  regexAlphabet,
+  shrinkCandidates,
+} from "./generate.ts";
+export { checkSpecModule, type LadderOptions, specLadder } from "./ladder.ts";
 export {
   aggregate,
   type EngineId,

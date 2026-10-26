@@ -1,5 +1,6 @@
 import type { ScenarioSpec } from "@eutaxy/core";
-import { extractSpecs } from "@eutaxy/spec";
+import { readSpecs } from "@eutaxy/prover/reader";
+import { forall } from "@eutaxy/spec";
 import { describe, expect, test } from "vitest";
 import { globKey } from "./keys.ts";
 import { checkInWorkerd, schemasFor, selectSpecModules } from "./workerd.ts";
@@ -15,9 +16,11 @@ const base: ScenarioSpec = {
   bounds: { maxFaultsPerRun: 0, maxRedeliveries: 0, maxConcurrentInvocations: 1, budgetMs: 1000 },
 };
 
-const domainSpecs = extractSpecs(
-  "/** @ensures{positive} forall (x: int) { x > 0 ==> f(x) > 0 } */\nexport function f(x: number) { return x; }",
-);
+const domainSpecs = readSpecs({
+  module: "export function f(x: number) { return x; }",
+  spec: 'import { forall } from "eutaxy/spec";\nimport { f } from "./domain.ts";\nexport const positive = forall(f, { when: (x) => x > 0, ensures: (x) => f(x) > 0 });',
+  moduleSpecifiers: ["./domain.ts"],
+});
 
 describe("globKey", () => {
   test("is the scenario-relative path seen from .eutaxy/", () => {
@@ -43,10 +46,13 @@ describe("selectSpecModules", () => {
   const f = (x: number) => x;
   const domain = { f, decide: () => true };
   const loaders = {
-    "./domain.ts": async () => ({ specs: domainSpecs, predicates: () => ({}) }),
+    "./domain.ts": {
+      specs: domainSpecs,
+      load: async () => ({ positive: forall(f, { when: (x) => x > 0, ensures: (x) => f(x) > 0 }) }),
+    },
   };
 
-  test("observes a listed module's annotated functions and the decisions refines names", async () => {
+  test("observes a listed module's functions with specs and the decisions refines names", async () => {
     const scenario: ScenarioSpec = {
       ...base,
       specs: ["./domain.ts"],
@@ -66,8 +72,8 @@ describe("selectSpecModules", () => {
     ]);
   });
 
-  test("reports a missing module, a module's annotation errors and a name observed twice", async () => {
-    const broken = { functions: [], exports: [], errors: [{ line: 3, message: "bad annotation" }] };
+  test("reports a missing module, a spec file's errors and a name observed twice", async () => {
+    const broken = { functions: [], errors: [{ line: 3, message: "bad spec" }] };
     const scenario: ScenarioSpec = {
       ...base,
       specs: ["./nope.ts", "./domain.ts", "./again.ts", "./broken.ts"],
@@ -82,12 +88,12 @@ describe("selectSpecModules", () => {
       {
         ...loaders,
         "./again.ts": loaders["./domain.ts"],
-        "./broken.ts": async () => ({ specs: broken, predicates: () => ({}) }),
+        "./broken.ts": { specs: broken, load: async () => ({}) },
       },
     );
     expect(specErrors.map((e) => [e.module, e.message.split(";")[0]])).toEqual([
       ["./nope.ts", "no such module next to the scenario"],
-      ["./broken.ts", "bad annotation"],
+      ["./broken.props.ts", "bad spec"],
       ["./again.ts", "f is observed in both ./domain.ts and ./again.ts"],
     ]);
   });
@@ -112,7 +118,7 @@ describe("checkInWorkerd", () => {
     durableObjects: {} as never,
     sqlFiles: {},
     modules: { "../worker.ts": async () => worker },
-    specLoaders: {},
+    specEntries: {},
     seed: "t",
     maxRuns: 2,
   };

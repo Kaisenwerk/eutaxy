@@ -320,8 +320,8 @@ describe("spec verdicts", () => {
     },
     {
       ...base,
-      property: "@total",
-      text: "@total",
+      property: "decideRefundTotal",
+      text: "total(decideRefund)",
       kind: "UNKNOWN",
       cause: "unsupported",
       reason: "needs a prover",
@@ -346,7 +346,7 @@ describe("spec verdicts", () => {
       "           sampled with seed corpus",
       "  CONFLICT decideRefund f: lean 4.35.0 proves it, other 1 refutes it; not resolved automatically",
       "           x = 7",
-      "  UNKNOWN  decideRefund @total: unsupported: needs a prover",
+      "  UNKNOWN  decideRefund decideRefundTotal: unsupported: needs a prover",
     ]);
     expect(renderSpecs([])).toBe("");
   });

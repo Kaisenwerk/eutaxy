@@ -1,21 +1,29 @@
 import { type PrngState, seedPrng } from "@eutaxy/core";
-import { type Binder, extractSpecs } from "@eutaxy/spec";
+import type { Binder, Hint, SpecType } from "@eutaxy/spec";
 import { describe, expect, test } from "vitest";
-import { inDomain, render } from "./checked.ts";
+import { render } from "./checked.ts";
 import {
   CannotGenerate,
+  conforms,
   generate,
+  inDomain,
+  integerBound,
   regexAlphabet,
   shrinkCandidates,
   uniformBigInt,
 } from "./generate.ts";
 
-const binder = (text: string): Binder => {
-  const b = extractSpecs(`/** @ensures{p} ${text} */\nexport function f(x) {}`).functions[0]
-    ?.ensures[0]?.property.binders[0];
-  if (!b) throw new Error(`no binder in ${text}`);
-  return b;
-};
+const binder = (type: SpecType, hint?: Hint): Binder => ({
+  name: "x",
+  type,
+  ...(hint ? { hint } : {}),
+});
+const number = (hint?: Hint) => binder({ kind: "number" }, hint);
+const int = (hint: Hint = {}) => number({ integer: true, ...hint });
+const bigint = (hint?: Hint) => binder({ kind: "bigint" }, hint);
+const string = (pattern?: string, flags = "") =>
+  binder({ kind: "string" }, pattern === undefined ? undefined : { regex: { pattern, flags } });
+const at = (value: string, inclusive: boolean) => ({ value, inclusive });
 
 function draws(b: Binder, n: number, seed = "s"): unknown[] {
   let state: PrngState = seedPrng(seed);
@@ -29,101 +37,133 @@ function draws(b: Binder, n: number, seed = "s"): unknown[] {
 }
 
 describe("generate", () => {
-  test.each([
-    "forall (x: int) { true }",
-    "forall (x: nat) { true }",
-    "forall (x: int ∈ [10, 12]) { true }",
-    "forall (x: int ∈ (0, ∞)) { true }",
-    "forall (x: nat ∈ [-5, 3)) { true }",
-    "forall (x: number) { true }",
-    "forall (x: number ∈ (0, 1)) { true }",
-    "forall (x: number ∈ [-∞, -1_000]) { true }",
-    "forall (x: bigint) { true }",
-    "forall (x: bigint ∈ (0n, 100n]) { true }",
-    "forall (x: boolean) { true }",
-    "forall (x: string) { true }",
-    "forall (x: string ∈ /^[a-z]+$/) { true }",
-    "forall (x: string ∈ /\\d{3}-\\d{2}/) { true }",
-    "forall (x: string ∈ /^(foo|ba[rz])+(?:-[A-F0-9]{2,4})?$/) { true }",
-    "forall (x: string ∈ /^[^a-z\\s]{1,3}\\.$/) { true }",
-    "forall (x: string ∈ /^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$/) { true }",
-    "forall (x: string ∈ /^(?=.)[ab]+$/) { true }",
-  ])("%s: every draw is in the domain and guard", (text) => {
-    const b = binder(text);
+  test.each<[string, Binder]>([
+    ["int", int()],
+    ["nat", int({ lower: at("0", true) })],
+    ["int in [10, 12]", int({ lower: at("10", true), upper: at("12", true) })],
+    ["int in (0, inf)", int({ lower: at("0", false) })],
+    ["int in [-5, 3)", int({ lower: at("-5", true), upper: at("3", false) })],
+    ["number", number()],
+    ["number in (0, 1)", number({ lower: at("0", false), upper: at("1", false) })],
+    ["number up to -1000", number({ upper: at("-1_000", true) })],
+    ["bigint", bigint()],
+    ["bigint in (0n, 100n]", bigint({ lower: at("0n", false), upper: at("100n", true) })],
+    ["boolean", binder({ kind: "boolean" })],
+    ["string", string()],
+    ["string /^[a-z]+$/", string("^[a-z]+$")],
+    ["string /\\d{3}-\\d{2}/", string("\\d{3}-\\d{2}")],
+    ["string alternation", string("^(foo|ba[rz])+(?:-[A-F0-9]{2,4})?$")],
+    ["string negated class", string("^[^a-z\\s]{1,3}\\.$")],
+    ["string timestamp", string("^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$")],
+    ["string lookahead", string("^(?=.)[ab]+$")],
+  ])("%s: every draw is of the type and within the hint", (_name, b) => {
     for (const v of draws(b, 500)) expect(inDomain(b, v), render(v)).toBe(true);
   });
 
   test("the same seed draws the same values; another seed, others", () => {
-    const b = binder("forall (x: int) { true }");
-    expect(draws(b, 50, "a")).toEqual(draws(b, 50, "a"));
-    expect(draws(b, 50, "a")).not.toEqual(draws(b, 50, "b"));
+    expect(draws(int(), 50, "a")).toEqual(draws(int(), 50, "a"));
+    expect(draws(int(), 50, "a")).not.toEqual(draws(int(), 50, "b"));
   });
 
   test("integers are biased small and still reach the edges of the range", () => {
-    const b = binder("forall (x: int) { true }");
-    const values = draws(b, 2000) as number[];
+    const values = draws(int(), 2000) as number[];
     expect(values.filter((v) => Math.abs(v) <= 16).length).toBeGreaterThan(800);
     expect(values).toContain(2 ** 53 - 1);
     expect(values).toContain(-(2 ** 53 - 1));
     expect(values.every((v) => Number.isSafeInteger(v))).toBe(true);
-    const guarded = draws(binder("forall (x: int ∈ [7, ∞)) { true }"), 500) as number[];
+    const guarded = draws(int({ lower: at("7", true) }), 500) as number[];
     expect(guarded).toContain(7);
     expect(Math.min(...guarded)).toBe(7);
   });
 
-  test("numbers include the special values a guard admits, and only those", () => {
-    const open = draws(binder("forall (x: number) { true }"), 3000) as number[];
+  test("numbers include the special values the hint admits, and only those", () => {
+    const open = draws(number(), 3000) as number[];
     expect(open.some((v) => Number.isNaN(v))).toBe(true);
     expect(open).toContain(Number.POSITIVE_INFINITY);
     expect(open.some((v) => Object.is(v, -0))).toBe(true);
     expect(open.some((v) => Math.abs(v) > 1e100)).toBe(true);
-    const unit = draws(binder("forall (x: number ∈ (0, 1)) { true }"), 500) as number[];
+    const unit = draws(number({ lower: at("0", false), upper: at("1", false) }), 500) as number[];
     expect(unit.every((v) => v > 0 && v < 1)).toBe(true);
     expect(unit).toContain(0.5);
   });
 
-  test("bigints beyond the double range, within a guard exactly", () => {
-    const wide = draws(binder("forall (x: bigint) { true }"), 1000) as bigint[];
+  test("bigints beyond the double range, within a hint exactly", () => {
+    const wide = draws(bigint(), 1000) as bigint[];
     expect(wide.some((v) => v > 2n ** 64n || v < -(2n ** 64n))).toBe(true);
-    const narrow = draws(binder("forall (x: bigint ∈ (0n, 3n]) { true }"), 200) as bigint[];
+    const narrow = draws(
+      bigint({ lower: at("0n", false), upper: at("3n", true) }),
+      200,
+    ) as bigint[];
     expect(new Set(narrow)).toEqual(new Set([1n, 2n, 3n]));
   });
 
-  test("strings: edges and plain text; a regex guard draws from the pattern's characters", () => {
-    const plain = draws(binder("forall (x: string) { true }"), 1000) as string[];
+  test("strings: edges and plain text; a regex hint draws from the pattern's characters", () => {
+    const plain = draws(string(), 1000) as string[];
     expect(plain).toContain("");
     expect(plain).toContain("😀");
     expect(plain.some((s) => s.length > 10)).toBe(true);
-    const lower = draws(binder("forall (x: string ∈ /^[a-z]+$/) { true }"), 300) as string[];
+    const lower = draws(string("^[a-z]+$"), 300) as string[];
     expect(lower.every((s) => /^[a-z]+$/.test(s))).toBe(true);
     expect(new Set(lower).size).toBeGreaterThan(100);
-    const dashed = draws(binder("forall (x: string ∈ /^\\d{3}-\\d{2}$/) { true }"), 50) as string[];
+    const dashed = draws(string("^\\d{3}-\\d{2}$"), 50) as string[];
     expect(dashed.every((s) => /^\d{3}-\d{2}$/.test(s))).toBe(true);
     expect(new Set(dashed).size).toBeGreaterThan(40);
     // Lookahead is outside the walked subset: sampling over the pattern's characters still finds matches.
-    const sampled = draws(binder("forall (x: string ∈ /^(?=.)[ab]+$/) { true }"), 20) as string[];
+    const sampled = draws(string("^(?=.)[ab]+$"), 20) as string[];
     expect(sampled.every((s) => /^(?=.)[ab]+$/.test(s))).toBe(true);
   });
 
-  test("a guard no integer lies in is reported, not thrown through", () => {
-    expect(() => draws(binder("forall (x: int ∈ (0, 1)) { true }"), 1)).toThrow(CannotGenerate);
-    expect(() => draws(binder("forall (x: nat ∈ [-5, -1]) { true }"), 1)).toThrow(CannotGenerate);
-    expect(shrinkCandidates(binder("forall (x: int ∈ (0, 1)) { true }"), 5)).toEqual([]);
+  test("literals, null, undefined, unions and records are drawn as their values", () => {
+    expect(draws(binder({ kind: "literal", value: "a" }), 3)).toEqual(["a", "a", "a"]);
+    expect(draws(binder({ kind: "null" }), 1)).toEqual([null]);
+    const union = binder({
+      kind: "union",
+      members: [{ kind: "literal", value: "x" }, { kind: "literal", value: 1 }, { kind: "null" }],
+    });
+    expect(new Set(draws(union, 100))).toEqual(new Set(["x", 1, null]));
+    const record = binder({
+      kind: "record",
+      fields: [
+        { name: "n", type: { kind: "number" } },
+        { name: "tag", type: { kind: "literal", value: "t" } },
+      ],
+    });
+    for (const v of draws(record, 20)) {
+      expect(typeof (v as { n: unknown }).n).toBe("number");
+      expect((v as { tag: unknown }).tag).toBe("t");
+    }
   });
 
-  test("a bigint guard beyond the unguarded reach is drawn from the guard itself", () => {
+  test("a hint no integer lies in is reported as gave_up, an unreadable type as unsupported", () => {
+    const empty = int({ lower: at("0", false), upper: at("1", false) });
+    expect(() => draws(empty, 1)).toThrow(CannotGenerate);
+    try {
+      draws(empty, 1);
+    } catch (err) {
+      expect((err as CannotGenerate).why).toBe("gave_up");
+    }
+    expect(() => draws(int({ lower: at("-5", true), upper: at("-6", true) }), 1)).toThrow(
+      CannotGenerate,
+    );
+    expect(shrinkCandidates(empty, 5)).toEqual([]);
+    try {
+      draws(binder({ kind: "unknown", text: "Date" }), 1);
+    } catch (err) {
+      expect((err as CannotGenerate).why).toBe("unsupported");
+    }
+  });
+
+  test("a bigint hint beyond the unhinted reach is drawn from the hint itself", () => {
     const huge = 1n << 200n;
-    const b = binder(`forall (x: bigint ∈ [${huge}n, ${huge + 10n}n]) { true }`);
+    const b = bigint({ lower: at(`${huge}n`, true), upper: at(`${huge + 10n}n`, true) });
     for (const v of draws(b, 100) as bigint[]) expect(v >= huge && v <= huge + 10n).toBe(true);
-    const oneSided = draws(binder(`forall (x: bigint ∈ [${huge}n, ∞)) { true }`), 100) as bigint[];
+    const oneSided = draws(bigint({ lower: at(`${huge}n`, true) }), 100) as bigint[];
     expect(oneSided.every((v) => v >= huge)).toBe(true);
     expect(oneSided.some((v) => v > huge + 1000n)).toBe(true);
   });
 
   test("a regex no draw matches is reported, not looped on", () => {
-    expect(() => draws(binder("forall (x: string ∈ /^(?!)$/) { true }"), 1)).toThrow(
-      CannotGenerate,
-    );
+    expect(() => draws(string("^(?!)$"), 1)).toThrow(CannotGenerate);
   });
 
   test("regexAlphabet: literals, ranges and escapes; metacharacters left out", () => {
@@ -147,43 +187,35 @@ describe("generate", () => {
 });
 
 describe("shrinkCandidates", () => {
-  test("numbers move toward zero, or the guard's end nearest it, never past the guard", () => {
-    expect(shrinkCandidates(binder("forall (x: int) { true }"), 100)).toEqual([
-      0, 50, 75, 88, 94, 97, 99,
-    ]);
-    expect(shrinkCandidates(binder("forall (x: int) { true }"), -3)).toEqual([0, -2]);
-    expect(shrinkCandidates(binder("forall (x: int ∈ [10, 20]) { true }"), 16)).toEqual([
+  test("numbers move toward zero, or the hint's end nearest it, never past the hint", () => {
+    expect(shrinkCandidates(int(), 100)).toEqual([0, 50, 75, 88, 94, 97, 99]);
+    expect(shrinkCandidates(int(), -3)).toEqual([0, -2]);
+    expect(shrinkCandidates(int({ lower: at("10", true), upper: at("20", true) }), 16)).toEqual([
       10, 13, 15,
     ]);
-    expect(shrinkCandidates(binder("forall (x: int ∈ [-20, -10]) { true }"), -16)).toEqual([
+    expect(shrinkCandidates(int({ lower: at("-20", true), upper: at("-10", true) }), -16)).toEqual([
       -10, -13, -15,
     ]);
-    expect(shrinkCandidates(binder("forall (x: int) { true }"), 0)).toEqual([]);
-    expect(shrinkCandidates(binder("forall (x: nat) { true }"), 1)).toEqual([0]);
-    expect(shrinkCandidates(binder("forall (x: bigint ∈ (0n, ∞)) { true }"), 9n)).toEqual([
-      1n,
-      5n,
-      7n,
-      8n,
-    ]);
+    expect(shrinkCandidates(int(), 0)).toEqual([]);
+    expect(shrinkCandidates(int({ lower: at("0", true) }), 1)).toEqual([0]);
+    expect(shrinkCandidates(bigint({ lower: at("0n", false) }), 9n)).toEqual([1n, 5n, 7n, 8n]);
   });
 
   test("doubles truncate and halve; special values fall back to finite ones", () => {
-    const b = binder("forall (x: number) { true }");
-    expect(shrinkCandidates(b, 6.5).slice(0, 3)).toEqual([0, 6, 3.25]);
-    expect(shrinkCandidates(b, Number.NaN)).toEqual([
+    expect(shrinkCandidates(number(), 6.5).slice(0, 3)).toEqual([0, 6, 3.25]);
+    expect(shrinkCandidates(number(), Number.NaN)).toEqual([
       0,
       1,
       -1,
       Number.MAX_VALUE,
       -Number.MAX_VALUE,
     ]);
-    const unit = binder("forall (x: number ∈ (0, 1)) { true }");
+    const unit = number({ lower: at("0", false), upper: at("1", false) });
     for (const c of shrinkCandidates(unit, 0.75) as number[]) expect(c > 0 && c < 1).toBe(true);
   });
 
-  test("strings get shorter and plainer, within the guard", () => {
-    expect(shrinkCandidates(binder("forall (x: string) { true }"), "hello")).toEqual([
+  test("strings get shorter and plainer, within the hint", () => {
+    expect(shrinkCandidates(string(), "hello")).toEqual([
       "",
       "he",
       "lo",
@@ -192,14 +224,62 @@ describe("shrinkCandidates", () => {
       "helo",
       "aello",
     ]);
-    const lower = binder("forall (x: string ∈ /^[a-z]+$/) { true }");
-    expect(shrinkCandidates(lower, "zz")).toEqual(["z", "az"]);
-    expect(shrinkCandidates(lower, "a")).toEqual([]);
+    expect(shrinkCandidates(string("^[a-z]+$"), "zz")).toEqual(["z", "az"]);
+    expect(shrinkCandidates(string("^[a-z]+$"), "a")).toEqual([]);
   });
 
   test("true shrinks to false; nothing shrinks to itself", () => {
-    const b = binder("forall (x: boolean) { true }");
+    const b = binder({ kind: "boolean" });
     expect(shrinkCandidates(b, true)).toEqual([false]);
     expect(shrinkCandidates(b, false)).toEqual([]);
+  });
+
+  test("a union moves to its simplest members first; a record shrinks one field at a time", () => {
+    const nullable = binder({
+      kind: "union",
+      members: [
+        { kind: "record", fields: [{ name: "n", type: { kind: "number" } }] },
+        { kind: "null" },
+      ],
+    });
+    expect(shrinkCandidates(nullable, { n: 4 })).toEqual([null, { n: 0 }, { n: 2 }, { n: 3 }]);
+    expect(shrinkCandidates(nullable, null)).toEqual([]);
+    const record = binder({
+      kind: "record",
+      fields: [
+        { name: "n", type: { kind: "number" } },
+        { name: "b", type: { kind: "boolean" } },
+      ],
+    });
+    expect(shrinkCandidates(record, { n: 2, b: true })).toEqual([
+      { n: 0, b: true },
+      { n: 1, b: true },
+      { n: 2, b: false },
+    ]);
+  });
+});
+
+describe("review findings", () => {
+  test("shrinking values that hold bigints does not throw", () => {
+    const record = binder({ kind: "record", fields: [{ name: "n", type: { kind: "bigint" } }] });
+    expect(shrinkCandidates(record, { n: 5n })).toEqual([{ n: 0n }, { n: 3n }, { n: 4n }]);
+    const union = binder({ kind: "union", members: [{ kind: "bigint" }, { kind: "number" }] });
+    expect(shrinkCandidates(union, 5)).toEqual([0n, 0, 3, 4]);
+  });
+
+  test("a bound past every double bounds nothing; a fractional upper bound on a bigint is rounded down", () => {
+    expect(integerBound({ value: "1e400", inclusive: false }, "upper")).toBeUndefined();
+    const wide = int({ upper: at("1e400", false) });
+    expect(() => draws(wide, 10)).not.toThrow();
+    expect(inDomain(bigint({ upper: at("4.5", true) }), 5n)).toBe(false);
+    expect(inDomain(bigint({ upper: at("4.5", true) }), 4n)).toBe(true);
+    expect(inDomain(bigint({ lower: at("0.5", true) }), 0n)).toBe(false);
+    expect(inDomain(bigint({ lower: at("0.5", true) }), 1n)).toBe(true);
+  });
+
+  test("-0 is of the literal type 0", () => {
+    expect(conforms({ kind: "literal", value: 0 }, -0)).toBe(true);
+    expect(conforms({ kind: "literal", value: "a" }, "a")).toBe(true);
+    expect(conforms({ kind: "literal", value: 1 }, "1")).toBe(false);
   });
 });

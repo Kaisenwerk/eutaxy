@@ -10,7 +10,7 @@ interface SpecVerdictBase {
   /** The module, as the scenario names it. */
   readonly module: string;
   readonly function: string;
-  /** The `@ensures` name, or `@total` / `@throws` for those markers. */
+  /** The property's export name in the spec file. */
   readonly property: string;
   /** The property as written. */
   readonly text: string;

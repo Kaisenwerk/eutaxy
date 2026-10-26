@@ -1,11 +1,11 @@
 /**
- * The engine: an annotated module's functions through the subset reader,
- * the emitter and Lean, and each property's outcome back. One Lean run per
- * module; errors are mapped to theorems by line, so one failed proof does
- * not hide another. A proof that fails is `gave_up` (the engine is weak or
- * the claim is false; Lean does not say which), a function or property
- * outside the subset is `unsupported`, and no pinned toolchain is
- * `unavailable`. `@total` is proved by Lean accepting the definition.
+ * The engine: a module's functions through the subset reader, the emitter
+ * and Lean, and each property's outcome back. One Lean run per module;
+ * errors are mapped to theorems by line, so one failed proof does not hide
+ * another. A proof that fails is `gave_up` (the engine is weak or the
+ * claim is false; Lean does not say which), a function or property outside
+ * the subset is `unsupported`, and no pinned toolchain is `unavailable`.
+ * `total` is proved by Lean accepting the definition.
  */
 
 import type {
@@ -16,7 +16,7 @@ import type {
   ProveInput as ProverInput,
 } from "@eutaxy/prover";
 import { OutsideSubset, readSubset, type SubsetModule } from "@eutaxy/prover/reader";
-import { extractSpecs, type FunctionSpec, type SpecError } from "@eutaxy/spec";
+import type { FunctionSpec, Property, SpecError } from "@eutaxy/spec";
 import { type Emitted, emitModule } from "./emit.ts";
 import { checkLean, findLean, type LeanDiagnostic, leanVersion } from "./lean.ts";
 
@@ -58,35 +58,31 @@ const unknown = (
   reason,
 });
 
-function propertiesOf(fn: FunctionSpec): string[] {
-  return [...fn.ensures.map((p) => p.name), ...(fn.total ? ["@total"] : [])];
-}
-
 /** Every property of the functions, with one outcome. */
 function allWith(fns: readonly FunctionSpec[], outcome: ProofOutcome): PropertyProof[] {
   return fns.flatMap((fn) =>
-    propertiesOf(fn).map((property) => ({ function: fn.name, property, outcome })),
+    fn.properties.map((property) => ({ function: fn.name, property: property.name, outcome })),
   );
 }
 
-/** The emitted Lean for the module's functions in the subset, and the annotated functions outside it with why. */
+/** The emitted Lean for the module's functions in the subset, and the functions with specs outside it with why. */
 export interface Prepared {
   readonly module: SubsetModule;
   readonly emitted: Emitted;
-  /** The annotated functions to report on. */
+  /** The functions to report on. */
   readonly fns: readonly FunctionSpec[];
   /** Those of them the subset does not take, with the reason. */
   readonly outside: ReadonlyMap<string, string>;
-  /** Annotations that did not parse. */
+  /** Specs that did not read. */
   readonly specErrors: readonly SpecError[];
 }
 
 /**
  * Read and emit. Every function the subset takes is emitted (callees
- * included); properties are stated for the annotated ones among them.
+ * included); properties are stated for the ones with specs among them.
  */
 export function prepare(input: ProveInput): Prepared {
-  const specs = input.specs ?? extractSpecs(input.source);
+  const specs = input.specs;
   const wanted = input.functions ? new Set(input.functions) : undefined;
   const fns = specs.functions.filter((f) => !wanted || wanted.has(f.name));
   const module = readSubset(
@@ -100,19 +96,23 @@ export function prepare(input: ProveInput): Prepared {
         o.name,
         `outside the engine's subset${o.line > 0 ? ` (line ${o.line})` : ""}: ${o.message}`,
       );
-  // An annotation belongs to one declaration: the one on its line. A nested function (in a namespace,
-  // say) named like a top-level one must not lend its properties to the top-level body.
+  // A spec belongs to one declaration: the one the reader found at that offset. A nested function (in a
+  // namespace, say) named like a top-level one must not lend its properties to the top-level body.
   for (const fn of fns) {
     const read = module.functions.find((f) => f.name === fn.name);
     if (read && read.offset !== fn.offset)
       outside.set(
         fn.name,
-        `outside the engine's subset (line ${fn.line}): the annotated ${fn.name} is not the module's top-level declaration of that name (line ${read.line})`,
+        `outside the engine's subset (line ${fn.line}): the ${fn.name} the spec names is not the module's top-level declaration of that name (line ${read.line})`,
       );
   }
-  const properties = fns
+  const properties: { function: string; property: Property }[] = fns
     .filter((fn) => !outside.has(fn.name))
-    .flatMap((fn) => fn.ensures.map((property) => ({ function: fn.name, property })));
+    .flatMap((fn) =>
+      fn.properties
+        .filter((p) => p.kind === "forall")
+        .map((property) => ({ function: fn.name, property })),
+    );
   const specErrors = specs.errors;
   try {
     return {
@@ -138,9 +138,9 @@ export async function proveModule(input: ProveInput): Promise<LeanModuleProofs> 
   const unsupported = fns
     .filter((f) => outside.has(f.name))
     .flatMap((f) =>
-      propertiesOf(f).map((property) => ({
+      f.properties.map((property) => ({
         function: f.name,
-        property,
+        property: property.name,
         outcome: unknown("unsupported", outside.get(f.name) as string),
       })),
     );
@@ -175,7 +175,21 @@ export async function proveModule(input: ProveInput): Promise<LeanModuleProofs> 
   }
   const results: PropertyProof[] = [...unsupported];
   for (const fn of inSubset) {
-    for (const property of fn.ensures) {
+    for (const property of fn.properties) {
+      if (property.kind === "total") {
+        results.push({
+          function: fn.name,
+          property: property.name,
+          outcome: {
+            ...proven,
+            assumptions: [
+              ...engineAssumptions,
+              "Lean accepted the definition, so it terminates on every input",
+            ],
+          },
+        });
+        continue;
+      }
       const skipped = emitted.skipped.find(
         (s) => s.function === fn.name && s.property === property.name,
       );
@@ -205,18 +219,6 @@ export async function proveModule(input: ProveInput): Promise<LeanModuleProofs> 
               ),
       });
     }
-    if (fn.total)
-      results.push({
-        function: fn.name,
-        property: "@total",
-        outcome: {
-          ...proven,
-          assumptions: [
-            ...engineAssumptions,
-            "Lean accepted the definition, so it terminates on every input",
-          ],
-        },
-      });
   }
   return { results, lean, specErrors };
 }

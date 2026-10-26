@@ -1,30 +1,24 @@
-// @eutaxy/spec: SpecIR, and Lemma annotations parsed into it and printed back. See README.md.
-export { extractSpecs } from "./extract.ts";
+// @eutaxy/spec: SpecIR, and the combinators a spec file writes. See README.md.
 export {
+  type Fn,
+  type Forall,
+  forall,
+  isSpec,
+  type Spec,
+  type Total,
+  total,
+} from "./combinators.ts";
+export {
+  type Arrow,
   type Binder,
-  type Domain,
-  domains,
+  describeType,
   type Endpoint,
-  type Formula,
+  type Field,
   type FunctionSpec,
-  type Guard,
+  type Hint,
   type ModuleSpecs,
-  type NamedProperty,
+  type Param,
   type Property,
   type SpecError,
+  type SpecType,
 } from "./ir.ts";
-export { endpointNumber, LemmaSyntaxError, parseProperty } from "./parse.ts";
-export {
-  freeNames,
-  type PredicateHelpers,
-  type PredicateOutcome,
-  predicateSource,
-} from "./predicate.ts";
-export { printFormula, printProperty } from "./print.ts";
-export {
-  type Token,
-  TokenizeError,
-  type TokenKind,
-  templateSubstitutions,
-  tokenize,
-} from "./tokens.ts";

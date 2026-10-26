@@ -137,6 +137,11 @@ differential scenarios, prover contracts; never published), `examples/` and
   nothing else.
 - `core` and `engine` never import provers; the CLI loads engines from
   config.
+- The spec surface is the one interface `spec`, `prover`, the engines and
+  the CLI share: `spec` holds its shape, `prover` reads and checks it, the
+  engines translate it, the CLI finds it. A change to that interface
+  touches all of them at once, which is the exception the two-package rule
+  allows for a shared interface; the boundary itself does not move.
 
 ## Spec language, invariants and refines
 
@@ -226,7 +231,10 @@ draws each literal, a nullable type draws `null` among the values, a
 record is drawn field by field, and a tagged union draws every tag. Where
 `when` compares a parameter with a constant (`0 <= n`, `n < 5`), the draws
 are steered into that range, as an interval guard would, so a precondition
-is met rather than missed. Assignments are counted distinct, as `CHECKED`
+is met rather than missed; and since preconditions relate binders
+(`refunded + amount === captured`), which independent draws would satisfy
+once in thousands, a later integer binder is sometimes drawn equal to an
+earlier one or to the sum or difference of two. Assignments are counted distinct, as `CHECKED`
 counts them (two booleans are two inputs, however often they are drawn).
 The rung stops at a set number of distinct assignments inside the claim
 (100 unless configured), or after twenty times as many draws, which is
@@ -902,8 +910,8 @@ export interface Prover {
 Adapter rules:
 - Talk to engines over a process boundary (spawn, files, parsed output),
   never a library import, so Lean and Dafny stay out of Eutaxy's install.
-- Users write specs once; each adapter generates its engine's annotation
-  syntax into a temporary copy and maps results back to source locations.
+- Users write specs once; each adapter generates its engine's own syntax
+  into a temporary copy and maps results back to source locations.
 - Record engine name and version with every `PROVEN`, and cache results
   keyed by source hash, spec hash and engine version so CI does not
   flip-flop.

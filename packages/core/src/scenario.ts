@@ -75,9 +75,11 @@ export interface ScenarioSpec {
   readonly invariants: readonly Invariant[];
   readonly bounds: Bounds;
   /**
-   * Modules of pure core functions with Lemma specs, relative to the
-   * scenario. Calls to their annotated functions are recorded as decisions
-   * during exploration, and each property is checked on the inputs seen.
+   * Modules of pure core functions with specs, relative to the scenario;
+   * each module's specs are in the spec file beside it (`domain.ts` has
+   * `domain.props.ts`). Calls to the functions with specs are recorded as
+   * decisions during exploration, and each property is checked on the
+   * inputs seen.
    */
   readonly specs?: readonly string[];
 }

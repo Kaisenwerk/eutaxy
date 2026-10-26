@@ -1,12 +1,13 @@
 /**
  * The `Prover` interface every engine implements, first-party or not, and
  * the aggregation of what engines say into the ladder's verdicts. An
- * engine takes a module's source and the annotated functions to prove and
- * answers per property: `PROVEN` with its name, version and assumptions, or
- * `UNKNOWN` as `gave_up` (a proof did not close, or timed out),
- * `unsupported` (outside its subset) or `unavailable` (not installed). An
- * engine that refutes gives `REFUTED` with a counterexample when it has
- * one. Engines run over a process boundary; nothing here spawns anything.
+ * engine takes a module's source with its specs and the functions to
+ * prove and answers per property: `PROVEN` with its name, version and
+ * assumptions, or `UNKNOWN` as `gave_up` (a proof did not close, or timed
+ * out), `unsupported` (outside its subset) or `unavailable` (not
+ * installed). An engine that refutes gives `REFUTED` with a counterexample
+ * when it has one. Engines run over a process boundary; nothing here
+ * spawns anything.
  */
 
 import type { Counterexample, SpecVerdict } from "@eutaxy/core";
@@ -33,24 +34,24 @@ export type ProofOutcome =
 
 export interface PropertyProof {
   readonly function: string;
-  /** The `@ensures` name, or `@total`. */
+  /** The property's export name in the spec file. */
   readonly property: string;
   readonly outcome: ProofOutcome;
 }
 
 export interface ModuleProofs {
   readonly results: readonly PropertyProof[];
-  /** Annotations that did not parse: properties asked for and never checked. */
+  /** Specs that did not read: properties asked for and never checked. */
   readonly specErrors: readonly SpecError[];
 }
 
 export interface ProveInput {
   /** The module's source text. */
   readonly source: string;
-  /** The annotated functions to prove; every annotated one when omitted. */
+  /** The module's specs, read from its spec file. */
+  readonly specs: ModuleSpecs;
+  /** The functions to prove; every one with specs when omitted. */
   readonly functions?: readonly string[];
-  /** The module's specs when the caller has them already. */
-  readonly specs?: ModuleSpecs;
   readonly timeoutMs?: number;
 }
 
@@ -69,13 +70,12 @@ export interface EngineReport {
 
 /**
  * The simulator's verdicts for a module (CHECKED, TESTED, REFUTED, UNKNOWN,
- * markers included) combined with what the engines proved. A simulator
+ * `total` included) combined with what the engines proved. A simulator
  * counterexample stands. One engine proving is `PROVEN`, the lower rungs'
  * counts kept beside it; an engine refuting where nothing else did is
  * `REFUTED` at the PROVEN rung; one proving and another refuting is
  * `CONFLICT`. An engine that gave up, could not run or does not take the
  * function leaves the verdict as it was, with why among the assumptions.
- * `@total` is proved by acceptance where the engine says so.
  */
 export function aggregate(
   module: string,

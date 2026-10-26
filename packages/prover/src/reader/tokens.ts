@@ -1,35 +1,12 @@
 /**
- * A tokenizer shaped like TypeScript's scanner, which is how Lemma
- * tokenizes an annotation: glyphs inside string, template and regex
- * literals are text, never operators, and a template substitution nests.
- * It knows Lemma's operators besides JavaScript's punctuators; which ones
- * count where is the parser's business.
+ * A tokenizer shaped like TypeScript's scanner: glyphs inside string,
+ * template and regex literals are text, never operators, a `/` is a
+ * regular expression or a division by what precedes it, and a template
+ * substitution nests. It reads the modules and spec files the readers
+ * walk; nothing here knows what a token means.
  */
 
-export type TokenKind =
-  | "ident"
-  | "number"
-  | "string"
-  | "template"
-  | "regex"
-  | "punct"
-  | "op"
-  | "comment";
-
-/** Lemma operators, by canonical name. */
-export type LemmaOp =
-  | "and"
-  | "or"
-  | "not"
-  | "implies"
-  | "iff"
-  | "equiv"
-  | "nequiv"
-  | "neq"
-  | "forall"
-  | "exists"
-  | "member"
-  | "infinity";
+export type TokenKind = "ident" | "number" | "string" | "template" | "regex" | "punct" | "comment";
 
 export interface Token {
   readonly kind: TokenKind;
@@ -37,32 +14,7 @@ export interface Token {
   /** Offsets into the scanned text: [start, end). */
   readonly start: number;
   readonly end: number;
-  /** For kind "op". */
-  readonly op?: LemmaOp;
 }
-
-const glyphs: { readonly [glyph: string]: LemmaOp } = {
-  "∧": "and",
-  "∨": "or",
-  "¬": "not",
-  "→": "implies",
-  "↔": "iff",
-  "≡": "equiv",
-  "≢": "nequiv",
-  "≠": "neq",
-  "∀": "forall",
-  "∃": "exists",
-  "∈": "member",
-  "∞": "infinity",
-};
-
-/** ASCII spellings of Lemma connectives, longest first. */
-const asciiOps: readonly (readonly [string, LemmaOp])[] = [
-  ["<->", "iff"],
-  ["==>", "implies"],
-  ["->", "implies"],
-  ["\\/", "or"],
-];
 
 const punctuators = [
   ">>>=",
@@ -156,8 +108,6 @@ function endsOperand(
       // A `}` closing a statement block ends no expression; one closing an object literal does.
       if (t.text === "}") return !blocks.has(k);
       return t.text === "]";
-    case "op":
-      return false;
     default:
       return true;
   }
@@ -241,8 +191,8 @@ function scan(
   options: { readonly comments?: boolean; readonly untilBrace?: boolean },
 ): { tokens: Token[]; end: number } {
   const tokens: Token[] = [];
-  const push = (kind: TokenKind, start: number, end: number, op?: LemmaOp): void => {
-    tokens.push({ kind, text: text.slice(start, end), start, end, ...(op ? { op } : {}) });
+  const push = (kind: TokenKind, start: number, end: number): void => {
+    tokens.push({ kind, text: text.slice(start, end), start, end });
   };
   // Comments are always tracked here, so regex detection can skip them; they are dropped at the end if unwanted.
   let braces = 0;
@@ -274,28 +224,11 @@ function scan(
       i = close + 2;
       continue;
     }
-    const glyph = glyphs[c];
-    if (glyph) {
-      push("op", i, i + 1, glyph);
-      i++;
-      continue;
-    }
-    const ascii = asciiOps.find(([s]) => text.startsWith(s, i));
-    if (ascii) {
-      push("op", i, i + ascii[0].length, ascii[1]);
-      i += ascii[0].length;
-      continue;
-    }
     if (c === "/") {
       if (!endsOperand(tokens, tokens.length - 1, conditions, blocks)) {
         const end = endOfRegex(text, i);
         push("regex", i, end);
         i = end;
-        continue;
-      }
-      if (text[i + 1] === "\\") {
-        push("op", i, i + 2, "and");
-        i += 2;
         continue;
       }
     }
@@ -320,7 +253,6 @@ function scan(
     if (identStart.test(c)) {
       let j = i + 1;
       while (j < text.length && identPart.test(text[j] as string)) j++;
-      // Words (`forall`, `in`, `iff`, ...) stay identifiers: whether they are Lemma's depends on where.
       push("ident", i, j);
       i = j;
       continue;

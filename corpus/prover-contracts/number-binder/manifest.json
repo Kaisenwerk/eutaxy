@@ -1,12 +1,14 @@
 {
-  "description": "Binders over number, or strings guarded by a regex, are refused per property; the integer and plain-string properties on the same function are proved.",
+  "description": "number binders are proved under the integer model (an assumption every PROVEN names); a regex test in the precondition is refused per property, and the plain-string property on the same function is proved.",
   "expect": {
     "abs": {
-      "over-doubles": "unsupported",
-      "over-integers": "PROVEN",
-      "fixpoint": "PROVEN",
-      "with-a-string": "PROVEN",
-      "needs-a-regex": "unsupported"
+      "overDoubles": "PROVEN",
+      "overIntegers": "PROVEN",
+      "fixpoint": "PROVEN"
+    },
+    "shout": {
+      "plainString": "PROVEN",
+      "needsARegex": "unsupported"
     }
   }
 }

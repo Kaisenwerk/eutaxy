@@ -5,12 +5,12 @@ one tactic script, translation validation. Runs on the Node side, over a
 process boundary: nothing here is loaded into workerd.
 
 **Public surface.** `leanProver` (the engine as a `Prover`: `available` when
-the pinned toolchain is installed, `prove` is `proveModule`); `proveModule` (an annotated module's properties through
+the pinned toolchain is installed, `prove` is `proveModule`); `proveModule` (a module's properties, read with its spec file, through
 the subset reader, the emitter and the pinned Lean; one Lean run per module,
 errors mapped to theorems by line; `PROVEN` with engine name, version and
 assumptions, or `UNKNOWN` as `gave_up` when a proof does not close or Lean
 times out, `unsupported` when a function or property is outside the subset,
-`unavailable` when the pinned toolchain is not installed; `@total` is proved
+`unavailable` when the pinned toolchain is not installed; `total` is proved
 by Lean accepting the definition); `prepare` (read and emit without running
 Lean); the subset reader re-exported from `@eutaxy/prover/reader`, where it
 lives so that every first-party engine reads the same tree; `emitModule`, `statement`, `value` and

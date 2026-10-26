@@ -133,9 +133,9 @@ describe("eutaxy check", () => {
         // off-by-one is found on a generated input, since the violation stopped the exploration
         // before the simulator reached one that shows it.
         expect(report.specs.map((s) => [s.property, s.kind])).toEqual([
-          ["within-captured", "TESTED"],
-          ["adds-the-amount", "TESTED"],
-          ["full-refund-allowed", "REFUTED"],
+          ["withinCaptured", "TESTED"],
+          ["addsTheAmount", "TESTED"],
+          ["fullRefundAllowed", "REFUTED"],
         ]);
         const refuted = report.specs[2] as SpecJson & { rung: string };
         expect(refuted.rung).toBe("TESTED");
@@ -163,7 +163,7 @@ describe("eutaxy check", () => {
       expect(r.status, r.stderr).toBe(1);
       expect(r.stdout).toContain("BOUNDED  refund-lost-update");
       expect(r.stdout).toContain(
-        "REFUTED  decideRefund full-refund-allowed: false at decideRefund(1000, 600, 400)",
+        "REFUTED  decideRefund fullRefundAllowed: false at decideRefund(1000, 600, 400)",
       );
       expect(r.stdout).toContain("captured = 1000, refunded = 600, amount = 400");
     }, 180_000);
@@ -196,9 +196,9 @@ describe("eutaxy check", () => {
         specs: (SpecJson & { engine?: { name: string } })[];
       };
       expect(report.specs.map((s) => [s.property, s.kind])).toEqual([
-        ["within-captured", "PROVEN"],
-        ["adds-the-amount", "PROVEN"],
-        ["full-refund-allowed", "REFUTED"],
+        ["withinCaptured", "PROVEN"],
+        ["addsTheAmount", "PROVEN"],
+        ["fullRefundAllowed", "REFUTED"],
       ]);
       expect(report.specs[0]?.engine).toEqual({ name: "lean", version: "4.35.0" });
       const text = eutaxy([
@@ -211,7 +211,7 @@ describe("eutaxy check", () => {
         "lean",
       ]);
       expect(text.stdout).toContain(
-        "PROVEN   decideRefund within-captured: by lean 4.35.0; also held on",
+        "PROVEN   decideRefund withinCaptured: by lean 4.35.0; also held on",
       );
       const unknown = eutaxy([
         "check",

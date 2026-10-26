@@ -1,50 +1,47 @@
-import { extractSpecs } from "@eutaxy/spec";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, test } from "vitest";
-import { specFiles, specKey } from "./specs.ts";
+import { findSpecModules, moduleSpecifiers, specFiles, specKey } from "./specs.ts";
 
-describe("specsModuleSource", () => {
-  test("each predicate binds its free names from the namespace, under names nothing shadows", () => {
-    const specs = extractSpecs(`
-export { limit } from "./limits.ts";
-export const __eutaxyBool = 2;
-/** @ensures{p} forall (x: int) { x + limit > x ∧ __eutaxyBool === 2 } */
-export function f(x: number) { return x; }
-`);
-    const files = specFiles([{ key: "./m.ts", path: "/m.ts", specs }]);
-    const source = files.find((f) => f.name === "specs/m0.ts")?.source ?? "";
-    expect(source).toContain('const limit = "limit" in __scope ? __scope["limit"]');
-    expect(source).toContain('const __eutaxyBool = "__eutaxyBool" in __scope');
-    expect(source).toContain(
-      "})(__eutaxyBool, __eutaxySame, __eutaxyNamespace, __eutaxyUnresolved)",
-    );
-    // The helpers come in as parameters; the file imports nothing.
-    expect(source).not.toContain("import ");
-    expect(source).toContain(
-      "export const predicates = (__eutaxyNamespace: any, __eutaxyBool: any, __eutaxyUnresolved: any) => ({",
-    );
+describe("findSpecModules and specFiles", () => {
+  test("every spec file beside its module, read into specs; an orphan spec file is an error entry", () => {
+    const dir = mkdtempSync(join(tmpdir(), "eutaxy-specs-"));
+    try {
+      mkdirSync(join(dir, "core"));
+      writeFileSync(
+        join(dir, "core", "domain.ts"),
+        "export function f(x: number): number { return x; }\n",
+      );
+      writeFileSync(
+        join(dir, "core", "domain.props.ts"),
+        'import { forall } from "eutaxy/spec";\nimport { f } from "./domain";\nexport const p = forall(f, { ensures: (x) => f(x) === x });\n',
+      );
+      writeFileSync(join(dir, "orphan.props.ts"), "export const nothing = 1;\n");
+      writeFileSync(join(dir, "scenario.sim.ts"), "export default {};\n");
+      const modules = findSpecModules(dir);
+      expect(modules.map((m) => m.key)).toEqual(["./core/domain.ts", "./orphan.ts"]);
+      expect(modules[0]?.specs.functions[0]?.properties[0]?.name).toBe("p");
+      expect(modules[0]?.specs.errors).toEqual([]);
+      expect(modules[1]?.specs.errors[0]?.message).toContain("has no module orphan.ts beside it");
+      const files = specFiles(modules, join(dir, ".eutaxy"));
+      expect(files.map((f) => f.name)).toEqual(["specs.ts"]);
+      const source = files[0]?.source ?? "";
+      expect(source).toContain('"./core/domain.ts": { specs: {"functions":[{"name":"f"');
+      expect(source).toContain('load: () => import("../core/domain.props.ts")');
+      // The entries are plain data and lazy loaders; the file imports nothing of its own.
+      expect(source).not.toMatch(/^import /m);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
-  test("each module's predicates are their own file, loaded only when a scenario names the module", () => {
-    const specs = extractSpecs(
-      "/** @ensures{p} forall (x: int) { x === x } */\nexport function f(x: number) {}",
-    );
-    const files = specFiles([
-      { key: "./a.ts", path: "/a.ts", specs },
-      { key: "./b.ts", path: "/b.ts", specs },
+  test("a spec file may name its module with the extension, without it, or as .js", () => {
+    expect(moduleSpecifiers("/x/core/domain.ts")).toEqual([
+      "./domain.ts",
+      "./domain",
+      "./domain.js",
     ]);
-    expect(files.map((f) => f.name)).toEqual(["specs.ts", "specs/m0.ts", "specs/m1.ts"]);
-    const index = files[0]?.source ?? "";
-    expect(index).toContain('"./a.ts": () => import("./specs/m0.ts")');
-    expect(index).not.toContain("forall");
-  });
-
-  test("names like __proto__ stay ordinary entries", () => {
-    const specs = extractSpecs(
-      "/** @ensures{__proto__} forall (x: int) { x > 0 } */\nexport function __proto__(x: number) {}",
-    );
-    const source = specFiles([{ key: "./m.ts", path: "/m.ts", specs }])[1]?.source ?? "";
-    expect(source).toContain('["__proto__"]: {');
-    expect(source).toContain('["__proto__"]: ((');
   });
 
   test("keys normalize the way a scenario names a module", () => {

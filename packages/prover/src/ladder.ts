@@ -6,8 +6,8 @@
  */
 
 import type { SpecVerdict } from "@eutaxy/core";
-import type { ModuleSpecs, PredicateOutcome } from "@eutaxy/spec";
-import { type CheckedInput, checkedRung, malformedReason, markerVerdicts } from "./checked.ts";
+import { type Fn, type Forall, isSpec, type ModuleSpecs } from "@eutaxy/spec";
+import { type CheckedInput, checkedRung, malformedReason } from "./checked.ts";
 import { type TestedOptions, testedRung } from "./tested.ts";
 
 export interface LadderOptions {
@@ -20,6 +20,7 @@ export function specLadder(input: CheckedInput, options: LadderOptions = {}): Sp
   const checked = checkedRung(input);
   if (checked.kind === "REFUTED" || options.tested === false || options.tested === undefined)
     return checked;
+  if (input.property.kind === "total") return checked;
   // A property that could not be evaluated on an input the simulator passed is malformed: sampling
   // that happens to miss the input must not make it look sound.
   if (checked.kind === "UNKNOWN" && checked.reason.startsWith(malformedReason(""))) return checked;
@@ -27,7 +28,7 @@ export function specLadder(input: CheckedInput, options: LadderOptions = {}): Sp
     module: input.module,
     fn: input.fn,
     property: input.property,
-    predicate: input.predicate,
+    spec: input.spec,
     ...options.tested,
   });
   if (tested.kind === "REFUTED") return tested;
@@ -54,16 +55,17 @@ function reason(v: SpecVerdict): string {
   return v.kind === "UNKNOWN" ? v.reason : v.kind;
 }
 
-/** Compiled predicates of a module, by function and property name. */
-export interface ModulePredicates {
-  readonly [fn: string]: { readonly [property: string]: (...binders: never[]) => PredicateOutcome };
-}
-
-/** Every spec verdict for one module: each property through the ladder, the markers as the rungs leave them. */
+/**
+ * Every spec verdict for one module: each property through the ladder.
+ * `props` is the spec file's namespace, `namespace` the module's (after
+ * observation ended, so it holds the functions themselves); a spec whose
+ * function is not the module's export of that name is not evaluated.
+ */
 export function checkSpecModule(
   module: string,
   specs: ModuleSpecs,
-  predicates: ModulePredicates,
+  props: Readonly<Record<string, unknown>>,
+  namespace: Readonly<Record<string, unknown>>,
   observed: {
     readonly calls: readonly { readonly function: string; readonly args: readonly unknown[] }[];
     readonly unobservable: { readonly [fn: string]: string };
@@ -76,22 +78,36 @@ export function checkSpecModule(
     const unobservable = Object.hasOwn(observed.unobservable, fn.name)
       ? observed.unobservable[fn.name]
       : undefined;
-    const own = Object.hasOwn(predicates, fn.name) ? predicates[fn.name] : undefined;
-    return [
-      ...fn.ensures.map((property) =>
-        specLadder(
-          {
-            module,
-            fn,
-            property,
-            calls,
-            predicate: own && Object.hasOwn(own, property.name) ? own[property.name] : undefined,
-            ...(unobservable === undefined ? {} : { unobservable }),
-          },
-          options,
-        ),
-      ),
-      ...markerVerdicts(module, fn),
-    ];
+    return fn.properties.map((property) => {
+      const exported = Object.hasOwn(props, property.name) ? props[property.name] : undefined;
+      let spec: Forall<Fn> | undefined;
+      let mismatch: string | undefined;
+      if (!isSpec(exported)) mismatch = `the spec file exports no spec named ${property.name}`;
+      else if (exported.fn !== namespace[fn.name])
+        mismatch = `${property.name} names a function that is not the module's export ${fn.name}`;
+      else if (exported.kind === "forall") spec = exported;
+      if (mismatch !== undefined)
+        return {
+          module,
+          function: fn.name,
+          property: property.name,
+          text: property.text,
+          kind: "UNKNOWN",
+          cause: "unavailable",
+          reason: mismatch,
+          assumptions: [],
+        };
+      return specLadder(
+        {
+          module,
+          fn,
+          property,
+          calls,
+          spec,
+          ...(unobservable === undefined ? {} : { unobservable }),
+        },
+        options,
+      );
+    });
   });
 }

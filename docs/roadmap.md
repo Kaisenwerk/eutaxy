@@ -23,8 +23,8 @@ core signatures a target sent (a record parameter, a nullable record, a
 union of string literals, a tagged result) fit no Lemma binder, and
 widening Lemma would have meant forking it; with specs in TypeScript the
 binders are the parameter types. In this order:
-- Specs in TypeScript (`forall(f, { when, ensures })`, `total(f)`, in a
-  spec file beside the module), read into `SpecIR` with typed binders by
+- Done: specs in TypeScript (`forall(f, { when, ensures })`, `total(f)`, in
+  a spec file beside the module), read into `SpecIR` with typed binders by
   the hand-written reader; `CHECKED` and `TESTED` over records, nullable
   types, unions of literals and tagged unions. Breaking: Lemma annotations
   are dropped, with a migration note in the changelog. A breaking change

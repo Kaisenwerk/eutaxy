@@ -62,6 +62,7 @@ describe("published package", () => {
       expect(pkg["exports"]).toEqual({
         ".": { types: "./dist/index.d.mts", default: "./dist/index.mjs" },
         "./cloudflare": { types: "./dist/cloudflare.d.mts", default: "./dist/cloudflare.mjs" },
+        "./spec": { types: "./dist/spec.d.mts", default: "./dist/spec.mjs" },
         "./aws": { types: "./dist/aws.d.mts", default: "./dist/aws.mjs" },
       });
       // Internal packages are bundled: nothing a consumer installs may reference them.

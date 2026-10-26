@@ -13,7 +13,7 @@ import {
 } from "@eutaxy/cloudflare";
 import type { ScenarioSpec, SpecVerdict } from "@eutaxy/core";
 import { observeCore } from "@eutaxy/engine";
-import { checkSpecModule, lemmaBool, lemmaUnresolved, type ModulePredicates } from "@eutaxy/prover";
+import { checkSpecModule } from "@eutaxy/prover";
 import { renderJson } from "@eutaxy/report";
 import type { ModuleSpecs } from "@eutaxy/spec";
 import { globKey, specKey } from "./keys.ts";
@@ -21,7 +21,7 @@ import { globKey, specKey } from "./keys.ts";
 /** What the generated test stores in its task meta. */
 export interface CheckTransport {
   readonly report: unknown;
-  /** Set instead of a report when a module the scenario's `specs` names has no usable annotations. */
+  /** Set instead of a report when a module the scenario's `specs` names has no usable spec file. */
   readonly specErrors?: readonly SpecError[];
   readonly worker: { readonly entry: string; readonly config: string };
   readonly setup: readonly { readonly kind: string; readonly [key: string]: unknown }[];
@@ -35,14 +35,10 @@ export interface SpecError {
   readonly message: string;
 }
 
-/** A generated spec module: the module's extracted specs and its compiled predicates. */
+/** A generated spec entry: the module's specs, read on the Node side, and a loader of its spec file. */
 export interface SpecEntry {
   readonly specs: ModuleSpecs;
-  readonly predicates: (
-    namespace: object,
-    bool: typeof lemmaBool,
-    unresolved: typeof lemmaUnresolved,
-  ) => ModulePredicates;
+  readonly load: () => Promise<object>;
 }
 
 /** Vite globs, keyed as `import.meta.glob` keys them from `.eutaxy/` (see `globKey`). */
@@ -70,21 +66,24 @@ export interface SelectedModule {
   readonly key: string;
   readonly namespace: object;
   readonly specs: ModuleSpecs;
-  readonly predicates: ModulePredicates;
-  /** The functions observed: the annotated ones, and the decisions `refines` names that the module exports. */
+  /** The spec file's namespace: its exports are the specs. */
+  readonly props: Readonly<Record<string, unknown>>;
+  /** The functions observed: the ones with specs, and the decisions `refines` names that the module exports. */
   readonly names: readonly string[];
 }
 
 /**
- * The modules the scenario's `specs` name, loaded with their specs, and
- * every reason the check cannot go ahead: a module that is not there, an
- * annotation that does not parse, a function name observed in two modules
- * (decisions are logged by name, so it would be ambiguous).
+ * The modules the scenario's `specs` name, loaded with their specs and
+ * their spec files, and every reason the check cannot go ahead: a module
+ * that is not there, a spec that does not read, a function name observed
+ * in two modules (decisions are logged by name, so it would be ambiguous).
+ * The spec files are loaded here, before anything is observed, so the
+ * functions their specs hold are the modules' own.
  */
 export async function selectSpecModules(
   scenario: ScenarioSpec,
   modules: ModuleGlob,
-  specLoaders: Readonly<Record<string, () => Promise<SpecEntry>>>,
+  specEntries: Readonly<Record<string, SpecEntry>>,
 ): Promise<{
   readonly selected: readonly SelectedModule[];
   readonly specErrors: readonly SpecError[];
@@ -100,14 +99,18 @@ export async function selectSpecModules(
     }
     const namespace = (await load()) as Record<string, unknown>;
     const key = specKey(path);
-    const loadSpec = Object.hasOwn(specLoaders, key) ? specLoaders[key] : undefined;
-    const entry = loadSpec ? await loadSpec() : undefined;
-    const specs: ModuleSpecs = entry?.specs ?? { functions: [], exports: [], errors: [] };
-    for (const e of specs.errors) specErrors.push({ module: path, ...e });
+    const entry = Object.hasOwn(specEntries, key) ? specEntries[key] : undefined;
+    const specs: ModuleSpecs = entry?.specs ?? { functions: [], errors: [] };
+    for (const e of specs.errors)
+      specErrors.push({
+        module: e.inModule ? path : `${path.replace(/\.ts$/, "")}.props.ts`,
+        line: e.line,
+        message: e.message,
+      });
+    const props = entry ? ((await entry.load()) as Record<string, unknown>) : {};
     const exported = decisions.filter((d) => typeof namespace[d] === "function");
     const names = [...new Set([...specs.functions.map((f) => f.name), ...exported])];
-    const predicates = entry ? entry.predicates(namespace, lemmaBool, lemmaUnresolved) : {};
-    selected.push({ path, key, namespace, specs, predicates, names });
+    selected.push({ path, key, namespace, specs, props, names });
   }
   const observedIn = new Map<string, string>();
   for (const m of selected)
@@ -135,8 +138,8 @@ export interface WorkerdCheckInput {
   readonly sqlFiles: Readonly<Record<string, string>>;
   /** The TypeScript modules next to the scenario (the Worker and the spec modules among them). */
   readonly modules: ModuleGlob;
-  /** The generated `specs.ts` loaders, by module key. */
-  readonly specLoaders: Readonly<Record<string, () => Promise<SpecEntry>>>;
+  /** The generated `specs.ts` entries, by module key. */
+  readonly specEntries: Readonly<Record<string, SpecEntry>>;
   readonly seed: string;
   readonly maxRuns?: number;
   readonly budgetMs?: number;
@@ -161,7 +164,7 @@ export async function checkInWorkerd(input: WorkerdCheckInput): Promise<CheckTra
   const { selected, specErrors } = await selectSpecModules(
     scenario,
     input.modules,
-    input.specLoaders,
+    input.specEntries,
   );
   const transportBase = { worker: scenario.worker, setup: scenario.setup };
   if (specErrors.length > 0) return { report: null, specErrors, ...transportBase };
@@ -179,9 +182,14 @@ export async function checkInWorkerd(input: WorkerdCheckInput): Promise<CheckTra
   }
   // CHECKED on the calls the exploration recorded, then TESTED on inputs drawn from the check's seed.
   const specs: SpecVerdict[] = selected.flatMap((m, i) =>
-    checkSpecModule(m.key, m.specs, m.predicates, observers[i] as ReturnType<typeof observeCore>, {
-      tested: { seed: input.seed },
-    }),
+    checkSpecModule(
+      m.key,
+      m.specs,
+      m.props,
+      m.namespace as Record<string, unknown>,
+      observers[i] as ReturnType<typeof observeCore>,
+      { tested: { seed: input.seed } },
+    ),
   );
   return {
     report: JSON.parse(renderJson(verdict, specs)) as unknown,

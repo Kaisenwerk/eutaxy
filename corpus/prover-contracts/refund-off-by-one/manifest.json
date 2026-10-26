@@ -2,9 +2,9 @@
   "description": "The planted off-by-one: two properties proved, the false one given up on.",
   "expect": {
     "decideRefund": {
-      "within-captured": "PROVEN",
-      "adds-the-amount": "PROVEN",
-      "full-refund-allowed": "gave_up"
+      "withinCaptured": "PROVEN",
+      "addsTheAmount": "PROVEN",
+      "fullRefundAllowed": "gave_up"
     }
   }
 }

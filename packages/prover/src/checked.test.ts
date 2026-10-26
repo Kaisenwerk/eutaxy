@@ -1,61 +1,65 @@
-import { extractSpecs, type FunctionSpec, type PredicateOutcome } from "@eutaxy/spec";
+import { type Binder, type FunctionSpec, forall, type Property, total } from "@eutaxy/spec";
 import { describe, expect, test } from "vitest";
-import {
-  checkedRung,
-  inDomain,
-  lemmaBool,
-  lemmaUnresolved,
-  markerVerdicts,
-  render,
-} from "./checked.ts";
+import { checkedRung, evaluate, render } from "./checked.ts";
 import { checkSpecModule } from "./ladder.ts";
 
-const source = `
-/**
- * @ensures{within-captured} forall (captured refunded amount: int) {
- *   0 <= refunded ∧ refunded <= captured ∧ amount > 0 ==>
- *   (decideRefund(captured, refunded, amount).ok → refunded + amount <= captured)
- * }
- * @ensures{not-a-param} forall (other: int) { other === other }
- * @total
- */
-export function decideRefund(captured: number, refunded: number, amount: number) {
-  return { ok: amount <= captured };
-}
-`;
-const fn = extractSpecs(source).functions[0] as FunctionSpec;
-const property = fn.ensures[0] as NonNullable<FunctionSpec["ensures"][number]>;
+type Decide = (c: number, r: number, a: number) => { ok: boolean };
+const buggy: Decide = (c, _r, a) => ({ ok: a <= c });
+const fixed: Decide = (c, r, a) => ({ ok: r + a <= c });
 
-/** The predicate the generator would compile for within-captured, against a given decision. */
-const withinCaptured =
-  (decide: (c: number, r: number, a: number) => { ok: boolean }) =>
-  (captured: number, refunded: number, amount: number): PredicateOutcome => {
-    if (!lemmaBool(0 <= refunded && refunded <= captured && amount > 0)) return "discarded";
-    return !lemmaBool(decide(captured, refunded, amount).ok) ||
-      lemmaBool(refunded + amount <= captured)
-      ? "held"
-      : "refuted";
-  };
+const int = (name: string): Binder => ({ name, type: { kind: "number" }, hint: { integer: true } });
+const binders = [int("captured"), int("refunded"), int("amount")];
+const property: Property = {
+  name: "withinCaptured",
+  kind: "forall",
+  binders,
+  imports: [],
+  text: "decideRefund(captured, refunded, amount).ok || refunded + amount <= captured",
+  line: 3,
+};
+const fn: FunctionSpec = {
+  name: "decideRefund",
+  params: binders.map((b) => ({ name: b.name, type: b.type })),
+  properties: [
+    property,
+    {
+      name: "decideRefundTotal",
+      kind: "total",
+      binders,
+      imports: [],
+      text: "total(decideRefund)",
+      line: 9,
+    },
+  ],
+  line: 1,
+  offset: 0,
+};
 
-const buggy = (c: number, _r: number, a: number) => ({ ok: a <= c });
-const fixed = (c: number, r: number, a: number) => ({ ok: r + a <= c });
+/** The spec a spec file would export for within-captured, against a given decision. */
+const withinCaptured = (decide: Decide) =>
+  forall(decide, {
+    when: (captured, refunded, amount) => 0 <= refunded && refunded <= captured && amount > 0,
+    ensures: (captured, refunded, amount) =>
+      !decide(captured, refunded, amount).ok || refunded + amount <= captured,
+  });
+
 const input = (calls: unknown[][], decide = fixed) => ({
   module: "./domain.ts",
   fn,
   property,
   calls: calls.map((args) => ({ args })),
-  predicate: withinCaptured(decide),
+  spec: withinCaptured(decide),
 });
 
 describe("the CHECKED rung", () => {
-  test("held on every distinct input the simulator passed, preconditions discarding", () => {
+  test("held on every distinct input the simulator passed, the precondition discarding", () => {
     const v = checkedRung(
       input([
         [1000, 0, 400],
         [1000, 400, 400],
         [1000, 0, 400],
         [1000, 0, 0],
-        [1000, 0, 1.5],
+        [1000, -1, 5],
       ]),
     );
     expect(v).toMatchObject({ kind: "CHECKED", inputs: 2, discarded: 2 });
@@ -86,134 +90,151 @@ describe("the CHECKED rung", () => {
     });
   });
 
-  test("a throw while evaluating is a counterexample; a non-boolean atom is a malformed property", () => {
-    const throwing = checkedRung({
-      ...input([[1, 0, 1]]),
-      predicate: () => {
-        throw new RangeError("boom");
+  test("a claim that throws is false there, and the error is reported", () => {
+    const throwing = forall(fixed, {
+      ensures: (captured) => {
+        if (captured > 10) throw new Error("boom");
+        return true;
       },
     });
-    expect(throwing).toMatchObject({
+    const v = checkedRung({
+      ...input([
+        [5, 0, 1],
+        [100, 0, 1],
+      ]),
+      spec: throwing,
+    });
+    expect(v).toMatchObject({
       kind: "REFUTED",
-      counterexample: { error: "RangeError: boom" },
+      counterexample: { call: "decideRefund(100, 0, 1)", error: "Error: boom" },
     });
-    // The function under test throwing a SyntaxError (JSON.parse, say) is a counterexample too.
-    const parsing = checkedRung({
-      ...input([[1, 0, 1]]),
-      predicate: () => {
-        throw new SyntaxError("Unexpected token");
-      },
-    });
-    expect(parsing).toMatchObject({
-      kind: "REFUTED",
-      counterexample: { error: "SyntaxError: Unexpected token" },
-    });
-    const malformed = checkedRung({
-      ...input([[1, 0, 1]]),
-      predicate: () => (lemmaBool(1) ? "held" : "refuted"),
-    });
-    expect(malformed).toMatchObject({ kind: "UNKNOWN", cause: "unsupported" });
-    // A ReferenceError is a name the property's scope missed, not the function failing: never a refutation.
-    const missed = checkedRung({
-      ...input([[1, 0, 1]]),
-      predicate: () => {
-        throw new ReferenceError("v is not defined");
-      },
-    });
-    expect(missed).toMatchObject({ kind: "UNKNOWN", cause: "unsupported" });
-    const unresolved = checkedRung({
-      ...input([[1, 0, 1]]),
-      predicate: () => lemmaUnresolved(["missing"]),
-    });
-    expect(unresolved).toMatchObject({ kind: "UNKNOWN", cause: "unsupported" });
   });
 
-  test("nothing to check is UNKNOWN, never CHECKED", () => {
-    expect(checkedRung(input([]))).toMatchObject({
-      kind: "UNKNOWN",
-      cause: "gave_up",
-      reason: "the simulator never called decideRefund",
+  test("a precondition that throws, or a claim that is not a boolean, is a malformed property: UNKNOWN", () => {
+    const badWhen = forall(fixed, {
+      when: (): boolean => {
+        throw new TypeError("cannot read");
+      },
+      ensures: () => true,
     });
-    expect(checkedRung(input([[1000, 0, 0]]))).toMatchObject({ kind: "UNKNOWN", cause: "gave_up" });
+    const v = checkedRung({ ...input([[1, 0, 1]]), spec: badWhen });
+    expect(v).toMatchObject({ kind: "UNKNOWN", cause: "unsupported" });
+    if (v.kind === "UNKNOWN")
+      expect(v.reason).toContain("the precondition threw TypeError: cannot read");
+    const notBoolean = forall(fixed, { ensures: (() => 1) as unknown as () => boolean });
+    const w = checkedRung({ ...input([[1, 0, 1]]), spec: notBoolean });
+    expect(w).toMatchObject({ kind: "UNKNOWN", cause: "unsupported" });
+    if (w.kind === "UNKNOWN") expect(w.reason).toContain("returned 1, not a boolean");
+  });
+
+  test("no call, or no call inside the claim, is UNKNOWN gave_up, never CHECKED", () => {
+    const none = checkedRung(input([]));
+    expect(none).toMatchObject({ kind: "UNKNOWN", cause: "gave_up" });
+    if (none.kind === "UNKNOWN") expect(none.reason).toContain("never called");
+    const outside = checkedRung(input([[1000, 0, 0]]));
+    expect(outside).toMatchObject({ kind: "UNKNOWN", cause: "gave_up" });
+    if (outside.kind === "UNKNOWN") expect(outside.reason).toContain("1 distinct input(s)");
+  });
+
+  test("an unobservable function, a missing spec export and total are UNKNOWN with the cause", () => {
     expect(checkedRung({ ...input([[1, 0, 1]]), unobservable: "frozen" })).toMatchObject({
       kind: "UNKNOWN",
       cause: "unavailable",
     });
-    expect(checkedRung({ ...input([[1, 0, 1]]), predicate: undefined })).toMatchObject({
+    expect(checkedRung({ ...input([[1, 0, 1]]), spec: undefined })).toMatchObject({
       kind: "UNKNOWN",
       cause: "unavailable",
     });
-  });
-
-  test("a binder that is not a parameter cannot be checked on the simulator's inputs", () => {
-    const v = checkedRung({ ...input([[1, 0, 1]]), property: fn.ensures[1] as typeof property });
-    expect(v).toMatchObject({ kind: "UNKNOWN", cause: "unsupported" });
-  });
-
-  test("a function named like an Object.prototype member is checked like any other", () => {
-    const named = extractSpecs(
-      "/** @ensures{p} forall (n: int) { n > 0 } */\nexport function toString(n: number) { return n; }",
-    );
-    const verdicts = checkSpecModule(
-      "./m.ts",
-      named,
-      { toString: { p: (n: number) => (n > 0 ? "held" : "refuted") } },
-      {
-        calls: [{ function: "toString", args: [-1] }],
-        unobservable: {},
-      },
-    );
-    expect(verdicts).toMatchObject([{ kind: "REFUTED" }]);
-  });
-
-  test("markers the rung cannot decide", () => {
-    expect(markerVerdicts("./domain.ts", fn)).toMatchObject([
-      { property: "@total", kind: "UNKNOWN", cause: "unsupported" },
-    ]);
+    const t = checkedRung({ ...input([[1, 0, 1]]), property: fn.properties[1] as Property });
+    expect(t).toMatchObject({
+      kind: "UNKNOWN",
+      cause: "unsupported",
+      property: "decideRefundTotal",
+    });
   });
 });
 
-describe("domains and guards", () => {
-  const b = (text: string) =>
-    extractSpecs(`/** @ensures{p} ${text} */\nexport function f(x) {}`).functions[0]?.ensures[0]
-      ?.property.binders[0];
-  test.each([
-    ["forall (x: int) { true }", 3, true],
-    ["forall (x: int) { true }", 3.5, false],
-    ["forall (x: nat) { true }", -1, false],
-    ["forall (x: number ∈ (0, 1]) { true }", 1, true],
-    ["forall (x: number ∈ (0, 1]) { true }", 0, false],
-    ["forall (x: number ∈ [0, ∞]) { true }", Number.POSITIVE_INFINITY, true],
-    ["forall (x: bigint ∈ (0n, 100n]) { true }", 100n, true],
-    ["forall (x: bigint ∈ (0n, 100n]) { true }", 0n, false],
-    ["forall (x: bigint) { true }", 1, false],
-    ["forall (x: string ∈ /a+/) { true }", "aaa", true],
-    ["forall (x: string ∈ /a+/) { true }", "aab", false],
-    // JavaScript's $ without the m flag is the end of input: a final newline is outside the guard.
-    ["forall (x: string ∈ /a/) { true }", "a\n", false],
-    ["forall (x: boolean) { true }", false, true],
-  ])("%s on %s: %s", (text, value, expected) => {
-    const binder = b(text);
-    expect(binder).toBeDefined();
-    if (binder) expect(inDomain(binder, value)).toBe(expected);
+describe("evaluate", () => {
+  test("the precondition decides inside or outside; the claim decides held or refuted", () => {
+    const spec = withinCaptured(fixed);
+    expect(evaluate(spec, [10, 0, 5])).toEqual({ outcome: "held" });
+    expect(evaluate(spec, [10, 20, 5])).toEqual({ outcome: "discarded" });
+    expect(evaluate(withinCaptured(buggy), [10, 8, 5])).toEqual({ outcome: "refuted" });
+  });
+});
+
+describe("checkSpecModule", () => {
+  const specs = { functions: [fn], errors: [] };
+  const observed = (calls: unknown[][]) => ({
+    calls: calls.map((args) => ({ function: "decideRefund", args })),
+    unobservable: {},
   });
 
-  test("integer guards compare exactly beyond 2^53", () => {
-    const binder = b("forall (x: int ∈ [9007199254740993, 9007199254740994]) { true }");
-    expect(binder).toBeDefined();
-    if (!binder) return;
-    expect(inDomain(binder, 9007199254740992)).toBe(false);
-    expect(inDomain(binder, 9007199254740994)).toBe(true);
-  });
-
-  test("values render as exact literals", () => {
-    expect([-0, Number.NaN, 3n, 'a"b', undefined, { n: 1n }].map(render)).toEqual([
-      "-0",
-      "NaN",
-      "3n",
-      '"a\\"b"',
-      "undefined",
-      '{"n":"1n"}',
+  test("every property of every function, the spec taken from the spec file's export of that name", () => {
+    const props = { withinCaptured: withinCaptured(fixed), decideRefundTotal: total(fixed) };
+    const verdicts = checkSpecModule(
+      "./domain.ts",
+      specs,
+      props,
+      { decideRefund: fixed },
+      observed([[1000, 0, 400]]),
+    );
+    expect(verdicts.map((v) => [v.property, v.kind])).toEqual([
+      ["withinCaptured", "CHECKED"],
+      ["decideRefundTotal", "UNKNOWN"],
     ]);
+  });
+
+  test("a spec export that is missing, or names another function, is UNKNOWN unavailable", () => {
+    const other: Decide = (c, r, a) => fixed(c, r, a);
+    const props = { withinCaptured: withinCaptured(other) };
+    const verdicts = checkSpecModule(
+      "./domain.ts",
+      specs,
+      props,
+      { decideRefund: fixed },
+      observed([[1, 0, 1]]),
+    );
+    expect(verdicts[0]).toMatchObject({ kind: "UNKNOWN", cause: "unavailable" });
+    if (verdicts[0]?.kind === "UNKNOWN")
+      expect(verdicts[0].reason).toBe(
+        "withinCaptured names a function that is not the module's export decideRefund",
+      );
+    const missing = checkSpecModule(
+      "./domain.ts",
+      specs,
+      {},
+      { decideRefund: fixed },
+      observed([]),
+    );
+    if (missing[0]?.kind === "UNKNOWN")
+      expect(missing[0].reason).toContain("exports no spec named withinCaptured");
+  });
+});
+
+describe("render", () => {
+  test("values as literals, exact for the primitive types, JSON for records", () => {
+    expect(render(-0)).toBe("-0");
+    expect(render(10n)).toBe("10n");
+    expect(render('a"b')).toBe('"a\\"b"');
+    expect(render({ ok: true, n: 2n })).toBe('{"ok":true,"n":"2n"}');
+    expect(render(null)).toBe("null");
+    expect(render(undefined)).toBe("undefined");
+  });
+});
+
+describe("the CHECKED rung and the parameter types", () => {
+  test("a call whose argument is not of the declared type is outside the claim, not a counterexample", () => {
+    // A shell passing JSON.parse's string where a number is declared: the claim never quantified over it.
+    const v = checkedRung(
+      input(
+        [
+          ["12" as unknown as number, 0, 1],
+          [1000, 0, 400],
+        ],
+        buggy,
+      ),
+    );
+    expect(v).toMatchObject({ kind: "CHECKED", inputs: 1, discarded: 1 });
   });
 });

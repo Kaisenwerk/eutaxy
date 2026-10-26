@@ -30,7 +30,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./cloudflare": "./src/cloudflare.ts",
-    "./aws": "./src/aws.ts"
+    "./aws": "./src/aws.ts",
+    "./spec": "./src/spec.ts"
   },
   "bin": {
     "eutaxy": "./bin/eutaxy.mjs"
@@ -58,6 +59,10 @@
       "./aws": {
         "types": "./dist/aws.d.mts",
         "default": "./dist/aws.mjs"
+      },
+      "./spec": {
+        "types": "./dist/spec.d.mts",
+        "default": "./dist/spec.mjs"
       }
     },
     "bin": {

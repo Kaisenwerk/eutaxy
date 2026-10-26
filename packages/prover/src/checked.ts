@@ -1,150 +1,72 @@
 /**
  * The `CHECKED` rung: a property evaluated on every input the simulator
- * actually passed to its function. Binders are matched to the function's
- * parameters by name, so each recorded call is one assignment; a value
- * outside its binder's domain or guard, or one failing a precondition, is
+ * actually passed to its function. Binders are the function's parameters,
+ * so each recorded call is one assignment; one failing the precondition is
  * outside the claim and discarded. One assignment where the claim is false
  * refutes the property. Holding on all of them is `CHECKED`, which says
  * nothing about inputs the simulator never passed.
  */
 
 import type { Counterexample, SpecVerdict } from "@eutaxy/core";
-import {
-  type Binder,
-  endpointNumber,
-  type FunctionSpec,
-  type NamedProperty,
-  type PredicateOutcome,
-} from "@eutaxy/spec";
+import type { Fn, Forall, FunctionSpec, Property } from "@eutaxy/spec";
+import { conforms } from "./generate.ts";
+import { render } from "./render.ts";
 
-/** Thrown by `lemmaBool` when an atom is not a genuine boolean: the property is malformed, not false. */
-export class AtomNotBoolean extends TypeError {}
+export { render } from "./render.ts";
 
-/** Thrown by `lemmaUnresolved`: the property names something neither its module nor the globals define. */
-export class UnresolvedName extends ReferenceError {}
+/** What evaluating a spec on one assignment came to. */
+export type PredicateOutcome = "held" | "discarded" | "refuted";
 
-/** What generated predicates call when free names did not resolve. */
-export function lemmaUnresolved(names: readonly string[]): never {
-  throw new UnresolvedName(
-    `the property refers to ${names.join(", ")}, which neither its module exports nor the globals define`,
-  );
-}
-
-/** The atom check generated predicates call: its argument when it is a boolean. */
-export function lemmaBool(value: unknown): boolean {
-  if (typeof value !== "boolean")
-    throw new AtomNotBoolean(`a Lemma atom evaluated to ${render(value)}, not a boolean`);
-  return value;
-}
-
-/** A value as a JavaScript literal, exact for the binder domains. */
-export function render(value: unknown): string {
-  switch (typeof value) {
-    case "bigint":
-      return `${value}n`;
-    case "number":
-      return Object.is(value, -0) ? "-0" : String(value);
-    case "string":
-      return JSON.stringify(value);
-    case "undefined":
-      return "undefined";
-    case "boolean":
-      return String(value);
-    case "function":
-      return "[function]";
-  }
-  try {
-    const text = JSON.stringify(value, (_, v: unknown) => (typeof v === "bigint" ? `${v}n` : v));
-    return text === undefined ? String(value) : text.length > 200 ? `${text.slice(0, 200)}…` : text;
-  } catch {
-    return String(value);
-  }
-}
-
-/** What evaluating a predicate on one assignment came to. */
 export type Evaluation =
-  | { readonly outcome: PredicateOutcome }
-  | { readonly outcome: "refuted"; readonly error: string }
+  | { readonly outcome: "held" | "discarded" }
+  | { readonly outcome: "refuted"; readonly error?: string }
   /** The property, not the function, is at fault: it cannot be evaluated at any rung. */
   | { readonly malformed: string };
 
 /**
- * One assignment through a predicate. An atom that is not a boolean, or a
- * name nothing defines, is a malformed property. Any other throw, the
- * function's own included (JSON.parse's SyntaxError, say), means the claim
- * is not true there. A ReferenceError counts as malformed: compiled
- * TypeScript under test hardly throws one, a name the property's scope
- * analysis missed does, and that must never pass for a refutation.
+ * One assignment through a spec. The precondition decides whether the
+ * assignment is inside the claim; a precondition that throws or does not
+ * answer a boolean is a malformed property, since it cannot tell. The
+ * claim then holds, or is false, or throws: a throw from the claim, the
+ * function's own included, means the claim is not true there. A claim
+ * that returns something other than a boolean is malformed.
  */
-export function evaluate(
-  predicate: (...binders: unknown[]) => PredicateOutcome,
-  values: readonly unknown[],
-): Evaluation {
+export function evaluate(spec: Forall<Fn>, values: readonly unknown[]): Evaluation {
+  const args = values as never[];
+  if (spec.when) {
+    let inside: unknown;
+    try {
+      inside = spec.when(...args);
+    } catch (err) {
+      return { malformed: `the precondition threw ${String(err)}` };
+    }
+    if (typeof inside !== "boolean")
+      return { malformed: `the precondition returned ${render(inside)}, not a boolean` };
+    if (!inside) return { outcome: "discarded" };
+  }
+  let claim: unknown;
   try {
-    return { outcome: predicate(...values) };
+    claim = spec.ensures(...args);
   } catch (err) {
-    if (err instanceof AtomNotBoolean || err instanceof ReferenceError)
-      return { malformed: String(err) };
     return { outcome: "refuted", error: String(err) };
   }
-}
-
-/** A finite integer endpoint's value, exact: underscores and the `n` suffix dropped. */
-export function endpointBigInt(value: string): bigint {
-  return BigInt(value.replace(/_/g, "").replace(/n$/, ""));
-}
-
-function bound(value: string, integral: boolean): number | bigint {
-  if (integral && !value.endsWith("∞")) return endpointBigInt(value);
-  return endpointNumber(value);
+  if (typeof claim !== "boolean")
+    return { malformed: `the claim returned ${render(claim)}, not a boolean` };
+  return { outcome: claim ? "held" : "refuted" };
 }
 
 /** How every rung words an `UNKNOWN` for a property that cannot be evaluated; the ladder recognizes it. */
 export const malformedReason = (detail: string): string =>
   `the property could not be evaluated: ${detail}`;
 
-/** Whether a value lies in a binder's domain and guard. */
-export function inDomain(b: Binder, v: unknown): boolean {
-  switch (b.domain) {
-    case "int":
-      if (!(typeof v === "number" && Number.isInteger(v))) return false;
-      break;
-    case "nat":
-      if (!(typeof v === "number" && Number.isInteger(v) && v >= 0)) return false;
-      break;
-    case "number":
-      if (typeof v !== "number") return false;
-      break;
-    case "bigint":
-      if (typeof v !== "bigint") return false;
-      break;
-    case "string":
-      if (typeof v !== "string") return false;
-      break;
-    case "boolean":
-      return typeof v === "boolean";
-  }
-  const g = b.guard;
-  if (!g) return true;
-  if (g.kind === "regex") return new RegExp(`^(?:${g.pattern})$`, g.flags).test(v as string);
-  // Integer domains compare exactly: an integer double converts to bigint without loss.
-  const integral = b.domain !== "number";
-  const x = integral ? BigInt(v as number | bigint) : (v as number);
-  const lo = bound(g.lower.value, integral);
-  const hi = bound(g.upper.value, integral);
-  const aboveLower = g.lower.inclusive ? x >= lo : x > lo;
-  const belowUpper = g.upper.inclusive ? x <= hi : x < hi;
-  return aboveLower && belowUpper;
-}
-
 export interface CheckedInput {
   readonly module: string;
   readonly fn: FunctionSpec;
-  readonly property: NamedProperty;
+  readonly property: Property;
   /** The calls the simulator made, with their arguments. */
   readonly calls: readonly { readonly args: readonly unknown[] }[];
-  /** The compiled predicate over the binders, or undefined when it could not be built. */
-  readonly predicate: ((...binders: never[]) => PredicateOutcome) | undefined;
+  /** The spec file's export, or undefined when it could not be loaded. */
+  readonly spec: Forall<Fn> | undefined;
   /** Why the function's calls could not be observed, when they could not. */
   readonly unobservable?: string;
 }
@@ -155,40 +77,32 @@ export function checkedRung(input: CheckedInput): SpecVerdict {
   const unknown = (
     cause: "gave_up" | "unsupported" | "unavailable",
     reason: string,
-  ): SpecVerdict => ({
-    ...base,
-    kind: "UNKNOWN",
-    cause,
-    reason,
-    assumptions: [],
-  });
+  ): SpecVerdict => ({ ...base, kind: "UNKNOWN", cause, reason, assumptions: [] });
+  if (property.kind === "total")
+    return unknown(
+      "unsupported",
+      "termination is not observable on the inputs the simulator passed; total needs a prover",
+    );
   if (input.unobservable)
     return unknown(
       "unavailable",
       `calls to ${fn.name} could not be observed: ${input.unobservable}`,
     );
-  const predicate = input.predicate as ((...binders: unknown[]) => PredicateOutcome) | undefined;
-  if (!predicate) return unknown("unavailable", "the property's predicate was not compiled");
-  const binders = property.property.binders;
-  const positions: number[] = [];
-  for (const b of binders) {
-    const at = fn.params.indexOf(b.name);
-    if (at < 0)
-      return unknown(
-        "unsupported",
-        `binder ${b.name} is not a parameter of ${fn.name}, so the inputs the simulator passed do not determine it`,
-      );
-    positions.push(at);
-  }
+  const spec = input.spec;
+  if (!spec)
+    return unknown("unavailable", `the spec file's export ${property.name} was not loaded`);
+  const binders = property.binders;
   const seen = new Set<string>();
   let held = 0;
   let discarded = 0;
   for (const call of input.calls) {
-    const values = positions.map((p) => call.args[p]);
+    const values = binders.map((_, i) => call.args[i]);
     const key = values.map(render).join(", ");
     if (seen.has(key)) continue;
     seen.add(key);
-    if (!binders.every((b, i) => inDomain(b, values[i]))) {
+    // The claim quantifies over the parameter types; a call with an argument of another type
+    // (a shell passing a string where a number is declared) is outside it, not a counterexample.
+    if (!binders.every((b, i) => conforms(b.type, values[i]))) {
       discarded++;
       continue;
     }
@@ -197,14 +111,14 @@ export function checkedRung(input: CheckedInput): SpecVerdict {
       call: `${fn.name}(${call.args.map(render).join(", ")})`,
       ...(error === undefined ? {} : { error }),
     });
-    const result = evaluate(predicate, values);
+    const result = evaluate(spec, values);
     if ("malformed" in result) return unknown("unsupported", malformedReason(result.malformed));
     if (result.outcome === "refuted")
       return {
         ...base,
         kind: "REFUTED",
         rung: "CHECKED",
-        counterexample: counterexample("error" in result ? result.error : undefined),
+        counterexample: counterexample(result.error),
         assumptions: [],
       };
     if (result.outcome === "discarded") discarded++;
@@ -215,7 +129,7 @@ export function checkedRung(input: CheckedInput): SpecVerdict {
       "gave_up",
       input.calls.length === 0
         ? `the simulator never called ${fn.name}`
-        : `none of the ${seen.size} distinct input(s) the simulator passed is inside the claim (domains, guards, preconditions)`,
+        : `none of the ${seen.size} distinct input(s) the simulator passed is inside the claim (the precondition)`,
     );
   return {
     ...base,
@@ -226,30 +140,4 @@ export function checkedRung(input: CheckedInput): SpecVerdict {
       `held on the ${held} distinct input(s) the simulator passed to ${fn.name}; inputs it never passed are not covered`,
     ],
   };
-}
-
-/** Verdicts for the markers the CHECKED rung cannot decide. */
-export function markerVerdicts(module: string, fn: FunctionSpec): SpecVerdict[] {
-  const out: SpecVerdict[] = [];
-  const base = { module, function: fn.name, assumptions: [] };
-  if (fn.total)
-    out.push({
-      ...base,
-      property: "@total",
-      text: "@total",
-      kind: "UNKNOWN",
-      cause: "unsupported",
-      reason:
-        "termination is not observable on the inputs the simulator passed; @total needs a prover",
-    });
-  if (fn.throws)
-    out.push({
-      ...base,
-      property: "@throws",
-      text: "@throws",
-      kind: "UNKNOWN",
-      cause: "unsupported",
-      reason: "Lemma has not fixed what @throws claims yet",
-    });
-  return out;
 }

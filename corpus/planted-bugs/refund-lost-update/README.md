@@ -16,8 +16,8 @@ changes nothing and the caller is asked to retry.
 
 **The core's bug: an off-by-one.** `decideRefund` rejects a refund that
 brings the total exactly to the captured amount (`>=` where `>` was
-meant). Rejecting is safe, so no system invariant notices; the Lemma
-property `full-refund-allowed` on `decideRefund` is REFUTED. In the
+meant). Rejecting is safe, so no system invariant notices; the property
+`fullRefundAllowed` on `decideRefund` in `domain.props.ts` is REFUTED. In the
 sequential scenario the simulator itself passes an input that shows it
 (600 refunded, 400 asked, 1000 captured) once one refund has landed
 before the other, and the `CHECKED` rung reports that call. In the

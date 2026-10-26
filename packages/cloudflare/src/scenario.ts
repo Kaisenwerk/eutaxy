@@ -265,7 +265,7 @@ export interface CloudflareScenarioInput {
   readonly externals?: readonly ExternalDecl[];
   readonly invariants: readonly Invariant[];
   readonly bounds?: Partial<Bounds>;
-  /** Modules of pure core functions with Lemma specs, relative to the scenario (see ScenarioSpec.specs). */
+  /** Modules of pure core functions with spec files beside them, relative to the scenario (see ScenarioSpec.specs). */
   readonly specs?: readonly string[];
 }
 

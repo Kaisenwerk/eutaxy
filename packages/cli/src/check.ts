@@ -20,7 +20,7 @@ import { leanProver } from "@eutaxy/prover-lean";
 import { renderSpecs, renderText } from "@eutaxy/report";
 import { checkTestSource, metaKey, vitestConfigSource } from "./generate.ts";
 import { cloudflareRegressionTest } from "./regression.ts";
-import { findSpecModules, specFiles, specKey } from "./specs.ts";
+import { findSpecModules, type SpecModule, specFiles, specKey } from "./specs.ts";
 import type { CheckTransport } from "./workerd.ts";
 
 export interface CheckOptions {
@@ -62,21 +62,23 @@ export async function proveSpecs(
   observed: readonly { readonly module: string; readonly functions: readonly string[] }[],
   specs: readonly SpecVerdict[],
   engines: readonly Prover[],
+  modules: readonly SpecModule[] = findSpecModules(dir),
 ): Promise<readonly SpecVerdict[]> {
   let out = specs;
   for (const m of observed) {
     // Verdicts carry the module as a normalized key ("./domain.ts"); the observed path is as the scenario wrote it.
     const key = specKey(m.module);
-    const source = readFileSync(resolve(dir, key), "utf8");
-    const annotated = m.functions.filter((f) =>
+    const found = modules.find((s) => s.key === key);
+    const withSpecs = m.functions.filter((f) =>
       specs.some((v) => v.module === key && v.function === f),
     );
-    if (annotated.length === 0) continue;
+    if (!found || withSpecs.length === 0) continue;
+    const source = readFileSync(found.path, "utf8");
     const reports: EngineReport[] = [];
     for (const engine of engines)
       reports.push({
         engine: engine.name,
-        proofs: await engine.prove({ source, functions: annotated }),
+        proofs: await engine.prove({ source, specs: found.specs, functions: withSpecs }),
       });
     out = aggregate(key, out, reports);
   }
@@ -169,7 +171,8 @@ export async function runCheck(o: CheckOptions): Promise<number> {
         scenarioImport: `../${basename(scenarioPath)}`,
       }),
     );
-    for (const f of specFiles(findSpecModules(dir))) {
+    const specModules = findSpecModules(dir);
+    for (const f of specFiles(specModules, workDir)) {
       mkdirSync(dirname(join(workDir, f.name)), { recursive: true });
       writeFileSync(join(workDir, f.name), f.source);
     }
@@ -200,7 +203,7 @@ export async function runCheck(o: CheckOptions): Promise<number> {
         }
         engines.push(engine);
       }
-      specs = await proveSpecs(dir, transport.observed ?? [], specs, engines);
+      specs = await proveSpecs(dir, transport.observed ?? [], specs, engines, specModules);
     }
     const printed =
       o.provers && o.provers.length > 0

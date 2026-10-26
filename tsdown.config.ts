@@ -12,6 +12,7 @@ export default defineConfig({
     index: "packages/eutaxy/src/index.ts",
     cloudflare: "packages/eutaxy/src/cloudflare.ts",
     aws: "packages/eutaxy/src/aws.ts",
+    spec: "packages/eutaxy/src/spec.ts",
     cli: "packages/eutaxy/src/cli.ts",
     bin: "packages/eutaxy/src/bin.ts",
   },

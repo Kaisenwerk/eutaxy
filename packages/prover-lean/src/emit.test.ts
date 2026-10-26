@@ -1,94 +1,94 @@
-import { readSubset } from "@eutaxy/prover/reader";
-import { extractSpecs, type FunctionSpec } from "@eutaxy/spec";
+import { readSpecs, readSubset } from "@eutaxy/prover/reader";
+import type { Property } from "@eutaxy/spec";
 import { describe, expect, test } from "vitest";
 import { emitModule, ident, statement, value } from "./emit.ts";
 
 const source = `
 export interface Decision { readonly ok: boolean; readonly left: number }
-/**
- * @ensures{a} forall (balance: nat) (amount: int ∈ [0, 1_000)) { take(balance, amount).left >= 0 }
- * @ensures{b} forall (balance amount: int) { take(balance, amount).ok ↔ amount <= balance }
- * @ensures{c} forall (x: number) { take(x, 1).left >= 0 }
- * @ensures{d} forall (balance: int) { take(balance, 1) ≡ take(balance, 1) }
- * @ensures{e} forall (balance: int) { take(balance, 1).left ≢ take(balance, 2).ok }
- * @ensures{f} forall (balance: int) { take(balance, 1).left }
- * @ensures{g} forall (balance: int) { take(balance, 1).left ≡ balance - 1 }
- * @ensures{h} forall (balance: int) { take(balance, 1).ok ≡ (1 <= balance) }
- * @ensures{i} forall (balance: bigint) { take(balance, 1).left >= 0 }
- */
 export function take(balance: number, amount: number): Decision {
   const fits = amount <= balance;
   return fits ? { ok: true, left: balance - amount } : { ok: false, left: balance };
 }
+export function tag(n: number, s: string): string { return s; }
+`;
+const specSource = `
+import { forall } from "eutaxy/spec";
+import { tag, take } from "./domain.ts";
+export const a = forall(take, {
+  when: (balance, amount) => 0 <= balance && 0 <= amount && amount < 1_000,
+  ensures: (balance, amount) => take(balance, amount).left >= 0,
+});
+export const b = forall(take, { ensures: (balance, amount) => take(balance, amount).ok === (amount <= balance) });
+export const c = forall(take, { when: (b, a) => Number.isInteger(a), ensures: (x, y) => take(x, y).left >= 0 || y < x });
+export const d = forall(take, { ensures: (balance) => take(balance, 1) === take(balance, 1) });
+export const f = forall(take, { ensures: (balance) => take(balance, 1).left });
+export const g = forall(take, { ensures: (balance) => { const d = take(balance, 1); return d.left <= balance; } });
+export const h = forall(tag, { when: (n, s) => /^a+$/.test(s), ensures: (n, s) => tag(n, s) === s });
+export const i = forall(tag, { ensures: (n, s) => tag(n, s) === s });
 `;
 const module = readSubset(source);
-const fn = extractSpecs(source).functions[0] as FunctionSpec;
-const prop = (name: string) => fn.ensures.find((p) => p.name === name)?.property;
+const specs = readSpecs({ module: source, spec: specSource, moduleSpecifiers: ["./domain.ts"] });
+const prop = (name: string): Property => {
+  const p = specs.functions.flatMap((f) => f.properties).find((x) => x.name === name);
+  if (!p) throw new Error(`no property ${name}`);
+  return p;
+};
 
 describe("statement", () => {
-  test("binders, their domains and guards, preconditions, then the claim", () => {
-    const p = prop("a");
-    expect(p).toBeDefined();
-    if (!p) return;
-    expect(statement(p, module)).toBe(
+  test("binders from the parameters, the precondition as a hypothesis, then the claim", () => {
+    expect(specs.errors).toEqual([]);
+    expect(statement(prop("a"), module)).toBe(
       [
         "∀ (v_balance : Int) (v_amount : Int),",
-        "    0 ≤ v_balance →",
-        "    (0 : Int) ≤ v_amount →",
-        "    v_amount < (1000 : Int) →",
+        "    ((((decide ((0 : Int) ≤ v_balance)) && (decide ((0 : Int) ≤ v_amount))) && (decide (v_amount < (1000 : Int)))) = true) →",
         "    ((decide ((f_take v_balance v_amount).left ≥ (0 : Int))) = true)",
       ].join("\n"),
     );
   });
 
-  test("iff on booleans; SameValue on integers and booleans, refused on records", () => {
-    const b = prop("b");
-    const d = prop("d");
-    const e = prop("e");
-    if (!b || !d || !e) throw new Error("fixtures");
-    expect(statement(b, module)).toContain(
-      "(((f_take v_balance v_amount).ok = true) ↔ ((decide (v_amount ≤ v_balance)) = true))",
+  test("equality of booleans; the arrows' own parameter names are renamed to the binders'", () => {
+    expect(statement(prop("b"), module)).toContain(
+      "((decide ((f_take v_balance v_amount).ok = (decide (v_amount ≤ v_balance)))) = true)",
     );
-    // SameValue on two objects is reference identity in JavaScript, which Lean's = is not; on numbers it
-    // tells -0 from 0, which Int does not. On booleans it is plain equality.
-    expect(() => statement(d, module)).toThrow("compares records");
-    expect(() => statement(e, module)).toThrow("different types");
-    const g = prop("g");
-    const h = prop("h");
-    if (!g || !h) throw new Error("fixtures");
-    expect(() => statement(g, module)).toThrow("tells -0 from 0");
-    const i = prop("i");
-    if (!i) throw new Error("fixtures");
-    expect(() => statement(i, module)).toThrow("over bigint");
-    expect(statement(h, module)).toContain(
-      "((f_take v_balance (1 : Int)).ok = (decide ((1 : Int) ≤ v_balance)))",
+    // `when` names them (b, a) and `ensures` (x, y): the binders are x and y, and Number.isInteger is true of an Int.
+    expect(statement(prop("c"), module)).toBe(
+      [
+        "∀ (v_x : Int) (v_y : Int),",
+        "    (true = true) →",
+        "    (((decide ((f_take v_x v_y).left ≥ (0 : Int))) || (decide (v_y < v_x))) = true)",
+      ].join("\n"),
     );
   });
 
-  test("a binder over number and a non-boolean atom are outside the engine", () => {
-    const c = prop("c");
-    const f = prop("f");
-    if (!c || !f) throw new Error("fixtures");
-    expect(() => statement(c, module)).toThrow("over number");
-    expect(() => statement(f, module)).toThrow("is not boolean");
+  test("a block body reads through the statement reader", () => {
+    expect(statement(prop("g"), module)).toContain(
+      "((let v_d := (f_take v_balance (1 : Int)); (decide (v_d.left ≤ v_balance))) = true)",
+    );
+  });
+
+  test("=== on records, a non-boolean claim and a regex precondition are outside the engine", () => {
+    expect(() => statement(prop("d"), module)).toThrow("compares references");
+    expect(() => statement(prop("f"), module)).toThrow("is not boolean");
+    expect(() => statement(prop("h"), module)).toThrow("regular expression");
   });
 });
 
 describe("emitModule", () => {
   test("structures, definitions with let and conditionals, one theorem per statable property, lines mapped", () => {
-    const emitted = emitModule(
-      module,
-      fn.ensures.map((property) => ({ function: fn.name, property })),
-      ["example : f_take 5 3 = ({ ok := true, left := 2 } : R_Decision) := by decide"],
+    const all = specs.functions.flatMap((fn) =>
+      fn.properties.map((property) => ({ function: fn.name, property })),
     );
+    const emitted = emitModule(module, all, [
+      "example : f_take 5 3 = ({ ok := true, left := 2 } : R_Decision) := by decide",
+    ]);
     expect(emitted.source).toContain(
       "structure R_Decision where\n  ok : Bool\n  left : Int\n  deriving Repr, DecidableEq",
     );
     expect(emitted.source).toContain(
       "def f_take (v_balance : Int) (v_amount : Int) : R_Decision :=\n  (let v_fits := (decide (v_amount ≤ v_balance)); (if v_fits = true then ({ ok := true, left := (v_balance - v_amount) } : R_Decision) else ({ ok := false, left := v_balance } : R_Decision)))",
     );
-    expect(emitted.theorems.map((t) => t.property)).toEqual(["a", "b", "h"]);
-    expect(emitted.skipped.map((s) => s.property)).toEqual(["c", "d", "e", "f", "g", "i"]);
+    expect(emitted.theorems.map((t) => t.property)).toEqual(["a", "b", "c", "g", "i"]);
+    expect(emitted.skipped.map((s) => s.property)).toEqual(["d", "f", "h"]);
     const lines = emitted.source.split("\n");
     for (const t of emitted.theorems) {
       expect(lines[t.from - 1]).toBe(`theorem ${t.name} :`);
@@ -100,13 +100,15 @@ describe("emitModule", () => {
 
 describe("theorem names", () => {
   test("properties whose names differ only in punctuation get distinct theorems", () => {
-    const src =
-      "/**\n * @ensures{a-b} forall (x: int) { f(x) === x }\n * @ensures{a_b} forall (x: int) { f(x) === x }\n */\nexport function f(x: number): number { return x; }";
-    const m = readSubset(src);
-    const fn = extractSpecs(src).functions[0] as FunctionSpec;
+    const src = "export function f(x: number): number { return x; }";
+    const sp = readSpecs({
+      module: src,
+      spec: 'import { forall } from "eutaxy/spec";\nimport { f } from "./m.ts";\nexport const a$b = forall(f, { ensures: (x) => f(x) === x });\nexport const a_b = forall(f, { ensures: (x) => f(x) === x });',
+      moduleSpecifiers: ["./m.ts"],
+    });
     const emitted = emitModule(
-      m,
-      fn.ensures.map((property) => ({ function: "f", property })),
+      readSubset(src),
+      (sp.functions[0]?.properties ?? []).map((property) => ({ function: "f", property })),
     );
     const names = emitted.theorems.map((t) => t.name);
     expect(new Set(names).size).toBe(2);
@@ -151,5 +153,98 @@ describe("ident and value", () => {
     expect(() =>
       value({ ok: true, left: 1, extra: 2 }, { kind: "record", name: "Decision" }, module),
     ).toThrow("unexpected fields extra");
+  });
+});
+
+describe("review findings", () => {
+  const read = (spec: string) =>
+    readSpecs({ module: source, spec, moduleSpecifiers: ["./domain.ts"] }).functions.flatMap(
+      (f) => f.properties,
+    );
+
+  test("a claim's names are the spec file's imports: an alias resolves to the function, a local helper is outside", () => {
+    const [aliased, local] = read(`
+import { forall } from "eutaxy/spec";
+import { take as t } from "./domain.ts";
+const take = (balance: number, amount: number) => ({ ok: true, left: 0 });
+export const aliased = forall(t, { ensures: (b, a) => t(b, a).left <= b || a < 0 });
+export const local = forall(t, { ensures: (b, a) => take(b, a).left <= b });
+`);
+    if (!aliased || !local) throw new Error("fixtures");
+    expect(statement(aliased, module)).toContain("(f_take v_b v_a).left");
+    expect(() => statement(local, module)).toThrow(
+      "ensures (spec file line 6): take, which is neither a parameter, a const nor a function imported from the module beside the spec file",
+    );
+  });
+
+  test("renaming an arrow's parameters never lets a local const capture them", () => {
+    const [p] = read(`
+import { forall } from "eutaxy/spec";
+import { take } from "./domain.ts";
+export const p = forall(take, {
+  when: (x) => { const a = 0; return x !== a; },
+  ensures: (a, b) => take(a, b).left === a || a === 0,
+});
+`);
+    if (!p) throw new Error("fixture");
+    expect(statement(p, module)).toContain(
+      "((let v_a_ := (0 : Int); (decide (v_a ≠ v_a_))) = true) →",
+    );
+  });
+
+  test("what the subset refuses in an arrow is located in the spec file", () => {
+    const [p] = read(`
+import { forall } from "eutaxy/spec";
+import { take } from "./domain.ts";
+export const p = forall(take, {
+  ensures: (b, a) => { let n = 0; return take(b, a).left >= n; },
+});
+`);
+    if (!p) throw new Error("fixture");
+    expect(() => statement(p, module)).toThrow(
+      "ensures (spec file line 5): a mutable binding (use const)",
+    );
+  });
+});
+
+describe("review findings, second round", () => {
+  const read = (spec: string) =>
+    readSpecs({ module: source, spec, moduleSpecifiers: ["./domain.ts"] }).functions.flatMap(
+      (f) => f.properties,
+    );
+
+  test("a fresh name for a captured let avoids every name the arrow already uses", () => {
+    const [p] = read(`
+import { forall } from "eutaxy/spec";
+import { take } from "./domain.ts";
+export const p = forall(take, {
+  when: (x) => { const y_ = 0; const y = 1; return x === y_; },
+  ensures: (y) => y === 1,
+});
+`);
+    if (!p) throw new Error("fixture");
+    const text = statement(p, module);
+    expect(text).toContain(
+      "(let v_y_ := (0 : Int); (let v_y__ := (1 : Int); (decide (v_y = v_y_))))",
+    );
+  });
+
+  test("a function of no parameters is stated without a quantifier and proved without intro", () => {
+    const src = "export function one(): number { return 1; }";
+    const specs = readSpecs({
+      module: src,
+      spec: 'import { forall } from "eutaxy/spec";\nimport { one } from "./m.ts";\nexport const isOne = forall(one, { ensures: () => one() === 1 });',
+      moduleSpecifiers: ["./m.ts"],
+    });
+    const m = readSubset(src);
+    const emitted = emitModule(
+      m,
+      (specs.functions[0]?.properties ?? []).map((property) => ({ function: "one", property })),
+    );
+    expect(emitted.source).toContain(
+      "theorem t0_one_isOne :\n    ((decide ((f_one) = (1 : Int))) = true) := by\n  all_goals",
+    );
+    expect(emitted.source).not.toContain("∀ ,");
+    expect(emitted.source).not.toContain("intro \n");
   });
 });

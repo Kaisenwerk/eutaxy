@@ -1,8 +1,17 @@
 {
   "description": "Nested conditionals, const bindings, if/else blocks, calls between functions, early returns.",
   "expect": {
-    "clamp": { "within": "PROVEN", "identity": "PROVEN", "@total": "PROVEN" },
-    "percent": { "bounded": "PROVEN", "idempotent": "PROVEN" },
-    "sign": { "sign-cases": "PROVEN" }
+    "clamp": {
+      "within": "PROVEN",
+      "identity": "PROVEN",
+      "clampTotal": "PROVEN"
+    },
+    "percent": {
+      "bounded": "PROVEN",
+      "idempotent": "PROVEN"
+    },
+    "sign": {
+      "signCases": "PROVEN"
+    }
   }
 }

@@ -22,7 +22,7 @@ export default defineScenario({
   worker: { entry: "./worker.ts", config: "./wrangler.jsonc" },
   setup: [d1Schema("DB", "./schema.sql")],
   drive: refunds,
-  // The core's calls are recorded as decisions, and its Lemma specs are checked on them.
+  // The core's calls are recorded as decisions, and the specs in domain.props.ts are checked on them.
   specs: ["./domain.ts"],
   invariants: [
     // The bug: the second write carries out a decision made on a total the first write had changed.

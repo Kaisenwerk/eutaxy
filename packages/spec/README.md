@@ -1,30 +1,22 @@
 # @eutaxy/spec
 
-**Purpose.** `SpecIR`, the Lemma annotation parser and printer. Function
-specs are Lemma (`@ensures{name} forall (x: int) { … }`, `@total`,
-`@throws`) in JSDoc on exported functions; this package turns them into
-plain data and back.
+**Purpose.** `SpecIR`, and the two combinators a spec file writes. Function
+specs are TypeScript, in a spec file beside the module (`domain.ts` has
+`domain.props.ts`): `forall(f, { when, ensures })` quantifies over `f`'s
+parameter types, `total(f)` claims termination. Both return plain data
+holding the function, so the user's compiler types the arrows' parameters
+as `f`'s. This package is what `eutaxy/spec` exports; it runs wherever the
+module under spec runs, workerd included.
 
-**Public surface.** The IR types (`Property`, `Binder`, `Guard`,
-`Formula`, `FunctionSpec`, `ModuleSpecs`); `parseProperty` (throws
-`LemmaSyntaxError`, with the stage that rejected it); `printProperty` and
-`printFormula` (canonical Lemma; parsing what they print gives the same
-IR); `extractSpecs` (the annotations in a module's source, the names it
-exports, and the annotations that did not parse, with lines);
-`predicateSource` (a property as TypeScript source for a predicate over
-its binders, for code generation: no `eval`); `tokenize` and `templateSubstitutions` (the TypeScript-shaped
-tokenizer the parser uses, for engines that read the annotated functions
-themselves).
-
-The parser follows lemma-lang's `grammar.ebnf` and its side conditions on
-atoms; the conformance fixtures and the tests that hold it to them live in
-`corpus/lemma-conformance`. Leaves are TypeScript expressions kept
-verbatim; whether their free identifiers are exports is checked where they
-are evaluated.
+**Public surface.** `forall`, `total`, `isSpec` and their types (`Forall`,
+`Total`, `Spec`, `Fn`); the IR types (`ModuleSpecs`, `FunctionSpec`,
+`Property`, `Binder`, `Param`, `SpecType`, `Hint`, `Arrow`, `SpecError`)
+and `describeType`. The reader that turns a module and its spec file into
+the IR lives in `@eutaxy/prover/reader`; this package holds no parser.
 
 **May import.** nothing outside this package. Only these are declared in `package.json`, and
 pnpm links only declared workspace dependencies, so an import of any other
 package does not resolve. The project references in `tsconfig.json` mirror the
 list; a test keeps the two in sync with the design.
 
-**Phase.** v0.5. See `docs/design.md` and `docs/roadmap.md`.
+**Phase.** v0.5 (Lemma annotations), v0.7 (TypeScript specs). See `docs/design.md` and `docs/roadmap.md`.

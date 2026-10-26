@@ -1,7 +1,14 @@
 {
-  "description": "Boolean parameters and results; iff, negation and SameValue on booleans.",
+  "description": "Boolean parameters and results; equality of booleans as iff.",
   "expect": {
-    "decide": { "allowed-iff": "PROVEN", "reason-when-banned": "PROVEN", "reason-codes": "PROVEN" },
-    "either": { "xor": "PROVEN", "same-value": "PROVEN" }
+    "decide": {
+      "allowedIff": "PROVEN",
+      "reasonWhenBanned": "PROVEN",
+      "reasonCodes": "PROVEN"
+    },
+    "either": {
+      "xor": "PROVEN",
+      "sameValue": "PROVEN"
+    }
   }
 }

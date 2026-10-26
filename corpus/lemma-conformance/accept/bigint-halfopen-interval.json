@@ -1,4 +1,0 @@
-{
-  "annotation": "forall (b: bigint ∈ (0n, 100n]) { b > 0n }",
-  "note": "bigint domain with n-suffixed literals and mismatched (half-open) delimiters"
-}

@@ -23,8 +23,8 @@ const checked: SpecVerdict = {
 };
 const unknownTotal: SpecVerdict = {
   ...base,
-  property: "@total",
-  text: "@total",
+  property: "fTotal",
+  text: "fTotal",
   kind: "UNKNOWN",
   cause: "unsupported",
   reason: "needs a prover",
@@ -69,16 +69,16 @@ describe("aggregate", () => {
     expect(c && "tested" in c).toBe(false);
   });
 
-  test("@total is proved by the engine where the rungs could not decide", () => {
-    const [t] = aggregate("./domain.ts", [unknownTotal], [report("lean", { "@total": proven })]);
-    expect(t).toMatchObject({ kind: "PROVEN", property: "@total" });
+  test("fTotal is proved by the engine where the rungs could not decide", () => {
+    const [t] = aggregate("./domain.ts", [unknownTotal], [report("lean", { fTotal: proven })]);
+    expect(t).toMatchObject({ kind: "PROVEN", property: "fTotal" });
   });
 
   test("an engine falling short leaves the verdict, with why", () => {
     const [p] = aggregate("./domain.ts", [tested], [report("lean", { p: gaveUp })]);
     expect(p).toMatchObject({ kind: "TESTED", inputs: 100 });
     expect(p?.assumptions.at(-1)).toBe("not PROVEN by lean: gave_up: omega failed");
-    const [u] = aggregate("./domain.ts", [unknownTotal], [report("lean", { "@total": gaveUp })]);
+    const [u] = aggregate("./domain.ts", [unknownTotal], [report("lean", { fTotal: gaveUp })]);
     expect(u).toMatchObject({ kind: "UNKNOWN", cause: "unsupported" });
   });
 

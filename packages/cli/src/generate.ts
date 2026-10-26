@@ -36,13 +36,13 @@ import { env } from "cloudflare:workers";
 import * as durableObjects from "cloudflare:test";
 import { test } from "vitest";
 import scenario from ${JSON.stringify(g.scenarioImport)};
-import { specLoaders } from "./specs.ts";
+import { specEntries } from "./specs.ts";
 
 const sqlFiles = import.meta.glob("../**/*.sql", { query: "?raw", import: "default", eager: true }) as Record<string, string>;
 const modules = import.meta.glob(["../**/*.ts", "!../**/*.test.ts", "!../**/*.sim.ts", "!../**/node_modules/**", "!../**/.eutaxy/**"]);
 
 test("eutaxy check", async ({ task }) => {
-  task.meta[${JSON.stringify(metaKey)}] = await checkInWorkerd({ scenario, env, durableObjects, sqlFiles, modules, specLoaders, ${options} });
+  task.meta[${JSON.stringify(metaKey)}] = await checkInWorkerd({ scenario, env, durableObjects, sqlFiles, modules, specEntries, ${options} });
 });
 `;
 }

@@ -1,105 +1,146 @@
 /**
- * SpecIR: function specs as plain data. The surface syntax is Lemma
- * (https://github.com/jessealama/lemma-lang, grammar.ebnf and
- * semantics.md); the IR is Eutaxy's own, so engines and the simulator read
- * one shape whatever the annotation looked like. Leaves are opaque
- * TypeScript expressions, kept as written.
+ * SpecIR: function specs as plain data. The surface is TypeScript (a spec
+ * file beside the module, `forall(f, { when, ensures })` and `total(f)`
+ * from `eutaxy/spec`); the IR is Eutaxy's own, so the simulator's rungs
+ * and every engine read one shape. Binder domains are the function's
+ * parameter types, read from its declaration; the precondition and the
+ * claim are kept as the arrow functions' text, read by each engine into
+ * its own tree, and evaluated as code by the simulator's rungs.
  */
 
-/** Lemma's binder domains. */
-export type Domain = "int" | "nat" | "number" | "boolean" | "string" | "bigint";
+/** A TypeScript type as far as the reader can read it; `unknown` carries what it could not. */
+export type SpecType =
+  | { readonly kind: "number" }
+  | { readonly kind: "boolean" }
+  | { readonly kind: "string" }
+  | { readonly kind: "bigint" }
+  | { readonly kind: "literal"; readonly value: string | number | boolean }
+  | { readonly kind: "null" }
+  | { readonly kind: "undefined" }
+  | {
+      readonly kind: "record";
+      /** The declared name, when the type is an `interface` or a `type` alias rather than inline. */
+      readonly name?: string;
+      readonly fields: readonly Field[];
+    }
+  | { readonly kind: "union"; readonly members: readonly SpecType[] }
+  | { readonly kind: "unknown"; readonly text: string };
 
-export const domains: readonly Domain[] = ["int", "nat", "number", "boolean", "string", "bigint"];
+export interface Field {
+  readonly name: string;
+  readonly type: SpecType;
+}
 
-/**
- * One end of an interval: a numeric literal as written (sign included), or
- * `∞` / `-∞` for either infinity. `[` and `]` include the endpoint.
- */
+/** One end of a numeric range: the literal as written (sign included). `[` and `]` include the endpoint. */
 export interface Endpoint {
   readonly value: string;
   readonly inclusive: boolean;
 }
 
-/** A binder's constraint: an interval for numeric domains, a whole-string regex for `string`. */
-export type Guard =
-  | { readonly kind: "interval"; readonly lower: Endpoint; readonly upper: Endpoint }
-  | { readonly kind: "regex"; readonly pattern: string; readonly flags: string };
+/**
+ * What the precondition says about one binder on its own, read from its
+ * conjuncts: `Number.isInteger(n)`, `0 <= n`, `n < 5`, `/^a+$/.test(s)`.
+ * Draws are steered by it; the precondition itself still has the last word.
+ */
+export interface Hint {
+  readonly integer?: true;
+  readonly lower?: Endpoint;
+  readonly upper?: Endpoint;
+  readonly regex?: { readonly pattern: string; readonly flags: string };
+}
 
+/** A parameter of the function under spec. */
+export interface Param {
+  /** Null for a destructured or rest parameter. */
+  readonly name: string | null;
+  readonly type: SpecType;
+}
+
+/** A quantified variable: a parameter, under the name the claim gives it. */
 export interface Binder {
   readonly name: string;
-  readonly domain: Domain;
-  readonly guard?: Guard;
+  readonly type: SpecType;
+  readonly hint?: Hint;
+}
+
+/** An arrow function from the spec file, as written. */
+export interface Arrow {
+  /** Parameter names in order; null for a destructured one. */
+  readonly params: readonly (string | null)[];
+  /** The body's source text: an expression, or the statements between the braces when `block`. */
+  readonly body: string;
+  readonly block: boolean;
+  /** 1-based line of the arrow in the spec file. */
+  readonly line: number;
 }
 
 /**
- * A formula over boolean atoms. Atoms and equation sides are TypeScript
- * expressions, verbatim. `and` and `or` are n-ary (both are associative);
- * `implies` keeps Lemma's chain: every segment but the last is an
- * antecedent. An implication at a property's root is not a formula node but
- * the property's preconditions (`Property.requires`).
- */
-export type Formula =
-  | { readonly kind: "atom"; readonly text: string }
-  | {
-      readonly kind: "equation";
-      readonly left: string;
-      readonly right: string;
-      /** `≢` rather than `≡`. */
-      readonly negated: boolean;
-    }
-  | { readonly kind: "not"; readonly operand: Formula }
-  | { readonly kind: "and" | "or"; readonly operands: readonly Formula[] }
-  | {
-      readonly kind: "implies";
-      readonly antecedents: readonly Formula[];
-      readonly consequent: Formula;
-    }
-  | { readonly kind: "iff"; readonly left: Formula; readonly right: Formula };
-
-/**
- * A universally quantified claim: for every assignment of the binders from
- * their (guarded) domains where every precondition holds, `claim` holds.
- * Assignments failing a precondition are outside the claim.
+ * One exported spec: `forall(f, { when, ensures })`, a universally
+ * quantified claim over `f`'s parameters where the precondition holds, or
+ * `total(f)`, that `f` terminates on every input.
  */
 export interface Property {
-  readonly binders: readonly Binder[];
-  readonly requires: readonly Formula[];
-  readonly claim: Formula;
-}
-
-/** An `@ensures{name}` annotation. */
-export interface NamedProperty {
+  /** The export's name in the spec file. */
   readonly name: string;
-  readonly property: Property;
-  /** The annotation's property text, as written. */
+  readonly kind: "forall" | "total";
+  /** The parameters, named as `ensures` names them (the function's own names past its arity). */
+  readonly binders: readonly Binder[];
+  readonly when?: Arrow;
+  readonly ensures?: Arrow;
+  /**
+   * The module's functions the spec file imports, by the local name the
+   * arrows use: a claim's free names resolve here, never in the module.
+   */
+  readonly imports: readonly { readonly local: string; readonly fn: string }[];
+  /** The claim as written, for reports. */
   readonly text: string;
+  /** 1-based line of the export in the spec file. */
+  readonly line: number;
 }
 
 /** The specs on one exported function. */
 export interface FunctionSpec {
   readonly name: string;
-  /** Parameter names in order; null for a destructured or rest parameter. */
-  readonly params: readonly (string | null)[];
-  readonly ensures: readonly NamedProperty[];
-  /** `@total`: the function terminates on every input. */
-  readonly total: boolean;
-  /** `@throws`: the function throws (Lemma has not fixed its semantics yet). */
-  readonly throws: boolean;
-  /** 1-based line of the declaration. */
+  readonly params: readonly Param[];
+  readonly properties: readonly Property[];
+  /** 1-based line of the declaration in the module. */
   readonly line: number;
-  /** Offset in the source of the `(` opening the parameters: the declaration's identity, for tools that read the module themselves. */
+  /** Offset in the module's source of the `(` opening the parameters: the declaration's identity. */
   readonly offset: number;
 }
 
-/** A problem with an annotation, located in the module. */
+/** A problem with a spec, located in the spec file (or the module when `inModule`). */
 export interface SpecError {
   readonly line: number;
   readonly message: string;
+  readonly inModule?: true;
 }
 
-/** Every spec in one module, the names it exports, and the annotations that did not parse. */
+/** Every spec of one module, and what did not read. */
 export interface ModuleSpecs {
   readonly functions: readonly FunctionSpec[];
-  readonly exports: readonly string[];
   readonly errors: readonly SpecError[];
+}
+
+/** A type, for messages. */
+export function describeType(t: SpecType): string {
+  switch (t.kind) {
+    case "number":
+    case "boolean":
+    case "string":
+    case "bigint":
+    case "null":
+    case "undefined":
+      return t.kind;
+    case "literal":
+      return typeof t.value === "string" ? JSON.stringify(t.value) : String(t.value);
+    case "record":
+      return (
+        t.name ?? `{ ${t.fields.map((f) => `${f.name}: ${describeType(f.type)}`).join("; ")} }`
+      );
+    case "union":
+      return t.members.map(describeType).join(" | ");
+    case "unknown":
+      return t.text;
+  }
 }

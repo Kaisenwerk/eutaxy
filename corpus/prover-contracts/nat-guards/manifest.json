@@ -1,14 +1,13 @@
 {
-  "description": "nat binders and interval guards become hypotheses; a bigint binder is unsupported until the subset has bigint.",
+  "description": "Preconditions bounding the binders become hypotheses: lower bounds, closed and open ranges.",
   "expect": {
     "withdraw": {
-      "never-negative": "PROVEN",
-      "at-most-balance": "PROVEN",
-      "exact-when-affordable": "PROVEN"
+      "neverNegative": "PROVEN",
+      "atMostBalance": "PROVEN",
+      "exactWhenAffordable": "PROVEN"
     },
     "twice": {
-      "small-double": "PROVEN",
-      "bigint-too": "unsupported"
+      "smallDouble": "PROVEN"
     }
   }
 }

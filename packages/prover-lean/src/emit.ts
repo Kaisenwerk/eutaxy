@@ -1,12 +1,12 @@
 /**
- * Lean 4 for a module in the subset and the Lemma properties on it. The
+ * Lean 4 for a module in the subset and the properties on it. The
  * module's record types become structures, its functions definitions over
- * `Int` and `Bool`, each property a theorem whose statement is the
- * property's formula over its binders, with the binders' domains, guards
- * and preconditions as hypotheses. Booleans stay `Bool` in terms, as in
- * TypeScript, and become propositions with `= true` where a formula needs
- * one; comparisons are `decide`d. Every theorem is closed by one tactic
- * script, so what Lean checks is the statement, not a hand proof.
+ * `Int`, `Bool` and `String`, each property a theorem whose statement is
+ * the claim over its binders, with the precondition as a hypothesis.
+ * Booleans stay `Bool` in terms, as in TypeScript, and become propositions
+ * with `= true` where a statement needs one; comparisons are `decide`d.
+ * Every theorem is closed by one tactic script, so what Lean checks is the
+ * statement, not a hand proof.
  */
 
 import {
@@ -14,14 +14,15 @@ import {
   hasLoneSurrogate,
   OutsideSubset,
   type RecordType,
-  readExpression,
+  readArrowBody,
+  renameVars,
   type SubsetFunction,
   type SubsetModule,
   type SubsetType,
   type TypeContext,
   typeOf,
 } from "@eutaxy/prover/reader";
-import type { Binder, Formula, NamedProperty, Property } from "@eutaxy/spec";
+import { type Arrow, describeType, type Property, type SpecType } from "@eutaxy/spec";
 
 /**
  * TypeScript names as Lean identifiers that can clash with nothing Lean
@@ -93,7 +94,7 @@ const fail: (message: string) => never = (message) => {
   throw new OutsideSubset(message, 0);
 };
 
-/** A term of the expression's TypeScript type: `Int`, `Bool` or a structure. */
+/** A term of the expression's TypeScript type: `Int`, `Bool`, `String` or a structure. */
 export function term(e: Expr, scope: ReadonlyMap<string, SubsetType>, env: Env): string {
   const t = (x: Expr) => term(x, scope, env);
   switch (e.kind) {
@@ -109,6 +110,10 @@ export function term(e: Expr, scope: ReadonlyMap<string, SubsetType>, env: Env):
       return `(-${t(e.operand)})`;
     case "not":
       return `(!${t(e.operand)})`;
+    case "isInteger":
+      // Every number is an integer in this engine's model; the operand is still typed.
+      typeOf(e.operand, scope, env.ctx, fail);
+      return "true";
     case "binary":
       switch (e.op) {
         case "+": {
@@ -170,87 +175,101 @@ export function emitFunction(f: SubsetFunction, module: SubsetModule): string {
   return `def ${ident.fn(f.name)} ${params} : ${leanType(f.returns)} :=\n  ${term(f.body, scope, e)}`;
 }
 
-/** The Lean type a binder ranges over, or `OutsideSubset`. */
-function binderType(b: Binder): SubsetType {
-  switch (b.domain) {
-    case "int":
-    case "nat":
+/**
+ * The subset type a binder ranges over, or `OutsideSubset`: `number` is
+ * `Int` (the engine's integer model, an assumption every PROVEN carries),
+ * a union of string literals is `String` (the proof covers every string,
+ * more than the type admits), a record is the module's structure of that
+ * name. Nullable types, tagged unions, bigint and whatever the reader
+ * could not read are outside.
+ */
+export function binderType(name: string, t: SpecType, module: SubsetModule): SubsetType {
+  switch (t.kind) {
+    case "number":
       return { kind: "int" };
     case "boolean":
       return { kind: "bool" };
-    case "bigint":
-      // A BigInt passed to a function over number throws on the first mixed operation in JavaScript.
-      fail(
-        `binder ${b.name} over bigint: the subset has no bigint, and a bigint argument to a number function throws`,
-      );
-      break;
-    case "number":
-      fail(`binder ${b.name} over number: the engine models integers, not doubles`);
-      break;
     case "string":
       return { kind: "string" };
+    case "literal":
+      if (typeof t.value === "string") return { kind: "string" };
+      if (typeof t.value === "boolean") return { kind: "bool" };
+      return { kind: "int" };
+    case "bigint":
+      // A BigInt passed to a function over number throws on the first mixed operation in JavaScript.
+      fail(`binder ${name} over bigint: the subset has no bigint`);
+      break;
+    case "union":
+      if (t.members.every((m) => m.kind === "literal" && typeof m.value === "string"))
+        return { kind: "string" };
+      if (t.members.some((m) => m.kind === "null" || m.kind === "undefined"))
+        fail(
+          `binder ${name} over ${describeType(t)}: nullable types are not in the engine's subset yet`,
+        );
+      fail(`binder ${name} over ${describeType(t)}: unions are not in the engine's subset yet`);
+      break;
+    case "record":
+      if (t.name !== undefined && module.records.some((r) => r.name === t.name))
+        return { kind: "record", name: t.name };
+      fail(
+        `binder ${name} over ${describeType(t)}: ${t.name === undefined ? "an inline record type" : `record type ${t.name} is outside the subset`}`,
+      );
+      break;
+    case "null":
+    case "undefined":
+      fail(`binder ${name} over ${t.kind}`);
+      break;
+    case "unknown":
+      fail(`binder ${name} over ${t.text}, which the reader could not read`);
   }
 }
 
-/** The hypotheses a binder's domain and guard add. */
-function binderHypotheses(b: Binder): string[] {
-  const out: string[] = [];
-  const x = ident.variable(b.name);
-  if (b.domain === "nat") out.push(`0 ≤ ${x}`);
-  const g = b.guard;
-  if (!g) return out;
-  if (g.kind === "regex")
-    fail(`a regex guard on ${b.name}: the engine does not model regular expressions`);
-  const literal = (v: string) => v.replace(/_/g, "").replace(/n$/, "");
-  if (!g.lower.value.endsWith("∞"))
-    out.push(`(${literal(g.lower.value)} : Int) ${g.lower.inclusive ? "≤" : "<"} ${x}`);
-  if (!g.upper.value.endsWith("∞"))
-    out.push(`${x} ${g.upper.inclusive ? "≤" : "<"} (${literal(g.upper.value)} : Int)`);
-  return out;
-}
-
-/** A formula as a proposition. */
-function prop(f: Formula, scope: ReadonlyMap<string, SubsetType>, e: Env): string {
-  const p = (x: Formula) => prop(x, scope, e);
-  const expr = (text: string) => readExpression(text, scope, e.module);
-  switch (f.kind) {
-    case "atom": {
-      const x = expr(f.text);
-      const t = typeOf(x, scope, e.ctx, fail);
-      if (t.kind !== "bool") fail(`atom ${f.text.trim()} is not boolean`);
-      return `(${term(x, scope, e)} = true)`;
-    }
-    case "equation": {
-      const l = expr(f.left);
-      const r = expr(f.right);
-      const lt = typeOf(l, scope, e.ctx, fail);
-      const rt = typeOf(r, scope, e.ctx, fail);
-      if (leanType(lt) !== leanType(rt))
-        fail(`${f.left.trim()} and ${f.right.trim()} have different types`);
-      if (lt.kind === "record")
-        fail(
-          `${f.left.trim()} ≡ ${f.right.trim()} compares records: SameValue on objects is reference identity in JavaScript; compare their fields instead`,
-        );
-      if (lt.kind === "int")
-        fail(
-          `${f.left.trim()} ≡ ${f.right.trim()} compares numbers by SameValue, which tells -0 from 0; the integer model does not, so use === for numeric equality`,
-        );
-      return `(${term(l, scope, e)} ${f.negated ? "≠" : "="} ${term(r, scope, e)})`;
-    }
-    case "not":
-      return `(¬ ${p(f.operand)})`;
-    case "and":
-      return `(${f.operands.map(p).join(" ∧ ")})`;
-    case "or":
-      return `(${f.operands.map(p).join(" ∨ ")})`;
-    case "implies":
-      return `(${[...f.antecedents, f.consequent].map(p).join(" → ")})`;
-    case "iff":
-      return `(${p(f.left)} ↔ ${p(f.right)})`;
+/** An arrow of the spec file as a Bool term over the binders, its own parameter names renamed to theirs. */
+function arrowTerm(
+  arrow: Arrow,
+  what: "when" | "ensures",
+  property: Property,
+  types: readonly SubsetType[],
+  e: Env,
+): string {
+  try {
+    return arrowTermAt(arrow, what, property, types, e);
+  } catch (err) {
+    // What the subset refused, located in the spec file.
+    if (!(err instanceof OutsideSubset)) throw err;
+    throw new OutsideSubset(`${what} (spec file line ${arrow.line}): ${err.message}`, arrow.line);
   }
 }
 
-/** The proposition a property claims: binders universally quantified, hypotheses in front. */
+function arrowTermAt(
+  arrow: Arrow,
+  what: "when" | "ensures",
+  property: Property,
+  types: readonly SubsetType[],
+  e: Env,
+): string {
+  const binders = property.binders;
+  const scope = new Map<string, SubsetType>();
+  const names = new Map<string, string>();
+  arrow.params.forEach((p, i) => {
+    const binder = binders[i];
+    const type = types[i];
+    if (p === null) fail(`a destructured parameter in ${what}`);
+    if (!binder || !type) fail(`${what} takes more parameters than the function has`);
+    scope.set(p, type);
+    names.set(p, binder.name);
+  });
+  const aliases = new Map(property.imports.map((i) => [i.local, i.fn]));
+  const read = readArrowBody(arrow, scope, e.module, aliases);
+  const t = typeOf(read, scope, e.ctx, fail);
+  if (t.kind !== "bool")
+    fail(`${what} is not boolean (a ${t.kind === "record" ? t.name : t.kind})`);
+  const renamed = renameVars(read, names);
+  const binderScope = new Map(binders.map((b, i) => [b.name, types[i] as SubsetType]));
+  return term(renamed, binderScope, e);
+}
+
+/** The proposition a property claims: binders universally quantified, the precondition in front. */
 export function statement(property: Property, module: SubsetModule): string {
   return stated(property, module).text;
 }
@@ -260,18 +279,20 @@ export function stated(
   property: Property,
   module: SubsetModule,
 ): { readonly text: string; readonly hypotheses: number } {
+  if (property.kind !== "forall" || !property.ensures) fail("not a forall property");
   const e = env(module);
-  const scope = new Map(property.binders.map((b) => [b.name, binderType(b)]));
+  const types = property.binders.map((b) => binderType(b.name, b.type, module));
   const binders = property.binders
-    .map((b) => `(${ident.variable(b.name)} : ${leanType(binderType(b))})`)
+    .map((b, i) => `(${ident.variable(b.name)} : ${leanType(types[i] as SubsetType)})`)
     .join(" ");
-  const hyps = [
-    ...property.binders.flatMap(binderHypotheses),
-    ...property.requires.map((r) => prop(r, scope, e)),
-  ];
-  const claim = prop(property.claim, scope, e);
+  const hyps = property.when
+    ? [`(${arrowTerm(property.when, "when", property, types, e)} = true)`]
+    : [];
+  const claim = `(${arrowTerm(property.ensures, "ensures", property, types, e)} = true)`;
+  const body = [...hyps, claim].join(" →\n    ");
   return {
-    text: `∀ ${binders},\n    ${[...hyps, claim].join(" →\n    ")}`,
+    // A function of no parameters has nothing to quantify over: the proposition stands alone.
+    text: binders === "" ? body : `∀ ${binders},\n    ${body}`,
     hypotheses: hyps.length,
   };
 }
@@ -291,10 +312,15 @@ export function tactics(module: SubsetModule, property: Property, hypotheses: nu
   const names = property.binders.map((b) => ident.variable(b.name));
   const hyps = Array.from({ length: hypotheses }, (_, i) => `h${i}_`);
   const bools = property.binders
-    .filter((b) => b.domain === "boolean")
+    .filter(
+      (b) =>
+        b.type.kind === "boolean" ||
+        (b.type.kind === "literal" && typeof b.type.value === "boolean"),
+    )
     .map((b) => ident.variable(b.name));
+  const introduced = [...names, ...hyps];
   return [
-    `  intro ${[...names, ...hyps].join(" ")}`,
+    ...(introduced.length > 0 ? [`  intro ${introduced.join(" ")}`] : []),
     ...(bools.length > 0 ? [`  ${bools.map((b) => `cases ${b}`).join(" <;> ")}`] : []),
     "  all_goals (try simp_all)",
     `  all_goals (try simp only [${defs}] at *)`,
@@ -332,11 +358,11 @@ export interface Emitted {
 /** The whole file: structures, definitions, one theorem per property, then any extra lines (translation checks). */
 export function emitModule(
   module: SubsetModule,
-  properties: readonly { readonly function: string; readonly property: NamedProperty }[],
+  properties: readonly { readonly function: string; readonly property: Property }[],
   extra: readonly string[] = [],
 ): Emitted {
   const parts: string[] = [
-    "-- Generated by Eutaxy's first-party engine from the annotated module; the theorems are its properties.",
+    "-- Generated by Eutaxy's first-party engine from the module and its spec file; the theorems are its properties.",
     "set_option linter.unusedSimpArgs false",
     ...module.records.map(emitRecord),
     ...module.functions.map((f) => emitFunction(f, module)),
@@ -346,14 +372,14 @@ export function emitModule(
   for (const { function: fn, property } of properties) {
     let body: { text: string; hypotheses: number };
     try {
-      body = stated(property.property, module);
+      body = stated(property, module);
     } catch (err) {
       if (!(err instanceof OutsideSubset)) throw err;
       skipped.push({ function: fn, property: property.name, reason: err.message });
       continue;
     }
     const name = theoremName(theorems.length + skipped.length, fn, property.name);
-    const text = `theorem ${name} :\n    ${body.text} := by\n${tactics(module, property.property, body.hypotheses)}`;
+    const text = `theorem ${name} :\n    ${body.text} := by\n${tactics(module, property, body.hypotheses)}`;
     const from = parts.join("\n\n").split("\n").length + 2;
     parts.push(text);
     theorems.push({

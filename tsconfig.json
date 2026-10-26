@@ -47,9 +47,6 @@
       "path": "corpus/differential"
     },
     {
-      "path": "corpus/lemma-conformance"
-    },
-    {
       "path": "corpus/prover-contracts"
     },
     {

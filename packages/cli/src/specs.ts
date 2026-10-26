@@ -1,28 +1,51 @@
 /**
- * Spec modules for `eutaxy check`: every TypeScript module next to the
- * scenario with Lemma annotations, and the generated module that holds
- * their predicates as compiled code (workerd runs no `eval`). Which of them
- * a run checks is the scenario's `specs`, read where the scenario is loaded,
- * inside the generated test.
+ * Spec files for `eutaxy check`: every `<module>.props.ts` next to the
+ * scenario, read with its module into `SpecIR` on the Node side, and the
+ * generated `specs.ts` that hands workerd each module's specs together
+ * with a loader for its spec file. Which of them a run checks is the
+ * scenario's `specs`, read where the scenario is loaded, inside the
+ * generated test; a spec file loads only when its module is named.
  */
 
-import { readdirSync, readFileSync } from "node:fs";
-import { join, relative } from "node:path";
-import { extractSpecs, type ModuleSpecs, predicateSource } from "@eutaxy/spec";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { basename, dirname, join, relative } from "node:path";
+import { readSpecs } from "@eutaxy/prover/reader";
+import type { ModuleSpecs } from "@eutaxy/spec";
 import { specKey } from "./keys.ts";
 
 export { specKey } from "./keys.ts";
 
+/** The suffix a spec file carries beside its module: `domain.ts` has `domain.props.ts`. */
+export const specSuffix = ".props.ts";
+
 export interface SpecModule {
-  /** The path relative to the scenario's directory, as a scenario names it: "./domain.ts". */
+  /** The module's path relative to the scenario's directory, as a scenario names it: "./domain.ts". */
   readonly key: string;
+  /** The module's absolute path. */
   readonly path: string;
+  /** The spec file's absolute path. */
+  readonly specPath: string;
   readonly specs: ModuleSpecs;
 }
 
 const skipDirs = new Set(["node_modules", ".eutaxy", "dist", ".git"]);
 
-/** Annotated modules under `dir`, tests and scenarios excepted. */
+/** The import specifiers by which a spec file may name its module: with the `.ts`, bare, or with `.js`. */
+export function moduleSpecifiers(modulePath: string): string[] {
+  const base = basename(modulePath, ".ts");
+  return [`./${base}.ts`, `./${base}`, `./${base}.js`];
+}
+
+/** Read one module and its spec file. */
+export function readSpecModule(modulePath: string, specPath: string): ModuleSpecs {
+  return readSpecs({
+    module: readFileSync(modulePath, "utf8"),
+    spec: readFileSync(specPath, "utf8"),
+    moduleSpecifiers: moduleSpecifiers(modulePath),
+  });
+}
+
+/** Spec files under `dir`, each with its module; a spec file without a module beside it is an error entry. */
 export function findSpecModules(dir: string): SpecModule[] {
   const out: SpecModule[] = [];
   const walk = (at: string): void => {
@@ -32,32 +55,32 @@ export function findSpecModules(dir: string): SpecModule[] {
         if (!skipDirs.has(entry.name)) walk(path);
         continue;
       }
-      const name = entry.name;
-      if (
-        !name.endsWith(".ts") ||
-        name.endsWith(".d.ts") ||
-        name.endsWith(".test.ts") ||
-        name.endsWith(".sim.ts")
-      )
+      if (!entry.name.endsWith(specSuffix)) continue;
+      const modulePath = join(at, `${entry.name.slice(0, -specSuffix.length)}.ts`);
+      const key = specKey(relative(dir, modulePath));
+      if (!existsSync(modulePath)) {
+        out.push({
+          key,
+          path: modulePath,
+          specPath: path,
+          specs: {
+            functions: [],
+            errors: [
+              {
+                line: 1,
+                message: `${entry.name} has no module ${basename(modulePath)} beside it`,
+              },
+            ],
+          },
+        });
         continue;
-      const source = readFileSync(path, "utf8");
-      if (!/@(ensures|total|throws)\b/.test(source)) continue;
-      const specs = extractSpecs(source);
-      if (specs.functions.length === 0 && specs.errors.length === 0) continue;
-      out.push({ key: specKey(relative(dir, path)), path, specs });
+      }
+      out.push({ key, path: modulePath, specPath: path, specs: readSpecModule(modulePath, path) });
     }
   };
   walk(dir);
   return out.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
 }
-
-/** The generated module's own names; each predicate takes them as parameters, so nothing in a property shadows them. */
-const helpers = {
-  bool: "__eutaxyBool",
-  same: "__eutaxySame",
-  scope: "__eutaxyNamespace",
-  unresolved: "__eutaxyUnresolved",
-};
 
 /** A file `eutaxy check` writes into `.eutaxy/`, by its path there. */
 export interface GeneratedFile {
@@ -65,47 +88,34 @@ export interface GeneratedFile {
   readonly source: string;
 }
 
+/** A path as an import specifier from `.eutaxy/`: forward slashes, relative, `.ts` kept (Vite resolves it). */
+function importFrom(workDir: string, target: string): string {
+  const rel = relative(workDir, target).split("\\").join("/");
+  return rel.startsWith(".") ? rel : `./${rel}`;
+}
+
 /**
- * The generated spec files: `specs.ts`, which maps each annotated module's
- * key to a loader, and one file per module with its extracted specs and a
- * function from its namespace to its predicates. A module's file loads only
- * when a scenario names the module, so an annotation elsewhere that does not
- * compile cannot stop a check. Each predicate binds its free names from the
- * namespace (else the globals) when it is built, which happens before
- * anything is observed, so checking a property never counts as a call the
- * simulator made.
+ * The generated `specs.ts`: each module's key mapped to its specs (plain
+ * data read on the Node side) and a loader of its spec file. The loader is
+ * lazy, so a spec file elsewhere that does not compile cannot stop a check
+ * of a scenario that does not name its module.
  */
-export function specFiles(modules: readonly SpecModule[]): GeneratedFile[] {
-  // The `any`s: these files run in the user's Vitest, which does not type-check them, and must
-  // import nothing; `SpecEntry` in workerd.ts is the shape they have.
+export function specFiles(modules: readonly SpecModule[], workDir: string): GeneratedFile[] {
   const header = "// Generated by eutaxy check; deleted after the run.";
-  const index = [
+  const lines = [
     header,
-    "export const specLoaders: Record<string, () => Promise<any>> = {",
-    ...modules.map((m, i) => `  ${JSON.stringify(m.key)}: () => import("./specs/m${i}.ts"),`),
+    "// The `any`: this file runs in the user's Vitest, which does not type-check it; `SpecEntry` in workerd.ts is the shape.",
+    "export const specEntries: Record<string, { specs: any; load: () => Promise<any> }> = {",
+    ...modules.map(
+      (m) =>
+        `  ${JSON.stringify(m.key)}: { specs: ${JSON.stringify(m.specs)}, load: () => import(${JSON.stringify(importFrom(workDir, m.specPath))}) },`,
+    ),
     "};",
   ];
-  const files = modules.map((m, i) => {
-    const lines = [
-      header,
-      `const ${helpers.same} = Object.is;`,
-      "",
-      `export const specs = ${JSON.stringify(m.specs)};`,
-      "",
-      // The atom and unresolved-name checks come in as parameters: the file imports nothing.
-      `export const predicates = (${helpers.scope}: any, ${helpers.bool}: any, ${helpers.unresolved}: any) => ({`,
-    ];
-    for (const fn of m.specs.functions) {
-      // Computed keys: a name like __proto__ stays an ordinary entry.
-      lines.push(`  [${JSON.stringify(fn.name)}]: {`);
-      for (const p of fn.ensures) {
-        const source = predicateSource(p.property, helpers).split("\n").join("\n    ");
-        lines.push(`    [${JSON.stringify(p.name)}]: ${source},`);
-      }
-      lines.push("  },");
-    }
-    lines.push("});");
-    return { name: `specs/m${i}.ts`, source: `${lines.join("\n")}\n` };
-  });
-  return [{ name: "specs.ts", source: `${index.join("\n")}\n` }, ...files];
+  return [{ name: "specs.ts", source: `${lines.join("\n")}\n` }];
+}
+
+/** The directory a generated file's import is resolved from. */
+export function specWorkDir(dir: string): string {
+  return dirname(join(dir, ".eutaxy", "specs.ts"));
 }
