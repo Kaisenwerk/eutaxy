@@ -88,13 +88,14 @@ CLAUDE.md                  these rules
 README.md                  what Eutaxy is and how to use it
 docs/design.md             the design: verdicts, layers, fault model, provers
 docs/roadmap.md            phases and gates
-packages/spec/             SpecIR, Lemma parser and printer (imports nothing)
+packages/spec/             SpecIR and the spec combinators (imports nothing)
 packages/core/             effect log, faults, schedulers, invariants, shrinker, verdicts
 packages/engine/           run loop, virtual clock, globals patching, replay
 packages/cloudflare/       binding proxies, platform model, Vitest integration
 packages/aws/              AWS SDK proxy, SQS delivery model, DynamoDB reset and snapshots
 packages/prover/           Prover interface, ladder, aggregation
 packages/prover-lean/      first-party TypeScript-subset-to-Lean 4 engine
+packages/prover-smt/       first-party TypeScript-subset-to-SMT-LIB engine (Z3)
 packages/prover-thales/    optional third-party adapter
 packages/prover-lemmascript/
 packages/report/           text, JSON, Vitest regression emitter

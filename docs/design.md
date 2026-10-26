@@ -36,12 +36,11 @@ effectful shell, and honest verdicts that say what they rest on.
   shrinking and verdicts are pure functions over plain data. Effects
   (bindings, globals, workerd, child processes) live at the edges.
 - **Own the interfaces, adapt what is young.** Eutaxy owns the spec IR, the
-  verdict model, the report schema and its own proof engine. The spec
-  _surface syntax_ is Lemma, a grammar with a neutral normative home and a
-  conformance corpus; Eutaxy tracks it rather than forking it, because
-  specs must translate one-to-one into whatever engine reads them and the
-  corpus is free test material. Third-party provers and future platforms
-  plug in through interfaces and can be swapped or dropped.
+  verdict model, the report schema and its own proof engines. Specs are
+  written in TypeScript itself, so the user's own compiler checks them
+  against the functions they describe and there is no second language to
+  learn, track or extend. Third-party provers and future platforms plug in
+  through interfaces and can be swapped or dropped.
 - **Zero dependencies in the core.** `spec` and `core` import nothing
   outside the repo, so they stay translatable by a prover and safe to
   self-verify. The published package has no runtime dependencies at all.
@@ -106,13 +105,14 @@ runtime over a process boundary.
 
 | Module                                | Responsibility                                                                                                                                                                        | May import       |
 | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------- |
-| `spec`                                | `SpecIR`, Lemma annotation parser and printer                                                                                                                                         | nothing          |
+| `spec`                                | `SpecIR` and the combinators users write specs with (`forall`, `total`)                                                                                                               | nothing          |
 | `core`                                | Effect log, fault model, seeded PRNG, `Platform` interface, schedulers (seeded; exhaustive and partial-order reduction from v0.5), invariants including `refines`, shrinker, verdicts | `spec`           |
 | `engine`                              | Run loop, virtual clock, globals patching, per-run state reset, replay                                                                                                                | `core`           |
 | `cloudflare`                          | Binding proxies, platform model, allowlist, Vitest integration                                                                                                                        | `engine`, `core` |
 | `aws`                                 | AWS SDK `send` proxy, SQS-to-Lambda delivery model, DynamoDB reset and snapshots; runs in Node                                                                                        | `engine`, `core` |
-| `prover`                              | `Prover` interface, spec ladder, aggregation                                                                                                                                          | `core`, `spec`   |
+| `prover`                              | `Prover` interface, the reader (a module and its spec file to `SpecIR`), spec ladder, aggregation                                                                                     | `core`, `spec`   |
 | `prover-lean`                         | First-party engine: pure-TypeScript subset to Lean 4, tactic stack, translation validation                                                                                            | `prover`, `spec` |
+| `prover-smt`                          | First-party engine: the same subset to SMT-LIB 2 for Z3; doubles, code-unit strings, datatypes; counterexamples replayed                                                              | `prover`, `spec` |
 | `prover-thales`, `prover-lemmascript` | Optional process-boundary adapters for third-party engines                                                                                                                            | `prover`         |
 | `report`                              | Text, versioned JSON, Vitest regression emitter                                                                                                                                       | `core`           |
 | `cli`                                 | Commands, config, adapter discovery                                                                                                                                                   | all of the above |
@@ -143,89 +143,106 @@ differential scenarios, prover contracts; never published), `examples/` and
 Users write one spec per pure function and one spec file per scenario;
 Eutaxy derives every check from those two sources.
 
-**Function specs** are Lemma annotations in JSDoc on exported pure core
-functions, tracked exactly from lemma-lang's normative grammar and held to
-its conformance fixtures (copied, with their license, into
-`corpus/lemma-conformance`): `@ensures{name}` followed by a universally
-quantified property, `@total`, and `@throws`. A property binds variables
-over Lemma's domains (`int`, `nat`, `number`, `boolean`, `string`,
-`bigint`), optionally guarded by an interval or a whole-string regex, and
-its body is a formula: `¬ ∧ ∨ → ↔` (with ASCII spellings), `≡`/`≢` for
-SameValue, and TypeScript expressions verbatim at the leaves. An
-implication at the root is the property's preconditions: assignments
-failing them are outside the claim. Eutaxy parses annotations into its own
-`SpecIR` with a hand-written parser (no TypeScript compiler API, which
-TypeScript 7 does not offer to JavaScript), prints them back canonically,
-and compiles each property to a TypeScript predicate for code generation,
-since workerd runs no `eval`. Lemma has no `@requires`; a precondition is a
-root implication.
+**Function specs** are TypeScript, in a spec file beside each pure core
+module: `decide.ts` has `decide.props.ts`, and a scenario's `specs` names
+the modules. A spec file imports the module and `eutaxy/spec` and exports
+one property per named export. `forall(f, { when, ensures })` quantifies
+over the parameter types of `f`: `ensures` is the claim and the optional
+`when` the precondition, both arrow functions over the same parameters,
+typed by the user's own compiler as the parameters of `f`, so a spec that
+does not match its function does not compile. Inputs failing `when` are
+outside the claim, and `ensures` is evaluated only where `when` holds, so
+a guard such as `c !== null` protects the reads after it. `total(f)`
+claims termination on every input. Binder domains are the parameter
+types: a record, a nullable record, a union of string literals or a tagged
+union is a binder as a `number` is, and the claim names the function by
+value, so renaming it cannot detach its spec. A claim's body is ordinary
+TypeScript over the same subset the engines read: comparisons, `&& || !`,
+the conditional operator, field reads and calls to the module's functions.
+`number` is the double type and is drawn and modelled as declared; a claim
+that holds only for integers says so in `when` (`Number.isInteger(n)`,
+`0 <= n`). Specs live beside the module rather than in it so the core
+keeps importing nothing and the Worker's bundle carries no spec.
 
 ```ts
-/**
- * @ensures{within-captured} forall (captured refunded amount: int) {
- *   0 <= refunded ∧ refunded <= captured ==>
- *   decideRefund(captured, refunded, amount).refunded <= captured
- * }
- */
-export function decideRefund(captured: number, refunded: number, amount: number): RefundDecision { ... }
+import { forall } from "eutaxy/spec";
+import { decideRefund } from "./decide.ts";
+
+export const withinCaptured = forall(decideRefund, {
+  when: (captured, refunded) => 0 <= refunded && refunded <= captured,
+  ensures: (captured, refunded, amount) =>
+    decideRefund(captured, refunded, amount).refunded <= captured,
+});
 ```
 
-**`CHECKED`** evaluates a property on the inputs the simulator actually
-passed. A scenario lists the modules of its pure core (`specs`); while it
-is explored, calls into those modules' annotated functions from outside
-the module are observed through the module's namespace (Vite gives it
-configurable exports, which is what Vitest's own spies rely on) and their
-arguments recorded. Core functions are synchronous; one that returns a
-promise makes the run `UNSUPPORTED`. Binders are matched to the function's parameters by
-name, so each distinct recorded call is one assignment; a value outside
-its binder's domain or guard, or one failing a precondition, is discarded.
-A false claim, or an exception other than a malformed property (an atom
-that is not a boolean, or a name that neither the module nor the globals
-define; any `ReferenceError` counts as one, since compiled TypeScript under
-test practically never throws it and a missed binding would), is `REFUTED`
-with the call it came from. A property's free names are found by a token
-scan that knows arrow and function parameters, object keys and type
-positions; where it errs, the result is `UNKNOWN`, never a verdict. Holding on at least one assignment is
-`CHECKED`, and the verdict says on how many; none is `UNKNOWN`
-(`gave_up`). A binder that is not a parameter, `@total` (termination is not
-observable on samples) and `@throws` (its semantics are not fixed in Lemma
-yet) are `UNKNOWN` (`unsupported`) at this rung. Exploration stops at a
-scenario's first violation, so a run that ends `VIOLATED` passes fewer
-inputs than one that ends `BOUNDED`.
+Eutaxy reads a module and its spec file into its own `SpecIR`, plain data
+with typed binders, on the Node side of a check. The reader is
+hand-written over the TypeScript subset until TypeScript 7.1 is stable;
+then it is the TypeScript API, a peer dependency of `prover` as Vitest is
+of the facade, so binder types are whatever the user's compiler resolves
+them to, including types imported from other files (7.0 shipped no
+programmatic API; 7.1 restores one). Inside workerd the spec file is
+imported and its properties evaluated directly, so nothing is generated
+and nothing is `eval`ed. The spec surface is the one breaking change of
+`0.7.0`: `0.6.x` reads Lemma annotations in JSDoc, which `0.7.0` drops
+with a migration note. Specs were Lemma because its grammar had a neutral
+home and a conformance corpus; but its domains are primitives only and
+bind to parameters by name, which no real core signature fits, and
+widening it would have meant forking it.
 
-**`TESTED`** evaluates the same compiled predicate on assignments drawn
-from the binders' domains and guards, after the exploration and with its
-seed, so the same seed draws the same assignments on every machine and a
-verdict carries the seed it rests on. Each property derives its own stream
-from the seed and its name, so adding a property does not change what the
-others see. Draws are biased the way bugs are distributed: most integers
-are small, some are medium or large, a few are the range's ends; doubles
-include the fractions, the magnitudes and the special values (`NaN`, the
-infinities, `-0`) a guard admits, since `number` is the JavaScript type;
-integers stay within what a double holds exactly; bigints go beyond it;
-strings are short texts over letters, digits, punctuation and a few
-multi-unit characters, and under a regex guard they are drawn by walking
-the pattern (literals, classes, groups, alternation, quantifiers, anchors),
-with sampling over the pattern's characters as the fallback for syntax the
-walker refuses (lookaround, backreferences, property escapes); the real
-`RegExp` has the last word on every draw. Assignments are counted
-distinct, as `CHECKED` counts them (two booleans are two inputs, however
-often they are drawn). The rung stops at a set number of distinct
-assignments inside the claim (100 unless configured), or after twenty
-times as many draws, which is `UNKNOWN` (`gave_up`) when none was inside:
-preconditions sampling cannot meet lower the verdict, never pass. A
-property that could not be evaluated on any input, the simulator's or a
-drawn one (a non-boolean atom, say), is malformed and stays `UNKNOWN`
-(`unsupported`) whatever the other rung found: inputs that happen to miss
-the fault do not make the property look sound. An assignment where the claim is false is shrunk, one binder
-at a time toward zero (or the guard's nearest end), shorter and plainer
-strings, and `false`, as long as the property still fails, and reported as
-`REFUTED` at the `TESTED` rung with the shrunk assignment; it has no call,
-since the simulator did not make one. A guard no draw can meet is
-`UNKNOWN` (`gave_up`) too. The rung calls the function outside the
-simulator, so it assumes the function is pure, and a function that does
-not terminate on a drawn input hangs the check; `@total` stays `UNKNOWN`
-here.
+**`CHECKED`** evaluates a property on the inputs the simulator actually
+passed. While a scenario is explored, calls into the functions its spec
+files name, from outside their module, are observed through the module's
+namespace (Vite gives it configurable exports, which is what Vitest's own
+spies rely on) and their arguments recorded. Core functions are
+synchronous; one that returns a promise makes the run `UNSUPPORTED`. Each
+distinct recorded call is one assignment; one failing `when` is discarded.
+A false claim, or an exception from `ensures` other than a malformed
+property (a result that is not a boolean, which the user's compiler should
+already have refused), is `REFUTED` with the call it came from. Holding on
+at least one assignment is `CHECKED`, and the verdict says on how many;
+none is `UNKNOWN` (`gave_up`). `total` is `UNKNOWN` (`unsupported`) at
+this rung, since termination is not observable on samples. Exploration
+stops at a scenario's first violation, so a run that ends `VIOLATED`
+passes fewer inputs than one that ends `BOUNDED`.
+
+**`TESTED`** evaluates the same property on assignments drawn from the
+parameter types, after the exploration and with its seed, so the same seed
+draws the same assignments on every machine and a verdict carries the seed
+it rests on. Each property derives its own stream from the seed and its
+name, so adding a property does not change what the others see. Draws are
+biased the way bugs are distributed: most numbers are small integers, some
+are medium or large, a few are the range's ends, and doubles include the
+fractions, the magnitudes and the special values (`NaN`, the infinities,
+`-0`), since `number` is the JavaScript type; integers stay within what a
+double holds exactly; bigints go beyond it; strings are short texts over
+letters, digits, punctuation and a few multi-unit characters, and where
+`when` tests a parameter against a whole-string regex they are drawn by
+walking the pattern (literals, classes, groups, alternation, quantifiers,
+anchors), with sampling over the pattern's characters as the fallback for
+syntax the walker refuses (lookaround, backreferences, property escapes);
+the real `RegExp` has the last word on every draw. A union of literals
+draws each literal, a nullable type draws `null` among the values, a
+record is drawn field by field, and a tagged union draws every tag. Where
+`when` compares a parameter with a constant (`0 <= n`, `n < 5`), the draws
+are steered into that range, as an interval guard would, so a precondition
+is met rather than missed. Assignments are counted distinct, as `CHECKED`
+counts them (two booleans are two inputs, however often they are drawn).
+The rung stops at a set number of distinct assignments inside the claim
+(100 unless configured), or after twenty times as many draws, which is
+`UNKNOWN` (`gave_up`) when none was inside: preconditions sampling cannot
+meet lower the verdict, never pass. A property that could not be evaluated
+on any input, the simulator's or a drawn one, is malformed and stays
+`UNKNOWN` (`unsupported`) whatever the other rung found: inputs that
+happen to miss the fault do not make the property look sound. An
+assignment where the claim is false is shrunk, one binder at a time toward
+zero (or the nearest end `when` admits), shorter and plainer strings,
+`false`, `null` and the first literal of a union, as long as the property
+still fails, and reported as `REFUTED` at the `TESTED` rung with the
+shrunk assignment; it has no call, since the simulator did not make one.
+The rung calls the function outside the simulator, so it assumes the
+function is pure, and a function that does not terminate on a drawn input
+hangs the check; `total` stays `UNKNOWN` here.
 
 The ladder runs `CHECKED`, then `TESTED`, inside workerd; the `PROVEN`
 rung runs after them on the Node side of `eutaxy check`, where an engine
@@ -236,7 +253,7 @@ simulator's inputs it also held; when sampling gives up, `CHECKED` stands
 and says why it is not `TESTED`; when neither decided, one `UNKNOWN` names
 both reasons. Engines are folded in by `aggregate`: one engine proving
 lifts the verdict to `PROVEN`, the lower rungs' counts kept beside it
-(`@total`, which no simulator rung decides, is proved this way); an engine
+(`total`, which no simulator rung decides, is proved this way); an engine
 refuting where nothing else did is `REFUTED` at the `PROVEN` rung; one
 proving and another refuting, or an engine proving against the simulator's
 own counterexample, is `CONFLICT`, which fails the check like a refutation
@@ -770,9 +787,15 @@ engine that is not installed only lowers a verdict to `UNKNOWN`. Every
 engine, first-party or not, sits behind one interface Eutaxy owns and runs
 over a process boundary.
 
-**First-party engine (`prover-lean`).** Eutaxy's own TypeScript-to-Lean 4
-engine, so that the strongest verdict never depends on an external
-project's roadmap. It accepts a defined pure subset of TypeScript, emits
+Two engines are first-party, so that the strongest verdict never depends
+on an external project's roadmap. They read the same subset and the same
+`SpecIR`, and they divide the work by what each decides well: records,
+unions, nullable types and doubles reach `PROVEN` through the SMT engine
+first; recursion, induction and Eutaxy's self-check are Lean's. A user
+lists either or both.
+
+**First-party engine (`prover-lean`).** Eutaxy's TypeScript-to-Lean 4
+engine. It accepts a defined pure subset of TypeScript, emits
 Lean 4 with the `SpecIR` obligations as theorems, discharges them with one
 tactic script, and maps Lean's diagnostics back to properties. The subset
 is specified operationally by the contract corpus
@@ -791,25 +814,27 @@ functions. Ordering strings is refused: JavaScript compares UTF-16 code
 units, Lean characters, and the two disagree beyond the basic plane. A function outside the subset, or one calling such a function,
 is `UNKNOWN` (`unsupported`) with the construct and the line, and the rest
 of the module still goes through; a record type outside it makes the
-functions that use it so. Properties are stated over `int` and `nat`
-binders as Lean `Int`, with `nat` and interval guards as hypotheses, and
-`string` binders as Lean `String`; a binder over `number` (doubles) or
-`bigint` (a BigInt argument to a function over `number` throws in
-JavaScript), or a `string` binder with a regex guard, leaves that property
-`unsupported`.
+functions that use it so. Properties are stated over `number`
+binders as Lean `Int`, with `when` as hypotheses, and `string` binders as
+Lean `String`; records, unions of literals, nullable types and tagged
+unions become structures, inductives and `Option` once the SMT engine
+takes them; a `bigint` binder (a BigInt argument to a function over
+`number` throws in JavaScript), or a regex test in `when`, leaves that
+property `unsupported`.
 
 The engine's models of the language are assumptions every `PROVEN`
 carries: `number` is the unbounded integers, with no overflow, no fractions
-and no `NaN`; `string` is Lean's `String`, a sequence of Unicode
+and no `NaN`, so a claim about doubles belongs to the SMT engine, and a
+claim that holds over the integers and fails over doubles ends `CONFLICT`
+between the two, with the SMT engine's replayed counterexample; `string` is Lean's `String`, a sequence of Unicode
 characters, so a lone surrogate, which a JavaScript string can hold, is
 outside every string binder's domain; multiplication is emitted but a product of two variables is beyond
 the linear arithmetic the script decides, so such a claim is `gave_up`.
 Booleans stay `Bool` in terms, as in TypeScript, and become propositions
-(`= true`) where a formula needs one; comparisons are `decide`d. Lemma's
-`≡` (SameValue) is emitted as equality on booleans only: on records it is
-reference identity in JavaScript and on numbers it tells `-0` from `0`,
-neither of which the model has, so such a property is `unsupported` and
-`===` is the equality to write. A function that is used as a value
+(`= true`) where a formula needs one; comparisons are `decide`d. `===` on
+records is `unsupported`, since it is reference identity in JavaScript,
+which the model does not have, and `Object.is` is refused, since it tells
+`-0` from `0`; `===` on primitives is the equality to write. A function that is used as a value
 anywhere in the module, not only called (assigned to in any form, aliased,
 passed on), may not be what its declaration says when called, so it and
 its callers are `unsupported` too, as is a record with a `__proto__` field. Every
@@ -824,7 +849,7 @@ is the same for every theorem: booleans to propositions first, while the
 definitions unfolded, each conditional split, then `omega` on what remains.
 A proof that does not close is `gave_up`, since Lean does not say whether
 the claim is false or the script weak; the `TESTED` rung is what refutes.
-`@total` is `PROVEN` when Lean accepts the definition, which it does only
+`total` is `PROVEN` when Lean accepts the definition, which it does only
 for functions that terminate. Translation validation is part of the
 engine's tests: for every corpus function, the Lean definition must compute
 what the TypeScript computes on inputs drawn from its parameter types,
@@ -840,6 +865,27 @@ mapped to theorems by line, and an error outside every theorem means the
 emitted definitions did not compile, an engine gap reported as
 `unsupported`, never as a verdict. Timeouts are `gave_up`. The Lean kernel,
 not Eutaxy, checks the proof.
+
+**First-party engine (`prover-smt`).** The same subset emitted as SMT-LIB 2
+and decided by Z3, pinned to one release and run over a process boundary
+like Lean. It models what the Lean engine assumes away: `number` is the
+IEEE double (the floating-point theory, so `NaN`, the infinities, `-0` and
+the integers past 2^53 are in every binder's domain), `string` is a
+sequence of 16-bit code units (so `length` and ordering are JavaScript's),
+records and tagged unions are algebraic datatypes and `null` a
+constructor. Budgets are the solver's resource limit, never wall-clock
+time, so the same input gives the same outcome on every machine, and
+exhausting it is `gave_up`. `unsat` is `PROVEN` with the engine's models
+as assumptions. `sat` gives a model, which is a candidate counterexample,
+not a verdict: Eutaxy runs the TypeScript function on it first, and only a
+claim that fails on the real function is `REFUTED` (the input reported,
+shrunk as `TESTED` shrinks); a model the function does not confirm is a
+modelling gap, `UNKNOWN` (`unsupported`) with the input. The solver's
+proof is not checked by a kernel; what makes the engine trustworthy is
+that refutations are replayed, proofs name their models, and the Lean
+engine proves the same contract corpus, so a disagreement is `CONFLICT`.
+Nonlinear arithmetic over doubles, recursion and induction are where the
+solver gives up and Lean takes over.
 
 **Third-party adapters** (Thales, LemmaScript) are optional, and exist for
 cross-checking and for code outside the first-party subset.
@@ -870,11 +916,12 @@ Adapter rules:
   with the proving engine named; one proves and another refutes gives
   `CONFLICT`.
 
-| Engine                      | Best for                                                      | Backend         | Main caveat                                               |
-| --------------------------- | ------------------------------------------------------------- | --------------- | --------------------------------------------------------- |
-| `prover-lean` (first-party) | Push-button proofs of the pure core, on Eutaxy's own schedule | Lean 4          | Subset starts narrow and widens deliberately              |
-| Thales (optional)           | Cross-check; pure functional TypeScript                       | Lean 4          | Strict subset (no mutation, no classes); separate project |
-| LemmaScript (optional)      | Imperative code with loop invariants                          | Lean 4 or Dafny | Tech preview; Dafny's SMT results can vary with timeouts  |
+| Engine                      | Best for                                                       | Backend         | Main caveat                                               |
+| --------------------------- | -------------------------------------------------------------- | --------------- | --------------------------------------------------------- |
+| `prover-lean` (first-party) | Push-button proofs of the pure core, on Eutaxy's own schedule  | Lean 4          | Subset starts narrow and widens deliberately              |
+| `prover-smt` (first-party)  | Doubles, strings, records and unions; symbolic counterexamples | Z3 (SMT-LIB 2)  | No kernel-checked proof; refutations replayed instead     |
+| Thales (optional)           | Cross-check; pure functional TypeScript                        | Lean 4          | Strict subset (no mutation, no classes); separate project |
+| LemmaScript (optional)      | Imperative code with loop invariants                           | Lean 4 or Dafny | Tech preview; Dafny's SMT results can vary with timeouts  |
 
 ## Packaging, distribution and developer experience
 
@@ -954,9 +1001,9 @@ Self-verification targets, by cost of a bug:
 | Shrinker              | Output still violates and is no longer than input                                                               | Unhelpful traces only              |
 
 Not self-verifiable: binding proxies, globals patching and the workerd/Vitest
-glue (covered by differential testing), and the spec parser (a common-mode
-failure, covered by the Lemma conformance corpus, parse-print-parse round
-trips and fuzzing).
+glue (covered by differential testing), and the spec reader (a common-mode
+failure, covered by a corpus of modules with known `SpecIR` and, once the
+reader is the TypeScript API, by that compiler).
 
 ## Risks
 
@@ -976,5 +1023,6 @@ trips and fuzzing).
   binding calls; and a corpus entry in which an alarm interleaves with a
   call into the same object (Cloudflare allows it, the engine treats an
   alarm as an event like any other, and no scenario exercises it yet).
-- Whether the Lemma conformance corpus is enough to pin the spec parser, or
-  Eutaxy needs its own extension fixtures for loop invariants.
+- Whether the two engines' string models (code units in SMT, characters in
+  Lean) need a corpus entry for every string claim, or the `CONFLICT` rule
+  on the shared corpus is enough.

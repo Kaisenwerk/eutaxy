@@ -13,10 +13,10 @@ DynamoDB, through the AWS SDK as the effect boundary. A failure in a Worker
 comes back as a shrunk, replayable trace plus a Vitest regression test that
 runs in workerd.
 
-Lemma specs on a Worker's pure core functions are checked on the inputs the
-simulator actually passed them, and `refines` checks that the Worker carries
-out the core's decisions on state that was still current. Checking specs on
-generated inputs and proving them in Lean 4 are the next phase.
+Specs on a Worker's pure core functions are checked on the inputs the
+simulator actually passed them, then on generated inputs, and proved in
+Lean 4 when `--prover lean` is given; `refines` checks that the Worker
+carries out the core's decisions on state that was still current.
 
 **Status: 0.6, early.** The design is in
 [docs/design.md](docs/design.md); the phases and their gates are in
