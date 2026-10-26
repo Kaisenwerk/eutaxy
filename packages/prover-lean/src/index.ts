@@ -1,4 +1,16 @@
 // @eutaxy/prover-lean: the first-party TypeScript-subset-to-Lean 4 engine. See README.md.
+
+export {
+  type Expr,
+  hasLoneSurrogate,
+  OutsideSubset,
+  type RecordType,
+  readExpression,
+  readSubset,
+  type SubsetFunction,
+  type SubsetModule,
+  type SubsetType,
+} from "@eutaxy/prover/reader";
 export { type Emitted, type EmittedTheorem, emitModule, ident, statement, value } from "./emit.ts";
 export {
   checkLean,
@@ -22,14 +34,3 @@ export {
   prepare,
   proveModule,
 } from "./prove.ts";
-export {
-  type Expr,
-  hasLoneSurrogate,
-  OutsideSubset,
-  type RecordType,
-  readExpression,
-  readSubset,
-  type SubsetFunction,
-  type SubsetModule,
-  type SubsetType,
-} from "./subset.ts";

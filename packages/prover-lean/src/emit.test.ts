@@ -1,7 +1,7 @@
+import { readSubset } from "@eutaxy/prover/reader";
 import { extractSpecs, type FunctionSpec } from "@eutaxy/spec";
 import { describe, expect, test } from "vitest";
 import { emitModule, ident, statement, value } from "./emit.ts";
-import { readSubset } from "./subset.ts";
 
 const source = `
 export interface Decision { readonly ok: boolean; readonly left: number }

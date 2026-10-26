@@ -12,14 +12,8 @@ assumptions, or `UNKNOWN` as `gave_up` when a proof does not close or Lean
 times out, `unsupported` when a function or property is outside the subset,
 `unavailable` when the pinned toolchain is not installed; `@total` is proved
 by Lean accepting the definition); `prepare` (read and emit without running
-Lean); `readSubset` and `readExpression` (the subset: exported functions
-over `number` as unbounded integers, `boolean` and `string` (string-literal
-unions read as string), returning those or a record type declared in the
-module, with `const`, `if` and early returns, `+ - *`, `+` joining strings,
-comparisons, `&& || !`, the conditional operator, string and record
-literals, field reads, calls to the module's own functions; a function outside it,
-or calling one, is reported with the construct and the line, and the rest
-of the module still goes through); `emitModule`, `statement`, `value` and
+Lean); the subset reader re-exported from `@eutaxy/prover/reader`, where it
+lives so that every first-party engine reads the same tree; `emitModule`, `statement`, `value` and
 `ident` (the Lean text: `f_` functions, `R_` records, `v_` variables, `t_`
 theorems, so nothing collides with Lean's prelude or with another kind of
 name); `findLean`, `checkLean`,

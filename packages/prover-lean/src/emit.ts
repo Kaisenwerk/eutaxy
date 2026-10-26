@@ -9,7 +9,6 @@
  * script, so what Lean checks is the statement, not a hand proof.
  */
 
-import type { Binder, Formula, NamedProperty, Property } from "@eutaxy/spec";
 import {
   type Expr,
   hasLoneSurrogate,
@@ -21,7 +20,8 @@ import {
   type SubsetType,
   type TypeContext,
   typeOf,
-} from "./subset.ts";
+} from "@eutaxy/prover/reader";
+import type { Binder, Formula, NamedProperty, Property } from "@eutaxy/spec";
 
 /**
  * TypeScript names as Lean identifiers that can clash with nothing Lean

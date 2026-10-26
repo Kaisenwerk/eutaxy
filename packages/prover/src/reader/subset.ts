@@ -1,5 +1,5 @@
 /**
- * The pure TypeScript subset the first-party engine accepts, read into a
+ * The pure TypeScript subset the first-party engines accept, read into a
  * small tree: exported functions over `number` (as unbounded integers),
  * `boolean` and `string`, returning those or a record type declared in the
  * same module;

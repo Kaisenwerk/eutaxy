@@ -15,10 +15,10 @@ import type {
   Prover,
   ProveInput as ProverInput,
 } from "@eutaxy/prover";
+import { OutsideSubset, readSubset, type SubsetModule } from "@eutaxy/prover/reader";
 import { extractSpecs, type FunctionSpec, type SpecError } from "@eutaxy/spec";
 import { type Emitted, emitModule } from "./emit.ts";
 import { checkLean, findLean, type LeanDiagnostic, leanVersion } from "./lean.ts";
-import { OutsideSubset, readSubset, type SubsetModule } from "./subset.ts";
 
 export const engineName = "lean";
 
