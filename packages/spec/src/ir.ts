@@ -87,6 +87,8 @@ export interface FunctionSpec {
   readonly throws: boolean;
   /** 1-based line of the declaration. */
   readonly line: number;
+  /** Offset in the source of the `(` opening the parameters: the declaration's identity, for tools that read the module themselves. */
+  readonly offset: number;
 }
 
 /** A problem with an annotation, located in the module. */

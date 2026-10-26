@@ -12,7 +12,9 @@ plain data and back.
 IR); `extractSpecs` (the annotations in a module's source, the names it
 exports, and the annotations that did not parse, with lines);
 `predicateSource` (a property as TypeScript source for a predicate over
-its binders, for code generation: no `eval`).
+its binders, for code generation: no `eval`); `tokenize` and `templateSubstitutions` (the TypeScript-shaped
+tokenizer the parser uses, for engines that read the annotated functions
+themselves).
 
 The parser follows lemma-lang's `grammar.ebnf` and its side conditions on
 atoms; the conformance fixtures and the tests that hold it to them live in

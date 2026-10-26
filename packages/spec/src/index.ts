@@ -21,3 +21,10 @@ export {
   predicateSource,
 } from "./predicate.ts";
 export { printFormula, printProperty } from "./print.ts";
+export {
+  type Token,
+  TokenizeError,
+  type TokenKind,
+  templateSubstitutions,
+  tokenize,
+} from "./tokens.ts";

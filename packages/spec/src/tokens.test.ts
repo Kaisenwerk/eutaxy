@@ -42,3 +42,13 @@ describe("tokenize", () => {
     expect(templateSubstitutions(t)).toEqual(["/}/.test(s)", "'}'", "/* } */ x", "`${y}`"]);
   });
 });
+
+test("a line comment ends at any JavaScript line terminator", () => {
+  for (const nl of ["\n", "\r", "\r\n", "\u2028", "\u2029"]) {
+    const tokens = tokenize(`a // c${nl}+ 1`);
+    expect(
+      tokens.map((t) => t.text),
+      JSON.stringify(nl),
+    ).toEqual(["a", "+", "1"]);
+  }
+});

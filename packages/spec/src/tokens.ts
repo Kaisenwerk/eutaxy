@@ -260,8 +260,10 @@ function scan(
       continue;
     }
     if (c === "/" && text[i + 1] === "/") {
+      // A line comment ends at any JavaScript line terminator, not only LF: code after a CR or a
+      // U+2028/U+2029 is code.
       const from = i;
-      while (i < text.length && text[i] !== "\n") i++;
+      while (i < text.length && !/[\n\r\u2028\u2029]/u.test(text[i] as string)) i++;
       push("comment", from, i);
       continue;
     }

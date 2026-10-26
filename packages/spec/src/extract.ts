@@ -253,6 +253,7 @@ export function extractSpecs(source: string): ModuleSpecs {
       total: found.some((t) => t.name === "total"),
       throws: found.some((t) => t.name === "throws"),
       line: lineOf((code[decl.open] as Token).start),
+      offset: (code[decl.open] as Token).start,
     });
   });
   return { functions, exports: exportedNames(code), errors };
