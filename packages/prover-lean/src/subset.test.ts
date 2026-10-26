@@ -164,7 +164,17 @@ export function fine(n: number): number { return n; }
     ["export function f(x: number): number { let y = x; return y; }", "mutable binding"],
     ["export function f(x: number): number { for (;;) {} }", "a loop"],
     ["export function f(x: number) { return x; }", "without a return type"],
-    ["export function f(x: string): number { return 1; }", "type string"],
+    ["export function f(x: string | null): number { return 1; }", "arrays, generics, unions"],
+    [
+      'export function f(x: "a" | null): number { return 1; }',
+      "a union mixing string literals with null",
+    ],
+    ['export function f(x: string): boolean { return x < "b"; }', "< on a string and a string"],
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: the source under test contains a template literal on purpose
+    ["export function f(x: string): string { return `${x}`; }", "a template literal"],
+    ['export function f(x: string): boolean { return x === "\\ud83d"; }', "lone surrogate"],
+    ['export function f(x: string): boolean { return x === "\\101"; }', "escape sequence"],
+    ['export function f(x: string): boolean { return x === "\\u{110000}"; }', "beyond U+10FFFF"],
     ["export function f(x: number): number { return x / 2; }", "the / operator"],
     ["export function f(x: number): number { return x % 2; }", "the % operator"],
     ["export function f(x: number): number { return 1.5; }", "numeric literal 1.5"],
@@ -172,7 +182,7 @@ export function fine(n: number): number { return n; }
     ["export function f(x: number): number { return Math.abs(x); }", "Math, which is neither"],
     ["export function f(x: number): number { if (x > 0) return 1; }", "does not return"],
     ["export function f(x: number): number { return x; return x; }", "statements after a return"],
-    ["export function f(x: number): boolean { return 'a' === 'a'; }", "string literal"],
+    ["export function f(x: number): number { return 'a' + 1; }", "+ on a string and a int"],
     ["export function f(x: number[]): number { return 1; }", "arrays, generics"],
     ["export function f(x?: number): number { return 1; }", "optional parameter x"],
     ["export async function f(x: number): number { return x; }", "async function"],
@@ -406,6 +416,24 @@ export function two(x: number): C { return { v: x }; }
       "export function f(x: number): number { const y: boolean = x + 1; return x; }",
     );
     expect(annotated.outside[0]?.message).toBe("const y is annotated bool but holds a int");
+  });
+
+  test("strings: literals with escapes, joining, equality, literal unions as string, string fields", () => {
+    const m = readSubset(`
+export interface T { readonly kind: string; readonly code: number }
+export function decide(status: "invited" | "active" | "disabled"): "send_code" | "waitlist" {
+  if (status === "invited" || status === "active") return "send_code";
+  return "waitlist";
+}
+export function key(address: string): string { return "evm:" + address; }
+export function esc(): string { return "a\\"b\\\\c\\n\\x41\\u0042\\u{1F600}"; }
+export function tag(n: number): T { return { kind: n < 0 ? "neg" : "pos", code: n }; }
+`);
+    expect(m.outside).toEqual([]);
+    expect(m.functions.map((f) => f.name)).toEqual(["decide", "key", "esc", "tag"]);
+    expect(m.functions[0]?.params[0]?.type).toEqual({ kind: "string" });
+    expect(m.functions[0]?.returns).toEqual({ kind: "string" });
+    expect(m.functions[2]?.body).toEqual({ kind: "string", value: 'a"b\\c\nAB😀' });
   });
 
   test("an error names the line", () => {

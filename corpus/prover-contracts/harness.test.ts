@@ -41,7 +41,7 @@ test("the pinned Lean toolchain is installed where it is required", () => {
 
 const outcomeName = (o: ProofOutcome): string => (o.kind === "UNKNOWN" ? o.cause : o.kind);
 
-/** Inputs drawn from a parameter's type: small integers, both booleans. */
+/** Inputs drawn from a parameter's type: small integers, both booleans, short strings. */
 function drawArgs(types: readonly SubsetType[], count: number): unknown[][] {
   let state: PrngState = seedPrng("contracts");
   const out: unknown[][] = [];
@@ -51,15 +51,17 @@ function drawArgs(types: readonly SubsetType[], count: number): unknown[][] {
       const binder: Binder =
         t.kind === "bool"
           ? { name: "b", domain: "boolean" }
-          : {
-              name: "n",
-              domain: "int",
-              guard: {
-                kind: "interval",
-                lower: { value: "-50", inclusive: true },
-                upper: { value: "50", inclusive: true },
-              },
-            };
+          : t.kind === "string"
+            ? { name: "s", domain: "string" }
+            : {
+                name: "n",
+                domain: "int",
+                guard: {
+                  kind: "interval",
+                  lower: { value: "-50", inclusive: true },
+                  upper: { value: "50", inclusive: true },
+                },
+              };
       const [v, next] = generate(binder, state);
       state = next;
       args.push(v);

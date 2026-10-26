@@ -4,7 +4,8 @@
  * @ensures{over-doubles} forall (x: number) { abs(x) >= 0 }
  * @ensures{over-integers} forall (x: int) { abs(x) >= 0 }
  * @ensures{fixpoint} forall (x: int) { abs(abs(x)) === abs(x) }
- * @ensures{needs-strings} forall (x: int) (s: string) { abs(x) >= 0 }
+ * @ensures{with-a-string} forall (x: int) (s: string) { abs(x) >= 0 }
+ * @ensures{needs-a-regex} forall (x: int) (s: string ∈ /^a+$/) { abs(x) >= 0 }
  */
 export function abs(x: number): number {
   return x < 0 ? -x : x;

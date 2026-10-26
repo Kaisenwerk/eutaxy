@@ -12,6 +12,7 @@
 import type { Binder, Formula, NamedProperty, Property } from "@eutaxy/spec";
 import {
   type Expr,
+  hasLoneSurrogate,
   OutsideSubset,
   type RecordType,
   readExpression,
@@ -56,6 +57,8 @@ function leanType(t: SubsetType): string {
       return "Int";
     case "bool":
       return "Bool";
+    case "string":
+      return "String";
     case "record":
       return ident.record(t.name);
   }
@@ -98,6 +101,8 @@ export function term(e: Expr, scope: ReadonlyMap<string, SubsetType>, env: Env):
       return `(${e.value} : Int)`;
     case "bool":
       return e.value ? "true" : "false";
+    case "string":
+      return leanString(e.value);
     case "var":
       return ident.variable(e.name);
     case "neg":
@@ -106,7 +111,10 @@ export function term(e: Expr, scope: ReadonlyMap<string, SubsetType>, env: Env):
       return `(!${t(e.operand)})`;
     case "binary":
       switch (e.op) {
-        case "+":
+        case "+": {
+          const lt = typeOf(e.left, scope, env.ctx, fail);
+          return `(${t(e.left)} ${lt.kind === "string" ? "++" : "+"} ${t(e.right)})`;
+        }
         case "-":
         case "*":
           return `(${t(e.left)} ${e.op} ${t(e.right)})`;
@@ -180,7 +188,7 @@ function binderType(b: Binder): SubsetType {
       fail(`binder ${b.name} over number: the engine models integers, not doubles`);
       break;
     case "string":
-      fail(`binder ${b.name} over string: the subset has no strings yet`);
+      return { kind: "string" };
   }
 }
 
@@ -191,7 +199,8 @@ function binderHypotheses(b: Binder): string[] {
   if (b.domain === "nat") out.push(`0 ≤ ${x}`);
   const g = b.guard;
   if (!g) return out;
-  if (g.kind === "regex") fail(`a regex guard on ${b.name}`);
+  if (g.kind === "regex")
+    fail(`a regex guard on ${b.name}: the engine does not model regular expressions`);
   const literal = (v: string) => v.replace(/_/g, "").replace(/n$/, "");
   if (!g.lower.value.endsWith("∞"))
     out.push(`(${literal(g.lower.value)} : Int) ${g.lower.inclusive ? "≤" : "<"} ${x}`);
@@ -359,6 +368,25 @@ export function emitModule(
   return { source: `${parts.join("\n\n")}\n`, theorems, skipped };
 }
 
+/**
+ * A JavaScript string as a Lean string literal: `"` and `\` escaped, control
+ * characters as `\xHH`, everything else written as it is (Lean source is
+ * UTF-8). A lone surrogate has no Lean character and is refused.
+ */
+export function leanString(value: string): string {
+  if (hasLoneSurrogate(value))
+    fail("a string with a lone surrogate, which Lean's strings cannot hold");
+  let out = '"';
+  for (const c of value) {
+    const code = c.codePointAt(0) as number;
+    if (c === '"') out += '\\"';
+    else if (c === "\\") out += "\\\\";
+    else if (code < 0x20 || code === 0x7f) out += `\\x${code.toString(16).padStart(2, "0")}`;
+    else out += c;
+  }
+  return `${out}"`;
+}
+
 /** A TypeScript value of a subset type as a Lean term, for translation checks. */
 export function value(v: unknown, t: SubsetType, module: SubsetModule): string {
   switch (t.kind) {
@@ -368,6 +396,9 @@ export function value(v: unknown, t: SubsetType, module: SubsetModule): string {
     case "bool":
       if (typeof v !== "boolean") fail(`${String(v)} is not a boolean`);
       return v ? "true" : "false";
+    case "string":
+      if (typeof v !== "string") fail(`${String(v)} is not a string`);
+      return leanString(v);
     case "record": {
       const rec = module.records.find((r) => r.name === t.name) ?? fail(`no record ${t.name}`);
       if (typeof v !== "object" || v === null) fail(`${String(v)} is not a record`);

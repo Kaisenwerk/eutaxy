@@ -24,6 +24,7 @@ export {
 } from "./prove.ts";
 export {
   type Expr,
+  hasLoneSurrogate,
   OutsideSubset,
   type RecordType,
   readExpression,

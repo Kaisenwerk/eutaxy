@@ -778,23 +778,31 @@ tactic script, and maps Lean's diagnostics back to properties. The subset
 is specified operationally by the contract corpus
 (`corpus/prover-contracts`: functions with known outcomes, provable, given
 up on, and outside the subset) and widens one characterised class at a
-time. Today it is: exported functions over `number` and `boolean`,
-returning those or a record type (`interface` or object `type`) declared in
-the module; bodies of `const` bindings, `if` with early returns and
-`return`; expressions from `+ - *`, comparisons, `&& || !`, the conditional
-operator, record literals, field reads and calls to the module's own
-functions. A function outside the subset, or one calling such a function,
+time. Today it is: exported functions over `number`, `boolean` and
+`string` (a union of string literals reads as `string`: the proof covers
+every string, more than the type admits), returning those or a record type
+(`interface` or object `type`) declared in the module; bodies of `const`
+bindings, `if` with early returns and `return`; expressions from `+ - *`
+on integers and `+` joining two strings, comparisons on integers and
+`===`/`!==` on any one type, `&& || !`, the conditional operator, string
+literals (escapes decoded; a lone surrogate has no Lean character and is
+refused), record literals, field reads and calls to the module's own
+functions. Ordering strings is refused: JavaScript compares UTF-16 code
+units, Lean characters, and the two disagree beyond the basic plane. A function outside the subset, or one calling such a function,
 is `UNKNOWN` (`unsupported`) with the construct and the line, and the rest
 of the module still goes through; a record type outside it makes the
 functions that use it so. Properties are stated over `int` and `nat`
-binders as Lean `Int`, with `nat` and interval guards as hypotheses; a
-binder over `number` (doubles), `string` or `bigint` (a BigInt argument to
-a function over `number` throws in JavaScript) leaves that property
+binders as Lean `Int`, with `nat` and interval guards as hypotheses, and
+`string` binders as Lean `String`; a binder over `number` (doubles) or
+`bigint` (a BigInt argument to a function over `number` throws in
+JavaScript), or a `string` binder with a regex guard, leaves that property
 `unsupported`.
 
-The engine's number model is an assumption every `PROVEN` carries:
-`number` is the unbounded integers, with no overflow, no fractions and no
-`NaN`; multiplication is emitted but a product of two variables is beyond
+The engine's models of the language are assumptions every `PROVEN`
+carries: `number` is the unbounded integers, with no overflow, no fractions
+and no `NaN`; `string` is Lean's `String`, a sequence of Unicode
+characters, so a lone surrogate, which a JavaScript string can hold, is
+outside every string binder's domain; multiplication is emitted but a product of two variables is beyond
 the linear arithmetic the script decides, so such a claim is `gave_up`.
 Booleans stay `Bool` in terms, as in TypeScript, and become propositions
 (`= true`) where a formula needs one; comparisons are `decide`d. Lemma's

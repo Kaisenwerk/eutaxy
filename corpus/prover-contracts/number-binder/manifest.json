@@ -1,11 +1,12 @@
 {
-  "description": "Binders over number or string are refused per property; the integer properties on the same function are proved.",
+  "description": "Binders over number, or strings guarded by a regex, are refused per property; the integer and plain-string properties on the same function are proved.",
   "expect": {
     "abs": {
       "over-doubles": "unsupported",
       "over-integers": "PROVEN",
       "fixpoint": "PROVEN",
-      "needs-strings": "unsupported"
+      "with-a-string": "PROVEN",
+      "needs-a-regex": "unsupported"
     }
   }
 }

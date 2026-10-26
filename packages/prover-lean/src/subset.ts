@@ -1,7 +1,8 @@
 /**
  * The pure TypeScript subset the first-party engine accepts, read into a
- * small tree: exported functions over `number` (as unbounded integers) and
- * `boolean`, returning those or a record type declared in the same module;
+ * small tree: exported functions over `number` (as unbounded integers),
+ * `boolean` and `string`, returning those or a record type declared in the
+ * same module;
  * bodies made of `const` bindings, `if` with early returns, `return`, and
  * expressions from integer arithmetic (`+ - *`), comparisons, `&& || !`,
  * the conditional operator, record literals and field reads, and calls to
@@ -23,6 +24,7 @@ export class OutsideSubset extends Error {
 export type SubsetType =
   | { readonly kind: "int" }
   | { readonly kind: "bool" }
+  | { readonly kind: "string" }
   | { readonly kind: "record"; readonly name: string };
 
 export interface Field {
@@ -40,6 +42,7 @@ export type BinaryOp = "+" | "-" | "*" | "<" | "<=" | ">" | ">=" | "===" | "!=="
 export type Expr =
   | { readonly kind: "int"; readonly value: string }
   | { readonly kind: "bool"; readonly value: boolean }
+  | { readonly kind: "string"; readonly value: string }
   | { readonly kind: "var"; readonly name: string }
   | { readonly kind: "neg"; readonly operand: Expr }
   | { readonly kind: "not"; readonly operand: Expr }
@@ -155,6 +158,64 @@ class Reader {
   }
 }
 
+/** Whether a string holds a surrogate code unit without its pair: no Lean character corresponds to it. */
+export function hasLoneSurrogate(s: string): boolean {
+  return /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(s);
+}
+
+/**
+ * The value of a string literal token. Simple escapes and `\xHH`, `\uHHHH`,
+ * `\u{H…}` are decoded; a line continuation, an octal escape or a lone
+ * surrogate (which Lean's strings cannot hold) is outside the subset.
+ */
+function stringLiteralValue(text: string, r: Reader, t: Token): string {
+  const body = text.slice(1, -1);
+  let out = "";
+  for (let i = 0; i < body.length; i++) {
+    const c = body[i] as string;
+    if (c !== "\\") {
+      out += c;
+      continue;
+    }
+    const e = body[++i];
+    const simple: Record<string, string> = {
+      n: "\n",
+      t: "\t",
+      r: "\r",
+      b: "\b",
+      f: "\f",
+      v: "\v",
+      "0": "\0",
+      "\\": "\\",
+      '"': '"',
+      "'": "'",
+    };
+    if (e !== undefined && e in simple && !(e === "0" && /[0-9]/.test(body[i + 1] ?? ""))) {
+      out += simple[e];
+      continue;
+    }
+    if (e === "x" && /^[0-9a-fA-F]{2}$/.test(body.slice(i + 1, i + 3))) {
+      out += String.fromCharCode(Number.parseInt(body.slice(i + 1, i + 3), 16));
+      i += 2;
+      continue;
+    }
+    if (e === "u") {
+      const m = /^\{([0-9a-fA-F]{1,6})\}|^([0-9a-fA-F]{4})/.exec(body.slice(i + 1));
+      if (m) {
+        const code = Number.parseInt((m[1] ?? m[2]) as string, 16);
+        if (code > 0x10ffff) r.fail(`a code point escape beyond U+10FFFF in a string literal`, t);
+        out += String.fromCodePoint(code);
+        i += m[0].length;
+        continue;
+      }
+    }
+    r.fail(`an escape sequence \\${e ?? ""} in a string literal`, t);
+  }
+  if (hasLoneSurrogate(out))
+    r.fail("a string literal with a lone surrogate, which Lean's strings cannot hold", t);
+  return out;
+}
+
 /** Record types the module declares but the subset does not take, with why. */
 type BadRecords = ReadonlyMap<string, string>;
 
@@ -164,6 +225,20 @@ function typeAnnotation(
   bad: BadRecords = new Map(),
 ): SubsetType {
   const t = r.take();
+  if (t.kind === "string") {
+    // A union of string literals is a string whose values the module restricts; the proof covers every
+    // string, which is more than the type admits. `null` or `undefined` in the union is outside.
+    while (r.isPunct("|")) {
+      r.at++;
+      const next = r.take();
+      if (next.kind !== "string")
+        r.fail(
+          `a union mixing string literals with ${next.text} (only string literals are read, as string)`,
+          next,
+        );
+    }
+    return { kind: "string" };
+  }
   if (t.kind !== "ident") r.fail(`a type that is not a name: ${t.text}`, t);
   const why = bad.get(t.text);
   if (why !== undefined) r.fail(`record type ${t.text} is outside the subset: ${why}`, t);
@@ -174,8 +249,12 @@ function typeAnnotation(
     );
   if (t.text === "number") return { kind: "int" };
   if (t.text === "boolean") return { kind: "bool" };
+  if (t.text === "string") return { kind: "string" };
   if (records.has(t.text)) return { kind: "record", name: t.text };
-  r.fail(`type ${t.text} (the subset has number, boolean and the module's own record types)`, t);
+  r.fail(
+    `type ${t.text} (the subset has number, boolean, string and the module's own record types)`,
+    t,
+  );
 }
 
 /** Names a Lean structure declaration generates itself, which a field cannot take. */
@@ -636,8 +715,9 @@ class FunctionParser {
           r.fail(`the numeric literal ${t.text} (integers in decimal only)`, t);
         return { kind: "int", value: t.text.replace(/_/g, "") };
       case "string":
+        return { kind: "string", value: stringLiteralValue(t.text, r, t) };
       case "template":
-        r.fail("a string literal (the subset has no strings yet)", t);
+        r.fail("a template literal", t);
         break;
       case "regex":
         r.fail("a regular expression", t);
@@ -724,6 +804,8 @@ export function typeOf(
       return { kind: "int" };
     case "bool":
       return { kind: "bool" };
+    case "string":
+      return { kind: "string" };
     case "var": {
       const t = scope.get(e.name);
       if (!t) fail(`${e.name} is not in scope`);
@@ -732,9 +814,14 @@ export function typeOf(
     case "binary": {
       const l = typeOf(e.left, scope, ctx, fail);
       const r = typeOf(e.right, scope, ctx, fail);
+      // `+` joins two strings; every other arithmetic or ordering operator is on integers only
+      // (ordering strings compares UTF-16 code units in JavaScript and characters in Lean: not the same).
+      if (e.op === "+" && l.kind === "string" && r.kind === "string") return { kind: "string" };
       const arithmetic = ["+", "-", "*", "<", "<=", ">", ">="].includes(e.op);
       if (arithmetic && (l.kind !== "int" || r.kind !== "int"))
-        fail(`${e.op} on a ${l.kind} and a ${r.kind} (the subset has it on integers)`);
+        fail(
+          `${e.op} on a ${l.kind} and a ${r.kind} (the subset has it on integers${e.op === "+" ? ", and + on two strings" : ""})`,
+        );
       if ((e.op === "&&" || e.op === "||") && (l.kind !== "bool" || r.kind !== "bool"))
         fail(`${e.op} on a ${l.kind} and a ${r.kind} (the subset has it on booleans)`);
       if ((e.op === "===" || e.op === "!==") && JSON.stringify(l) !== JSON.stringify(r))
@@ -856,6 +943,7 @@ function callees(e: Expr, out = new Set<string>()): Set<string> {
   switch (e.kind) {
     case "int":
     case "bool":
+    case "string":
     case "var":
       return out;
     case "neg":

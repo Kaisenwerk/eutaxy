@@ -21,10 +21,10 @@ release once `pnpm check` and the corpora pass, and v0.7's gate closes the
 next phase.
 
 In this order, each when a target needs it.
-- Widening the engine's subset one corpus entry at a time: structural
-  recursion, tagged unions (`type … = { kind: "a" } | …`), strings; the
-  proof cache keyed by source, spec and engine version; `eutaxy prover
-  install lean`.
+- Widening the engine's subset one corpus entry at a time (strings and
+  string-literal unions are in): structural recursion, tagged unions
+  (`type … = { kind: "a" } | …`), `null` in unions; the proof cache keyed by
+  source, spec and engine version; `eutaxy prover install lean`.
 - `TESTED` draws for record and tagged-union binders, once Lemma or an
   Eutaxy extension has such domains; a configurable number of draws on the
   command line (the API takes `inputs`).

@@ -107,6 +107,7 @@ describe.skipIf("unavailable" in toolchain && !required)("proveModule with the p
       engine: { name: "lean", version: "4.35.0" },
       assumptions: engineAssumptions,
     });
+    expect(engineAssumptions.some((a) => a.includes("lone surrogate"))).toBe(true);
     const gaveUp = r.results[1]?.outcome;
     if (gaveUp?.kind === "UNKNOWN")
       expect(gaveUp.reason).toContain("omega could not prove the goal");
