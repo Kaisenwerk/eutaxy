@@ -1,14 +1,27 @@
 {
   "description": "Boolean parameters and results; equality of booleans as iff.",
   "expect": {
-    "decide": {
-      "allowedIff": "PROVEN",
-      "reasonWhenBanned": "PROVEN",
-      "reasonCodes": "PROVEN"
+    "lean": {
+      "decide": {
+        "allowedIff": "PROVEN",
+        "reasonWhenBanned": "PROVEN",
+        "reasonCodes": "PROVEN"
+      },
+      "either": {
+        "xor": "PROVEN",
+        "sameValue": "PROVEN"
+      }
     },
-    "either": {
-      "xor": "PROVEN",
-      "sameValue": "PROVEN"
+    "smt": {
+      "decide": {
+        "allowedIff": "PROVEN",
+        "reasonWhenBanned": "PROVEN",
+        "reasonCodes": "PROVEN"
+      },
+      "either": {
+        "xor": "PROVEN",
+        "sameValue": "PROVEN"
+      }
     }
   }
 }

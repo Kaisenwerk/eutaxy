@@ -18,6 +18,9 @@
       "path": "../../packages/prover-lean"
     },
     {
+      "path": "../../packages/prover-smt"
+    },
+    {
       "path": "../../packages/spec"
     }
   ]

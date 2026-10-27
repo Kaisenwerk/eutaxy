@@ -1,11 +1,21 @@
 {
   "description": "The refund core, fixed: all three properties and termination are proved.",
   "expect": {
-    "decideRefund": {
-      "withinCaptured": "PROVEN",
-      "addsTheAmount": "PROVEN",
-      "fullRefundAllowed": "PROVEN",
-      "decideRefundTotal": "PROVEN"
+    "lean": {
+      "decideRefund": {
+        "withinCaptured": "PROVEN",
+        "addsTheAmount": "PROVEN",
+        "fullRefundAllowed": "PROVEN",
+        "decideRefundTotal": "PROVEN"
+      }
+    },
+    "smt": {
+      "decideRefund": {
+        "withinCaptured": "REFUTED",
+        "addsTheAmount": "REFUTED",
+        "fullRefundAllowed": "PROVEN",
+        "decideRefundTotal": "unsupported"
+      }
     }
   }
 }

@@ -23,6 +23,9 @@
       "path": "packages/prover-lean"
     },
     {
+      "path": "packages/prover-smt"
+    },
+    {
       "path": "packages/prover-thales"
     },
     {

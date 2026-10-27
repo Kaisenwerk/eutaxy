@@ -217,7 +217,8 @@ describe("render", () => {
     expect(render(-0)).toBe("-0");
     expect(render(10n)).toBe("10n");
     expect(render('a"b')).toBe('"a\\"b"');
-    expect(render({ ok: true, n: 2n })).toBe('{"ok":true,"n":"2n"}');
+    expect(render({ ok: true, n: 2n })).toBe("{ ok: true, n: 2n }");
+    expect(render({ attempts: Number.NaN, "a-b": -0 })).toBe('{ attempts: NaN, "a-b": -0 }');
     expect(render(null)).toBe("null");
     expect(render(undefined)).toBe("undefined");
   });
@@ -236,5 +237,21 @@ describe("the CHECKED rung and the parameter types", () => {
       ),
     );
     expect(v).toMatchObject({ kind: "CHECKED", inputs: 1, discarded: 1 });
+  });
+});
+
+describe("render, after review", () => {
+  test("never truncates, so two long inputs never collide, and never throws", () => {
+    const long = "x".repeat(300);
+    expect(render(`${long}a`)).not.toBe(render(`${long}b`));
+    expect(render(`${long}a`)).toBe(JSON.stringify(`${long}a`));
+    expect(render(new Date(Number.NaN))).toBe("Date(NaN)");
+    const throwing = {
+      get boom(): number {
+        throw new Error("no");
+      },
+    };
+    expect(typeof render(throwing)).toBe("string");
+    expect(render([1, "a", { b: 2n }])).toBe('[1, "a", { b: 2n }]');
   });
 });

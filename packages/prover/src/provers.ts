@@ -52,6 +52,8 @@ export interface ProveInput {
   readonly specs: ModuleSpecs;
   /** The functions to prove; every one with specs when omitted. */
   readonly functions?: readonly string[];
+  /** The spec file's path, for an engine that replays a counterexample through the spec itself. */
+  readonly specPath?: string;
   readonly timeoutMs?: number;
 }
 

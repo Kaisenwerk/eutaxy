@@ -17,6 +17,7 @@ import {
 } from "@eutaxy/core";
 import { aggregate, type EngineReport, type Prover } from "@eutaxy/prover";
 import { leanProver } from "@eutaxy/prover-lean";
+import { smtProver } from "@eutaxy/prover-smt";
 import { renderSpecs, renderText } from "@eutaxy/report";
 import { checkTestSource, metaKey, vitestConfigSource } from "./generate.ts";
 import { cloudflareRegressionTest } from "./regression.ts";
@@ -50,7 +51,7 @@ export interface CheckOptions {
 export const exitCodes = { BOUNDED: 0, VIOLATED: 1, UNSUPPORTED: 2, error: 3 } as const;
 
 /** The engines `--prover` can name. */
-export const provers: Readonly<Record<string, Prover>> = { lean: leanProver };
+export const provers: Readonly<Record<string, Prover>> = { lean: leanProver, smt: smtProver };
 
 /**
  * The PROVEN rung, on the Node side: each engine on each observed spec
@@ -78,7 +79,12 @@ export async function proveSpecs(
     for (const engine of engines)
       reports.push({
         engine: engine.name,
-        proofs: await engine.prove({ source, specs: found.specs, functions: withSpecs }),
+        proofs: await engine.prove({
+          source,
+          specs: found.specs,
+          functions: withSpecs,
+          specPath: found.specPath,
+        }),
       });
     out = aggregate(key, out, reports);
   }

@@ -92,7 +92,10 @@ export const withinCaptured = forall(decideRefund, {
 
 Each property is checked on the inputs the simulator passed (`CHECKED`),
 then on inputs drawn from the parameter types (`TESTED`), and proved for
-every input by Lean 4 with `--prover lean` (`PROVEN`).
+every input by a named engine (`PROVEN`): `--prover lean` proves under an
+integer model of `number` with the Lean 4 kernel, `--prover smt` proves
+over the doubles themselves with Z3 and replays every model it finds, and
+`--prover lean,smt` reports a `CONFLICT` where the two disagree.
 
 It runs the scenario inside workerd through your Vitest and the Cloudflare
 Vitest plugin, prints the verdict with its trace and assumptions (or

@@ -136,6 +136,8 @@ describe("eutaxy check", () => {
           ["withinCaptured", "TESTED"],
           ["addsTheAmount", "TESTED"],
           ["fullRefundAllowed", "REFUTED"],
+          // Sampling with this seed reaches its 100 held inputs before it draws the NaN amount.
+          ["totalNonNegative", "TESTED"],
         ]);
         const refuted = report.specs[2] as SpecJson & { rung: string };
         expect(refuted.rung).toBe("TESTED");
@@ -199,6 +201,8 @@ describe("eutaxy check", () => {
         ["withinCaptured", "PROVEN"],
         ["addsTheAmount", "PROVEN"],
         ["fullRefundAllowed", "REFUTED"],
+        // Under the integer model the claim holds, and sampling missed the NaN amount: PROVEN, misleadingly.
+        ["totalNonNegative", "PROVEN"],
       ]);
       expect(report.specs[0]?.engine).toEqual({ name: "lean", version: "4.35.0" });
       const text = eutaxy([
@@ -213,6 +217,48 @@ describe("eutaxy check", () => {
       expect(text.stdout).toContain(
         "PROVEN   decideRefund withinCaptured: by lean 4.35.0; also held on",
       );
+      const z3 = execFileSync(
+        process.execPath,
+        [
+          "--input-type=module",
+          "-e",
+          'import { findZ3 } from "./packages/prover-smt/src/index.ts"; const t = await findZ3(); process.stdout.write("unavailable" in t ? "no" : "yes");',
+        ],
+        { cwd: root, encoding: "utf8" },
+      );
+      const hasZ3 = z3.trim() === "yes";
+      if (process.env["EUTAXY_REQUIRE_Z3"] === "1")
+        expect(hasZ3, "the pinned Z3 is required here").toBe(true);
+      if (hasZ3) {
+        const both = eutaxy([
+          "check",
+          `${entry}/sequential.sim.ts`,
+          "--json",
+          "--seed",
+          "corpus",
+          "--no-regression",
+          "--prover",
+          "lean,smt",
+        ]);
+        expect(both.status, both.stderr).toBe(1);
+        const two = JSON.parse(both.stdout) as {
+          specs: (SpecJson & { engine?: { name: string } })[];
+        };
+        expect(two.specs.map((s) => [s.property, s.kind])).toEqual([
+          ["withinCaptured", "PROVEN"],
+          ["addsTheAmount", "PROVEN"],
+          ["fullRefundAllowed", "REFUTED"],
+          ["totalNonNegative", "CONFLICT"],
+        ]);
+        // The SMT engine's replayed NaN counterexample against the Lean engine's integer-model proof.
+        const conflict = two.specs[3] as SpecJson & {
+          proven: { name: string };
+          refuted: { name: string; counterexample?: { binders: { value: string }[] } };
+        };
+        expect(conflict.proven.name).toBe("lean");
+        expect(conflict.refuted.name).toBe("smt");
+        expect(conflict.refuted.counterexample?.binders.map((b) => b.value)).toContain("NaN");
+      }
       const unknown = eutaxy([
         "check",
         `${entry}/sequential.sim.ts`,

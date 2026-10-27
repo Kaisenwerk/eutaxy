@@ -237,6 +237,9 @@ importers:
       '@eutaxy/prover-lean':
         specifier: workspace:*
         version: link:../../packages/prover-lean
+      '@eutaxy/prover-smt':
+        specifier: workspace:*
+        version: link:../../packages/prover-smt
       '@eutaxy/spec':
         specifier: workspace:*
         version: link:../../packages/spec
@@ -307,6 +310,9 @@ importers:
       '@eutaxy/prover-lemmascript':
         specifier: workspace:*
         version: link:../prover-lemmascript
+      '@eutaxy/prover-smt':
+        specifier: workspace:*
+        version: link:../prover-smt
       '@eutaxy/prover-thales':
         specifier: workspace:*
         version: link:../prover-thales
@@ -387,6 +393,9 @@ importers:
       '@eutaxy/prover-lemmascript':
         specifier: workspace:*
         version: link:../prover-lemmascript
+      '@eutaxy/prover-smt':
+        specifier: workspace:*
+        version: link:../prover-smt
       '@eutaxy/prover-thales':
         specifier: workspace:*
         version: link:../prover-thales
@@ -423,6 +432,15 @@ importers:
       '@eutaxy/prover':
         specifier: workspace:*
         version: link:../prover
+
+  packages/prover-smt:
+    dependencies:
+      '@eutaxy/prover':
+        specifier: workspace:*
+        version: link:../prover
+      '@eutaxy/spec':
+        specifier: workspace:*
+        version: link:../spec
 
   packages/prover-thales:
     dependencies:

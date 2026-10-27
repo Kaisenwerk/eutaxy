@@ -26,6 +26,9 @@
       "path": "../prover-lean"
     },
     {
+      "path": "../prover-smt"
+    },
+    {
       "path": "../prover-thales"
     },
     {

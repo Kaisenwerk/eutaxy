@@ -33,3 +33,10 @@ export const fullRefundAllowed = forall(decideRefund, {
     refunded + amount === captured,
   ensures: (captured, refunded, amount) => decideRefund(captured, refunded, amount).ok,
 });
+// Stated over every number, without the integer guard: it holds over the integers (the Lean
+// engine proves it) and fails over doubles (a NaN total; the TESTED rung and the SMT engine refute
+// it), which is what `CONFLICT` reports when both engines are asked.
+export const totalNonNegative = forall(decideRefund, {
+  when: (_captured, refunded) => 0 <= refunded,
+  ensures: (captured, refunded, amount) => decideRefund(captured, refunded, amount).refunded >= 0,
+});

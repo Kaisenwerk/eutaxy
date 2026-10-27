@@ -8,15 +8,16 @@
   },
   "types": "./src/index.ts",
   "dependencies": {
-    "@eutaxy/spec": "workspace:*",
+    "@eutaxy/aws": "workspace:*",
+    "@eutaxy/cloudflare": "workspace:*",
     "@eutaxy/core": "workspace:*",
     "@eutaxy/engine": "workspace:*",
-    "@eutaxy/cloudflare": "workspace:*",
     "@eutaxy/prover": "workspace:*",
     "@eutaxy/prover-lean": "workspace:*",
-    "@eutaxy/prover-thales": "workspace:*",
     "@eutaxy/prover-lemmascript": "workspace:*",
+    "@eutaxy/prover-smt": "workspace:*",
+    "@eutaxy/prover-thales": "workspace:*",
     "@eutaxy/report": "workspace:*",
-    "@eutaxy/aws": "workspace:*"
+    "@eutaxy/spec": "workspace:*"
   }
 }

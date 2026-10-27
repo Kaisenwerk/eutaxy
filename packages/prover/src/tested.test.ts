@@ -159,7 +159,7 @@ describe("the TESTED rung", () => {
     expect(refuted).toMatchObject({ kind: "REFUTED", rung: "TESTED" });
     if (refuted.kind !== "REFUTED") return;
     expect(refuted.counterexample.binders.map((b) => b.value)).toEqual([
-      '{"attempts":0,"locked":true}',
+      "{ attempts: 0, locked: true }",
       "true",
     ]);
     const status = prop("status", [

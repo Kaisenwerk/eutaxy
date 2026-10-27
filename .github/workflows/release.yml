@@ -75,9 +75,26 @@ jobs:
           fi
           "$HOME/.elan/bin/elan" toolchain install "$TOOLCHAIN"
           "$HOME/.elan/bin/elan" run "$TOOLCHAIN" lean --version
+      - name: Install the pinned Z3 (prover-smt contract corpus)
+        # The Z3 release the engine is pinned to (z3Version in packages/prover-smt/src/z3.ts), from its
+        # GitHub release, checksum-verified; only the z3 executable goes on the PATH.
+        run: |
+          set -eu
+          Z3_VERSION=$(sed -n 's/^export const z3Version = "\(.*\)";$/\1/p' packages/prover-smt/src/z3.ts)
+          test -n "$Z3_VERSION"
+          Z3_SHA256=26d463cddad3901cbf86e3868c784914539f4e3f9b4de1a0b8dc2969806d60e2
+          curl -sSfL -o /tmp/z3.zip "https://github.com/Z3Prover/z3/releases/download/z3-$Z3_VERSION/z3-$Z3_VERSION-x64-glibc-2.39.zip"
+          echo "$Z3_SHA256  /tmp/z3.zip" | sha256sum -c -
+          unzip -q -o /tmp/z3.zip -d /tmp/z3
+          mkdir -p "$HOME/bin"
+          cp "/tmp/z3/z3-$Z3_VERSION-x64-glibc-2.39/bin/z3" "$HOME/bin/z3"
+          chmod +x "$HOME/bin/z3"
+          echo "$HOME/bin" >> "$GITHUB_PATH"
+          "$HOME/bin/z3" --version
       - run: pnpm check
         env:
           EUTAXY_REQUIRE_LEAN: "1"
+          EUTAXY_REQUIRE_Z3: "1"
       - run: pnpm build
       - name: Use the repository README for the npm page
         run: node scripts/npm-readme.ts "${{ needs.release-please.outputs.tag_name }}" packages/eutaxy/README.md

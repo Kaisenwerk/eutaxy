@@ -29,7 +29,7 @@ binders are the parameter types. In this order:
   types, unions of literals and tagged unions. Breaking: Lemma annotations
   are dropped, with a migration note in the changelog. A breaking change
   cannot ship as a patch, so nothing ships between it and `0.7.0`.
-- `prover-smt`: the subset to SMT-LIB 2, Z3 pinned and resource-limited;
+- Done: `prover-smt`, the subset to SMT-LIB 2, Z3 pinned and resource-limited;
   doubles, code-unit strings, datatypes; every model replayed on the real
   function before `REFUTED`; its contract corpus shared with Lean's, with
   one entry that holds over the integers and fails over doubles and must

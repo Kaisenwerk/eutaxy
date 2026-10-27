@@ -9,9 +9,10 @@
  */
 
 import { type Counterexample, type PrngState, type SpecVerdict, seedPrng } from "@eutaxy/core";
-import type { Binder, Fn, Forall, FunctionSpec, Property } from "@eutaxy/spec";
-import { type Evaluation, evaluate, malformedReason, render } from "./checked.ts";
-import { CannotGenerate, generateAssignment, shrinkCandidates } from "./generate.ts";
+import type { Fn, Forall, FunctionSpec, Property } from "@eutaxy/spec";
+import { evaluate, malformedReason, render } from "./checked.ts";
+import { CannotGenerate, generateAssignment } from "./generate.ts";
+import { shrinkRefutation } from "./shrink.ts";
 
 export interface TestedOptions {
   /** The check's seed; each property derives its own stream from it and its name. */
@@ -27,9 +28,6 @@ export interface TestedInput extends TestedOptions {
   /** The spec file's export, or undefined when it could not be loaded. */
   readonly spec: Forall<Fn> | undefined;
 }
-
-/** How many evaluations shrinking may spend on one counterexample. */
-const shrinkBudget = 500;
 
 export function testedRung(input: TestedInput): SpecVerdict {
   const { module, fn, property } = input;
@@ -78,7 +76,7 @@ export function testedRung(input: TestedInput): SpecVerdict {
       continue;
     }
     if (result.outcome === "refuted") {
-      const smallest = shrink(spec, binders, values, result);
+      const smallest = shrinkRefutation(spec, binders, values, result);
       return {
         ...base,
         kind: "REFUTED",
@@ -105,46 +103,4 @@ export function testedRung(input: TestedInput): SpecVerdict {
       `${fn.name} was called on generated inputs outside the simulator, so it is assumed pure`,
     ],
   };
-}
-
-/** The refuting assignment made as small as the candidates allow, one binder at a time. */
-function shrink(
-  spec: Forall<Fn>,
-  binders: readonly Binder[],
-  start: readonly unknown[],
-  startEvaluation: Evaluation,
-): { readonly values: readonly unknown[]; readonly error?: string } {
-  let values = [...start];
-  let error: { readonly error?: string } = refutes(startEvaluation) ?? {};
-  let spent = 0;
-  let progress = true;
-  while (progress && spent < shrinkBudget) {
-    progress = false;
-    for (let i = 0; i < binders.length && spent < shrinkBudget; i++) {
-      const b = binders[i] as Binder;
-      let moved = true;
-      while (moved && spent < shrinkBudget) {
-        moved = false;
-        for (const candidate of shrinkCandidates(b, values[i])) {
-          if (spent >= shrinkBudget) break;
-          spent++;
-          const trial = values.with(i, candidate);
-          const still = refutes(evaluate(spec, trial));
-          if (still === undefined) continue;
-          values = trial;
-          error = still;
-          moved = true;
-          progress = true;
-          break;
-        }
-      }
-    }
-  }
-  return error.error === undefined ? { values } : { values, error: error.error };
-}
-
-/** Whether an evaluation still refutes: an object (holding the error text, if any), or undefined. */
-function refutes(e: Evaluation): { readonly error?: string } | undefined {
-  if ("malformed" in e || e.outcome !== "refuted") return undefined;
-  return "error" in e && e.error !== undefined ? { error: e.error } : {};
 }

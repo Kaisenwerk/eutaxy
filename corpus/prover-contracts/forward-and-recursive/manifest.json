@@ -1,20 +1,39 @@
 {
   "description": "A callee declared after its caller is emitted first and the caller proved; a parameter spelled like an emitted function name does not shadow it; recursion is outside the subset, and so is a caller of a recursive function.",
   "expect": {
-    "shifted": {
-      "positive": "PROVEN"
+    "lean": {
+      "shifted": {
+        "positive": "PROVEN"
+      },
+      "fact": {
+        "nonNegative": "unsupported"
+      },
+      "usesFact": {
+        "viaFact": "unsupported"
+      },
+      "zero_": {
+        "notShadowed": "PROVEN"
+      },
+      "viaZero": {
+        "callsZero": "PROVEN"
+      }
     },
-    "fact": {
-      "nonNegative": "unsupported"
-    },
-    "usesFact": {
-      "viaFact": "unsupported"
-    },
-    "zero_": {
-      "notShadowed": "PROVEN"
-    },
-    "viaZero": {
-      "callsZero": "PROVEN"
+    "smt": {
+      "shifted": {
+        "positive": "PROVEN"
+      },
+      "fact": {
+        "nonNegative": "unsupported"
+      },
+      "usesFact": {
+        "viaFact": "unsupported"
+      },
+      "zero_": {
+        "notShadowed": "REFUTED"
+      },
+      "viaZero": {
+        "callsZero": "REFUTED"
+      }
     }
   }
 }

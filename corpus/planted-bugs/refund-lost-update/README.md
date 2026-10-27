@@ -26,4 +26,10 @@ simulator reaches such an input, and the `TESTED` rung finds one among the
 inputs it generates and shrinks it. The other two properties hold on the
 simulator's inputs and on the generated ones, so they are TESTED, and with
 `--prover lean` the first-party engine proves them for every input:
-PROVEN.
+PROVEN. A fourth property, `totalNonNegative`, is stated without the
+integer guard: it holds over the integers and fails for a `NaN` amount.
+Sampling with the corpus seed happens to miss that amount, so the rung
+says TESTED, and `--prover lean` then says PROVEN under its integer model.
+`--prover lean,smt` finds the `NaN` as a model, replays it, and reports
+the two engines' disagreement as a `CONFLICT`: what the SMT engine is
+for.

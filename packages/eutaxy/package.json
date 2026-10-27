@@ -93,17 +93,18 @@
     }
   },
   "devDependencies": {
-    "@eutaxy/spec": "workspace:*",
+    "@eutaxy/aws": "workspace:*",
+    "@eutaxy/cli": "workspace:*",
+    "@eutaxy/cloudflare": "workspace:*",
     "@eutaxy/core": "workspace:*",
     "@eutaxy/engine": "workspace:*",
-    "@eutaxy/cloudflare": "workspace:*",
     "@eutaxy/prover": "workspace:*",
     "@eutaxy/prover-lean": "workspace:*",
-    "@eutaxy/prover-thales": "workspace:*",
     "@eutaxy/prover-lemmascript": "workspace:*",
+    "@eutaxy/prover-smt": "workspace:*",
+    "@eutaxy/prover-thales": "workspace:*",
     "@eutaxy/report": "workspace:*",
-    "@eutaxy/cli": "workspace:*",
-    "@types/node": "24.19.2",
-    "@eutaxy/aws": "workspace:*"
+    "@eutaxy/spec": "workspace:*",
+    "@types/node": "24.19.2"
   }
 }

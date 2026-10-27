@@ -7,6 +7,7 @@
     "@eutaxy/core": "workspace:*",
     "@eutaxy/prover": "workspace:*",
     "@eutaxy/prover-lean": "workspace:*",
+    "@eutaxy/prover-smt": "workspace:*",
     "@eutaxy/spec": "workspace:*"
   }
 }

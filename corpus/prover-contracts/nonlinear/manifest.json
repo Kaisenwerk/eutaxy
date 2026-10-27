@@ -1,11 +1,21 @@
 {
   "description": "A product of variables is outside linear arithmetic: true, but given up on. Multiplication by a constant is linear and proved.",
   "expect": {
-    "square": {
-      "squareNonNegative": "gave_up"
+    "lean": {
+      "square": {
+        "squareNonNegative": "gave_up"
+      },
+      "triple": {
+        "byConstant": "PROVEN"
+      }
     },
-    "triple": {
-      "byConstant": "PROVEN"
+    "smt": {
+      "square": {
+        "squareNonNegative": "REFUTED"
+      },
+      "triple": {
+        "byConstant": "PROVEN"
+      }
     }
   }
 }

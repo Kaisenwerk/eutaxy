@@ -893,7 +893,10 @@ proof is not checked by a kernel; what makes the engine trustworthy is
 that refutations are replayed, proofs name their models, and the Lean
 engine proves the same contract corpus, so a disagreement is `CONFLICT`.
 Nonlinear arithmetic over doubles, recursion and induction are where the
-solver gives up and Lean takes over.
+solver gives up and Lean takes over; `total` is Lean's alone, since a
+solver does not decide termination. The engine is pinned to one Z3
+release (`z3Version`), found on the PATH and required to report that
+version; nothing is downloaded during a check.
 
 **Third-party adapters** (Thales, LemmaScript) are optional, and exist for
 cross-checking and for code outside the first-party subset.
@@ -924,12 +927,12 @@ Adapter rules:
   with the proving engine named; one proves and another refutes gives
   `CONFLICT`.
 
-| Engine                      | Best for                                                       | Backend         | Main caveat                                               |
-| --------------------------- | -------------------------------------------------------------- | --------------- | --------------------------------------------------------- |
-| `prover-lean` (first-party) | Push-button proofs of the pure core, on Eutaxy's own schedule  | Lean 4          | Subset starts narrow and widens deliberately              |
-| `prover-smt` (first-party)  | Doubles, strings, records and unions; symbolic counterexamples | Z3 (SMT-LIB 2)  | No kernel-checked proof; refutations replayed instead     |
-| Thales (optional)           | Cross-check; pure functional TypeScript                        | Lean 4          | Strict subset (no mutation, no classes); separate project |
-| LemmaScript (optional)      | Imperative code with loop invariants                           | Lean 4 or Dafny | Tech preview; Dafny's SMT results can vary with timeouts  |
+| Engine                      | Best for                                                      | Backend         | Main caveat                                               |
+| --------------------------- | ------------------------------------------------------------- | --------------- | --------------------------------------------------------- |
+| `prover-lean` (first-party) | Push-button proofs of the pure core, on Eutaxy's own schedule | Lean 4          | Subset starts narrow and widens deliberately              |
+| `prover-smt` (first-party)  | Doubles, strings and records; symbolic counterexamples        | Z3 (SMT-LIB 2)  | No kernel-checked proof; refutations replayed instead     |
+| Thales (optional)           | Cross-check; pure functional TypeScript                       | Lean 4          | Strict subset (no mutation, no classes); separate project |
+| LemmaScript (optional)      | Imperative code with loop invariants                          | Lean 4 or Dafny | Tech preview; Dafny's SMT results can vary with timeouts  |
 
 ## Packaging, distribution and developer experience
 

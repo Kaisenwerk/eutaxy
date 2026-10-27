@@ -1,7 +1,8 @@
 /**
- * A record parameter is in the subset (a structure); a nullable record, a
- * union of literals and a tagged-union result are outside it for now and
- * belong to the SMT engine first. The simulator's rungs check all of them.
+ * A record parameter is in the subset (a structure, a datatype); a nullable
+ * record, a union of literals with null and a tagged-union result are
+ * outside it for now and will reach the SMT engine first. The simulator's
+ * rungs check all of them.
  */
 
 export interface Challenge {
