@@ -1,6 +1,16 @@
 {
   "description": "Preconditions bounding the binders become hypotheses: lower bounds, closed and open ranges.",
   "expect": {
+    "tested": {
+      "withdraw": {
+        "neverNegative": "TESTED",
+        "atMostBalance": "TESTED",
+        "exactWhenAffordable": "TESTED"
+      },
+      "twice": {
+        "smallDouble": "TESTED"
+      }
+    },
     "lean": {
       "withdraw": {
         "neverNegative": "PROVEN",

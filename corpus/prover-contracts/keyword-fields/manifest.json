@@ -1,6 +1,12 @@
 {
   "description": "Record fields named like Lean keywords (from, end) are quoted in the structure, the literals and the reads; Number.isInteger in a precondition is true under the integer model.",
   "expect": {
+    "tested": {
+      "span": {
+        "ordered": "REFUTED",
+        "length": "REFUTED"
+      }
+    },
     "lean": {
       "span": {
         "ordered": "PROVEN",

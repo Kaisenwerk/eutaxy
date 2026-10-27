@@ -1,6 +1,26 @@
 {
   "description": "Strings: literals (escapes included), equality, + as joining, string-literal union types read as string, string fields.",
   "expect": {
+    "tested": {
+      "decideAccess": {
+        "sendCodeIff": "TESTED",
+        "twoOutcomes": "TESTED",
+        "decideAccessTotal": "unsupported"
+      },
+      "networkKey": {
+        "neverEmpty": "TESTED"
+      },
+      "sameNetwork": {
+        "distinctNetworks": "TESTED"
+      },
+      "tag": {
+        "kindOfSign": "REFUTED",
+        "codeKept": "REFUTED"
+      },
+      "label": {
+        "escapes": "TESTED"
+      }
+    },
     "lean": {
       "decideAccess": {
         "sendCodeIff": "PROVEN",

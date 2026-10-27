@@ -5,7 +5,10 @@ to SMT-LIB 2, decided by Z3, one script per property, every model replayed
 through the spec file before it is called a counterexample. It models what
 the Lean engine assumes away: `number` is the IEEE double (NaN, the
 infinities and `-0` are in every binder's domain, `===` is `fp.eq`),
-`string` a sequence of 16-bit code units, a record a datatype. Runs on the
+`string` a sequence of 16-bit code units, a record a datatype, a tagged
+union a datatype with a constructor per member, a nullable type an option
+datatype (`none` for `null`), a name narrowed by a null check bound to the
+option's value in the branch the check guards. Runs on the
 Node side, over a process boundary: nothing here is loaded into workerd.
 
 **Public surface.** `smtProver` (the engine as a `Prover`: `available`

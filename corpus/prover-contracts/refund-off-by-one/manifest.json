@@ -1,6 +1,13 @@
 {
   "description": "The planted off-by-one: two properties proved, the false one given up on.",
   "expect": {
+    "tested": {
+      "decideRefund": {
+        "withinCaptured": "REFUTED",
+        "addsTheAmount": "REFUTED",
+        "fullRefundAllowed": "REFUTED"
+      }
+    },
     "lean": {
       "decideRefund": {
         "withinCaptured": "PROVEN",

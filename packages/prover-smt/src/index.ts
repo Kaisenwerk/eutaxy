@@ -2,8 +2,9 @@
 export {
   binderType,
   decode,
+  domainConstraint,
+  emitDatatypes,
   emitFunction,
-  emitRecord,
   equal,
   F64,
   ident,

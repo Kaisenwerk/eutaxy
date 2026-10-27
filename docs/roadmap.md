@@ -9,48 +9,39 @@ passes, not on a date. The planted-bug and differential corpora grow with
 every phase. The JSON report schema is versioned, so CI and coding agents
 can rely on it.
 
-## v0.7 — TypeScript specs and the SMT engine (current)
+## v0.8 — Self-check (current)
 
-v0.4 (the simulator), v0.5 (Durable Objects and specs) and v0.6 (provers:
-the `TESTED` rung, the first-party `prover-lean` engine on its initial
-subset with its contract corpus and translation validation, the `Prover`
-interface, the `PROVEN` rung in `eutaxy check --prover lean` and the
-aggregation across engines) are done; the design describes what they
-built.
+v0.4 (the simulator), v0.5 (Durable Objects and specs), v0.6 (provers:
+the `TESTED` rung, the first-party `prover-lean` engine with its contract
+corpus and translation validation, the `Prover` interface, the `PROVEN`
+rung and the aggregation across engines) and v0.7 (specs in TypeScript,
+the `prover-smt` engine over Z3 with doubles, code-unit strings and
+replayed models, and nullable types and tagged unions in the subset
+reader) are done; the design describes what they built. The v0.7 gate
+holds in CI: the contract corpus's entries with a record parameter, a
+nullable record, a union of string literals and a tagged-union result
+reach `TESTED` and are `PROVEN` by the SMT engine, a planted false claim
+among them is `REFUTED` with a replayed counterexample, the refund
+example is `PROVEN` by both engines, and a claim that holds over the
+integers and fails over doubles ends `CONFLICT`.
 
-v0.7 changes the spec surface and adds a second engine. The first real
-core signatures a target sent (a record parameter, a nullable record, a
-union of string literals, a tagged result) fit no Lemma binder, and
-widening Lemma would have meant forking it; with specs in TypeScript the
-binders are the parameter types. In this order:
-- Done: specs in TypeScript (`forall(f, { when, ensures })`, `total(f)`, in
-  a spec file beside the module), read into `SpecIR` with typed binders by
-  the hand-written reader; `CHECKED` and `TESTED` over records, nullable
-  types, unions of literals and tagged unions. Breaking: Lemma annotations
-  are dropped, with a migration note in the changelog. A breaking change
-  cannot ship as a patch, so nothing ships between it and `0.7.0`.
-- Done: `prover-smt`, the subset to SMT-LIB 2, Z3 pinned and resource-limited;
-  doubles, code-unit strings, datatypes; every model replayed on the real
-  function before `REFUTED`; its contract corpus shared with Lean's, with
-  one entry that holds over the integers and fails over doubles and must
-  end `CONFLICT`.
-- The Lean engine takes the same typed binders (structures, inductives,
-  `Option`), after the SMT engine has them.
+Enumerator proven through a prover adapter; invariant checkers verified
+against reference implementations; `eutaxy report`. The Lean engine takes
+nullable types and tagged unions (structures, inductives, `Option`) on
+the way, since the self-check's own core uses them.
+
+**Gate:** Eutaxy's own `eutaxy report` on its core shows `PROVEN` for the
+enumerator and `CHECKED` or better for every invariant checker.
+
+Patch work alongside, each when a target needs it, shipping as `0.7.x`
+until the gate passes:
 - The reader moves to the TypeScript 7.1 API once 7.1 is stable (planned
   for 2026-11-24), as a peer dependency of `prover`; `spec` and `core`
   keep importing nothing.
-
-**Gate:** in CI, corpus entries with a record parameter, a nullable
-record, a union of string literals and a tagged-union result reach
-`TESTED` and are `PROVEN` by the SMT engine; a planted false claim among
-them is `REFUTED` with a replayed counterexample; the refund example is
-`PROVEN` by both engines; the integer-versus-double entry ends `CONFLICT`.
-
-Patch work alongside, each when a target needs it, shipping as `0.7.x`
-once the gate has passed:
 - Widening the engines' subset one corpus entry at a time: structural
-  recursion (Lean), arrays, wider unions; the proof cache keyed by source,
-  spec and engine version; `eutaxy prover install lean` and `… smt`.
+  recursion (Lean), narrowing by a union's tag, arrays; the proof cache
+  keyed by source, spec and engine version; `eutaxy prover install lean`
+  and `… smt`.
 - A configurable number of `TESTED` draws on the command line (the API
   takes `inputs`).
 - MCP server and GitHub Action over the JSON schema.
@@ -76,14 +67,6 @@ once the gate has passed:
 `WorkerHandler`), all deprecated through `0.5.x`. `observeCore` stays
 public: a user's own test needs it to give `refines` its decisions, and
 generated regression tests import it.
-
-## v0.8 — Self-check
-
-Enumerator proven through a prover adapter; invariant checkers verified
-against reference implementations; `eutaxy report`.
-
-**Gate:** Eutaxy's own `eutaxy report` on its core shows `PROVEN` for the
-enumerator and `CHECKED` or better for every invariant checker.
 
 ## Long-term direction
 

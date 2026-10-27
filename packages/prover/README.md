@@ -37,14 +37,19 @@ with the combinators imported from `eutaxy/spec` and `f` from the module,
 the arrows kept as text, and the precondition's conjuncts about one
 parameter as that binder's hint (`hintsOf`). `readSubset` and
 `readExpression` read the subset every first-party engine translates:
-exported functions over `number` (as unbounded integers), `boolean` and
-`string` (string-literal unions read as string), returning those or a
-record type declared in the module, with `const`, `if` and early returns,
-`+ - *`, `+` joining strings, comparisons, `&& || !`, the conditional
-operator, `Number.isInteger`, string and record literals, field reads and
-calls to the module's own functions; a function outside it, or calling
-one, is reported with the construct and the line, and the rest of the
-module still goes through. `readArrowBody` reads a spec file's arrow
+exported functions over `number`, `boolean` and `string` (string-literal
+unions read as string), the module's record types, nullable types and
+tagged unions declared as aliases, returning any of those, with `const`,
+`if` and early returns, `+ - *`, `+` joining strings, comparisons,
+`=== !==` (against `null` too, which narrows the tested name where the
+check holds: `narrow` nodes, `insertNarrows`, `narrowsOf`), `&& || !`, the
+conditional operator, `Number.isInteger`, string and record literals,
+field reads (a union's tag) and calls to the module's own functions; a
+function outside it, or calling one, is reported with the construct and
+the line, and the rest of the module still goes through. `fits` is the
+subset's assignability (a member where its union is, `null` or the inner
+type where a nullable is); `restrictModule` is the module as an engine
+that takes fewer types sees it. `readArrowBody` reads a spec file's arrow
 (expression or block body) in a scope of binder types, `renameVars`
 renames its parameters to the binders', `typeOf` types an expression.
 `tokenize` is the TypeScript-shaped tokenizer under all of it.

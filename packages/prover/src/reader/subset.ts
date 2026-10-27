@@ -1,14 +1,17 @@
 /**
  * The pure TypeScript subset the first-party engines accept, read into a
- * small tree: exported functions over `number` (as unbounded integers),
- * `boolean` and `string`, returning those or a record type declared in the
- * same module;
+ * small tree: exported functions over `number`, `boolean` and `string`,
+ * the module's own record types, nullable types (`T | null`) and tagged
+ * unions of records declared as type aliases, returning any of those;
  * bodies made of `const` bindings, `if` with early returns, `return`, and
- * expressions from integer arithmetic (`+ - *`), comparisons, `&& || !`,
- * the conditional operator, record literals and field reads, and calls to
- * the module's own functions. Anything else is `OutsideSubset`, with the
- * construct named: the subset is specified by the contract corpus and
- * widens one characterised class at a time.
+ * expressions from arithmetic (`+ - *`), comparisons, `=== !==` (`null`
+ * included, which narrows a nullable name in the branch it guards),
+ * `&& || !`, the conditional operator, record literals, field reads (on
+ * a union, only a field every member has) and calls to the module's own
+ * functions. Anything else is `OutsideSubset`, with the construct named:
+ * the subset is specified by the contract corpus and widens one
+ * characterised class at a time. What each engine takes of it is the
+ * engine's business (`restrictModule`).
  */
 
 import type { Arrow } from "@eutaxy/spec";
@@ -26,16 +29,34 @@ export type SubsetType =
   | { readonly kind: "int" }
   | { readonly kind: "bool" }
   | { readonly kind: "string" }
-  | { readonly kind: "record"; readonly name: string };
+  | { readonly kind: "record"; readonly name: string }
+  /** `T | null`. */
+  | { readonly kind: "nullable"; readonly inner: SubsetType }
+  /** A tagged union of records declared as a type alias; its members are records of the module. */
+  | { readonly kind: "union"; readonly name: string }
+  /** The type of the literal `null` itself, which only a nullable type accepts. */
+  | { readonly kind: "null" };
 
 export interface Field {
   readonly name: string;
   readonly type: SubsetType;
+  /** The one value a literal-typed field holds (`ok: true`, `type: "locked"`): a union member's tag. */
+  readonly literal?: string | boolean;
 }
 
 export interface RecordType {
   readonly name: string;
   readonly fields: readonly Field[];
+  /** The tagged union this record is a member of, when it is one; its name is then `<union>.<tag>`. */
+  readonly union?: string;
+}
+
+/** A tagged union: records told apart by one field, the tag, which holds a different literal in each. */
+export interface UnionType {
+  readonly name: string;
+  readonly tag: string;
+  /** The member records, in declaration order, by their tag's value. */
+  readonly members: readonly { readonly tag: string | boolean; readonly record: string }[];
 }
 
 export type BinaryOp = "+" | "-" | "*" | "<" | "<=" | ">" | ">=" | "===" | "!==" | "&&" | "||";
@@ -44,7 +65,10 @@ export type Expr =
   | { readonly kind: "int"; readonly value: string }
   | { readonly kind: "bool"; readonly value: boolean }
   | { readonly kind: "string"; readonly value: string }
+  | { readonly kind: "null" }
   | { readonly kind: "var"; readonly name: string }
+  /** In `body`, `name` (a nullable in scope) stands for its non-null value: inserted where a null check guards. */
+  | { readonly kind: "narrow"; readonly name: string; readonly body: Expr }
   | { readonly kind: "neg"; readonly operand: Expr }
   | { readonly kind: "not"; readonly operand: Expr }
   /** `Number.isInteger(e)`: always true of an integer in the engines' integer model, the real predicate on doubles. */
@@ -57,7 +81,14 @@ export type Expr =
       readonly kind: "record";
       readonly fields: readonly { readonly name: string; readonly value: Expr }[];
     }
-  | { readonly kind: "let"; readonly name: string; readonly value: Expr; readonly body: Expr };
+  | {
+      readonly kind: "let";
+      readonly name: string;
+      readonly value: Expr;
+      readonly body: Expr;
+      /** The `const`'s annotation, when it has one: the binding's type, whatever the initializer's. */
+      readonly type?: SubsetType;
+    };
 
 export interface Param {
   readonly name: string;
@@ -94,6 +125,7 @@ export interface OutsideFunction {
 
 export interface SubsetModule {
   readonly records: readonly RecordType[];
+  readonly unions: readonly UnionType[];
   /** The functions in the subset, in source order, callees before callers. */
   readonly functions: readonly SubsetFunction[];
   /** The module's other functions: outside the subset themselves, or calling one that is. */
@@ -222,42 +254,99 @@ function stringLiteralValue(text: string, r: Reader, t: Token): string {
 /** Record types the module declares but the subset does not take, with why. */
 type BadRecords = ReadonlyMap<string, string>;
 
-function typeAnnotation(
-  r: Reader,
-  records: ReadonlySet<string>,
-  bad: BadRecords = new Map(),
-): SubsetType {
-  const t = r.take();
-  if (t.kind === "string") {
-    // A union of string literals is a string whose values the module restricts; the proof covers every
-    // string, which is more than the type admits. `null` or `undefined` in the union is outside.
-    while (r.isPunct("|")) {
-      r.at++;
-      const next = r.take();
-      if (next.kind !== "string")
-        r.fail(
-          `a union mixing string literals with ${next.text} (only string literals are read, as string)`,
-          next,
-        );
-    }
-    return { kind: "string" };
+/** The module's declared types, as the reader resolves names. */
+export interface Declared {
+  readonly records: ReadonlySet<string>;
+  /** The records themselves, for a union naming its members. */
+  readonly recordsByName?: ReadonlyMap<string, RecordType>;
+  /** Type aliases to a type the subset reads (`type Status = "a" | "b"`, `type Maybe = T | null`) and the unions by name. */
+  readonly aliases: ReadonlyMap<string, SubsetType>;
+}
+
+/** One alternative of a type expression, before the union is classified. */
+type Alternative =
+  | { readonly kind: "type"; readonly type: SubsetType; readonly token: Token }
+  | { readonly kind: "literal"; readonly value: string | boolean; readonly token: Token }
+  | { readonly kind: "null"; readonly token: Token };
+
+/** A type annotation: one alternative, or a union of them, read in full. */
+function typeAnnotation(r: Reader, declared: Declared, bad: BadRecords = new Map()): SubsetType {
+  const first = r.peek();
+  const alternatives: Alternative[] = [];
+  if (r.isPunct("|")) r.at++;
+  for (;;) {
+    alternatives.push(alternative(r, declared, bad));
+    if (!r.isPunct("|")) break;
+    r.at++;
   }
+  if (r.isPunct("[") || r.isPunct("<") || r.isPunct("&"))
+    r.fail(`type …${r.peek()?.text}… (arrays, generics and intersections are outside the subset)`);
+  return classify(alternatives, r, first);
+}
+
+function alternative(r: Reader, declared: Declared, bad: BadRecords): Alternative {
+  const t = r.take();
+  if (t.kind === "string")
+    return { kind: "literal", value: stringLiteralValue(t.text, r, t), token: t };
   if (t.kind !== "ident") r.fail(`a type that is not a name: ${t.text}`, t);
+  if (t.text === "null") return { kind: "null", token: t };
+  if (t.text === "true" || t.text === "false")
+    return { kind: "literal", value: t.text === "true", token: t };
+  if (t.text === "undefined") r.fail("undefined in a type (the subset has null)", t);
   const why = bad.get(t.text);
-  if (why !== undefined) r.fail(`record type ${t.text} is outside the subset: ${why}`, t);
-  if (r.isPunct("[") || r.isPunct("<") || r.isPunct("|") || r.isPunct("&"))
-    r.fail(
-      `type ${t.text}${r.peek()?.text}… (arrays, generics, unions and intersections are outside the subset)`,
-      t,
-    );
-  if (t.text === "number") return { kind: "int" };
-  if (t.text === "boolean") return { kind: "bool" };
-  if (t.text === "string") return { kind: "string" };
-  if (records.has(t.text)) return { kind: "record", name: t.text };
+  if (why !== undefined) r.fail(`type ${t.text} is outside the subset: ${why}`, t);
+  if (t.text === "number") return { kind: "type", type: { kind: "int" }, token: t };
+  if (t.text === "boolean") return { kind: "type", type: { kind: "bool" }, token: t };
+  if (t.text === "string") return { kind: "type", type: { kind: "string" }, token: t };
+  if (declared.records.has(t.text))
+    return { kind: "type", type: { kind: "record", name: t.text }, token: t };
+  const alias = declared.aliases.get(t.text);
+  if (alias) return { kind: "type", type: alias, token: t };
   r.fail(
-    `type ${t.text} (the subset has number, boolean, string and the module's own record types)`,
+    `type ${t.text} (the subset has number, boolean, string, null, and the module's own record types, unions and aliases)`,
     t,
   );
+}
+
+/**
+ * The type a list of alternatives names: a single type; string literals as
+ * `string` (the proof covers every string, more than the type admits);
+ * either with `null` as nullable. Several records are a tagged union only
+ * when declared as an alias, where `unionAt` classifies them.
+ */
+function classify(
+  alternatives: readonly Alternative[],
+  r: Reader,
+  at: Token | undefined,
+): SubsetType {
+  const nulls = alternatives.filter((a) => a.kind === "null");
+  const literals = alternatives.filter(
+    (a): a is Extract<Alternative, { kind: "literal" }> => a.kind === "literal",
+  );
+  const types = alternatives.filter(
+    (a): a is Extract<Alternative, { kind: "type" }> => a.kind === "type",
+  );
+  let base: SubsetType | undefined;
+  if (literals.length > 0 && types.length === 0) {
+    const kinds = new Set(literals.map((l) => typeof l.value));
+    if (kinds.size > 1) r.fail("a union mixing string and boolean literals", at);
+    base =
+      literals[0]?.value === true || literals[0]?.value === false
+        ? { kind: "bool" }
+        : { kind: "string" };
+  } else if (types.length === 1 && literals.length === 0)
+    base = (types[0] as (typeof types)[number]).type;
+  else if (types.length === 0 && literals.length === 0)
+    r.fail("null alone is not a type the subset takes", at);
+  else
+    r.fail(
+      "a union of several types (a tagged union of records is read only where it is declared as a type alias)",
+      at,
+    );
+  if (!base) r.fail("an empty type", at);
+  if (base.kind === "nullable" && nulls.length > 0) return base;
+  if (base.kind === "null") r.fail("null alone is not a type the subset takes", at);
+  return nulls.length > 0 ? { kind: "nullable", inner: base } : base;
 }
 
 /** Names a Lean structure declaration generates itself, which a field cannot take. */
@@ -271,19 +360,8 @@ const structureNames = new Set([
   "injEq",
 ]);
 
-/** `interface Name { a: T; b: U }` or `type Name = { ... }` at the reader, after any `export`. */
-function recordAt(r: Reader, records: ReadonlySet<string>): RecordType | undefined {
-  const start = r.at;
-  if (r.isWord("export")) r.at++;
-  const alias = r.isWord("type");
-  if (!r.isWord("interface") && !alias) {
-    r.at = start;
-    return undefined;
-  }
-  r.at++;
-  const name = r.ident();
-  if (alias) r.expectPunct("=");
-  if (r.isWord("extends")) r.fail("interface inheritance", r.peek());
+/** The fields of the `{ … }` at the reader; a literal-typed field keeps its literal. */
+function fieldsAt(r: Reader, declared: Declared): Field[] {
   r.expectPunct("{");
   const fields: Field[] = [];
   while (!r.isPunct("}")) {
@@ -293,12 +371,151 @@ function recordAt(r: Reader, records: ReadonlySet<string>): RecordType | undefin
     if (structureNames.has(fname)) r.fail(`field ${fname} takes a name Lean's structures reserve`);
     if (fname === "__proto__") r.fail("a field named __proto__, which JavaScript treats specially");
     r.expectPunct(":");
-    fields.push({ name: fname, type: typeAnnotation(r, records) });
+    const literalToken = r.peek();
+    const type = typeAnnotation(r, declared);
+    // One literal alone (`ok: true`, `type: "locked"`): a tag; a union of literals is its base type.
+    const alone = r.peek(-1) === literalToken;
+    const literal = !alone
+      ? undefined
+      : literalToken?.kind === "string" && type.kind === "string"
+        ? stringLiteralValue(literalToken.text, r, literalToken)
+        : literalToken?.kind === "ident" &&
+            (literalToken.text === "true" || literalToken.text === "false") &&
+            type.kind === "bool"
+          ? literalToken.text === "true"
+          : undefined;
+    fields.push({ name: fname, type, ...(literal === undefined ? {} : { literal }) });
     if (r.isPunct(";") || r.isPunct(",")) r.at++;
   }
   r.expectPunct("}");
+  return fields;
+}
+
+/** What a type declaration at the reader declares. */
+export type Declaration =
+  | { readonly kind: "record"; readonly record: RecordType }
+  | { readonly kind: "alias"; readonly name: string; readonly type: SubsetType }
+  | {
+      readonly kind: "union";
+      readonly union: UnionType;
+      readonly members: readonly RecordType[];
+    };
+
+/**
+ * `interface Name { … }`, `type Name = { … }`, `type Name = <type>` or
+ * `type Name = A | B | { … }` at the reader, after any `export`. A union of
+ * records needs a tag: a field every member has, literal-typed, with a
+ * different literal in each.
+ */
+function declarationAt(r: Reader, declared: Declared): Declaration | undefined {
+  const start = r.at;
+  if (r.isWord("export")) r.at++;
+  const alias = r.isWord("type");
+  if (!r.isWord("interface") && !alias) {
+    r.at = start;
+    return undefined;
+  }
+  r.at++;
+  const name = r.ident();
+  if (r.isPunct("<")) r.fail("type parameters on a type declaration", r.peek());
+  if (!alias) {
+    if (r.isWord("extends")) r.fail("interface inheritance", r.peek());
+    const fields = fieldsAt(r, declared);
+    if (r.isPunct(";")) r.at++;
+    return { kind: "record", record: { name, fields } };
+  }
+  r.expectPunct("=");
+  if (r.isPunct("|")) r.at++;
+  // Alternatives: inline records, declared records, literals, null; a tagged union when several are records.
+  const inline: RecordType[] = [];
+  const named: string[] = [];
+  const others: Alternative[] = [];
+  const at = r.peek();
+  for (;;) {
+    if (r.isPunct("{"))
+      inline.push({
+        name: `${name}.${inline.length + named.length}`,
+        fields: fieldsAt(r, declared),
+      });
+    else {
+      const a = alternative(r, declared, new Map());
+      if (a.kind === "type" && a.type.kind === "record") named.push(a.type.name);
+      else others.push(a);
+    }
+    if (!r.isPunct("|")) break;
+    r.at++;
+  }
   if (r.isPunct(";")) r.at++;
-  return { name, fields };
+  const recordCount = inline.length + named.length;
+  if (recordCount === 0) return { kind: "alias", name, type: classify(others, r, at) };
+  if (others.some((o) => o.kind !== "null")) r.fail("a union mixing records with other types", at);
+  if (recordCount === 1 && inline.length === 1) {
+    const only = inline[0] as RecordType;
+    if (others.length > 0)
+      r.fail(
+        `${name}: a nullable record type is written on the parameter, not declared as an alias`,
+        at,
+      );
+    return { kind: "record", record: { name, fields: only.fields } };
+  }
+  if (recordCount === 1) {
+    const type: SubsetType = { kind: "record", name: named[0] as string };
+    return {
+      kind: "alias",
+      name,
+      type: others.length > 0 ? { kind: "nullable", inner: type } : type,
+    };
+  }
+  if (others.length > 0)
+    r.fail(
+      `${name}: a union of records with null is written as the union, then | null, on the parameter`,
+      at,
+    );
+  // Named members are the module's records as they are; inline members become records of the union.
+  const memberRecords: RecordType[] = [...inline];
+  const memberNames = [...inline.map((m) => m.name), ...named];
+  const lookup = (n: string): RecordType | undefined =>
+    memberRecords.find((m) => m.name === n) ?? declared.recordsByName?.get(n);
+  const first = lookup(memberNames[0] as string);
+  if (!first) r.fail(`${name}: member ${memberNames[0]} is not a record the subset read`, at);
+  const tags = first.fields
+    .filter((f) => f.literal !== undefined)
+    .map((f) => f.name)
+    .filter((tag) =>
+      memberNames.every((m) => {
+        const rec = lookup(m);
+        return rec?.fields.some((f) => f.name === tag && f.literal !== undefined);
+      }),
+    )
+    .filter((tag) => {
+      const values = memberNames.map((m) => lookup(m)?.fields.find((f) => f.name === tag)?.literal);
+      return new Set(values.map((v) => JSON.stringify(v))).size === values.length;
+    });
+  const tag = tags[0];
+  if (tag === undefined)
+    r.fail(
+      `${name}: a union of records without a tag (a literal-typed field every member has, different in each)`,
+      at,
+    );
+  const members = memberNames.map((m) => {
+    const rec = lookup(m) as RecordType;
+    const value = rec.fields.find((f) => f.name === tag)?.literal as string | boolean;
+    return { tag: value, record: m };
+  });
+  // Inline members are named by their tag, so the constructor names read: `Outcome.true`, `Refused.locked`.
+  const renamed = new Map(
+    inline.map((m, i) => [
+      m.name,
+      `${name}.${String((members[i] as (typeof members)[number]).tag)}`,
+    ]),
+  );
+  const finalMembers = members.map((m) => ({ ...m, record: renamed.get(m.record) ?? m.record }));
+  const finalRecords = inline.map((m) => ({
+    ...m,
+    name: renamed.get(m.name) as string,
+    union: name,
+  }));
+  return { kind: "union", union: { name, tag, members: finalMembers }, members: finalRecords };
 }
 
 /** Skip a balanced bracket group starting at the reader. */
@@ -373,7 +590,15 @@ function valueUses(
     const after = tokens[i + 1];
     if (isPunct(after, "(")) return; // a call
     if (isPunct(before, ".") || isPunct(before, "?.")) return; // a property of something else
-    if (isPunct(after, ":") && (isPunct(before, "{") || isPunct(before, ","))) return; // an object key
+    // An object key, or a type's member (`readonly attempts: number;`), is no use of a value.
+    if (
+      isPunct(after, ":") &&
+      (isPunct(before, "{") ||
+        isPunct(before, ",") ||
+        isPunct(before, ";") ||
+        (before?.kind === "ident" && before.text === "readonly"))
+    )
+      return;
     if (before?.kind === "ident" && ["function", "const", "let", "var"].includes(before.text))
       return;
     if (!out.has(t.text)) out.set(t.text, lineOf(t.start));
@@ -453,6 +678,8 @@ class FunctionParser {
   private readonly badRecords: BadRecords;
   /** For a spec file's arrow: its local names for the module's functions (the keys are what `declared` and `functions` hold). */
   private readonly aliases: ReadonlyMap<string, string> | undefined;
+  /** The module's type aliases and unions, by name. */
+  private readonly typeAliases: ReadonlyMap<string, SubsetType>;
   readonly signatures = new Map<string, CalleeSignature>();
   constructor(
     r: Reader,
@@ -461,6 +688,7 @@ class FunctionParser {
     badRecords: BadRecords = new Map(),
     declared: ReadonlySet<string> = functions,
     aliases?: ReadonlyMap<string, string>,
+    typeAliases: ReadonlyMap<string, SubsetType> = new Map(),
   ) {
     this.r = r;
     this.records = records;
@@ -468,6 +696,19 @@ class FunctionParser {
     this.badRecords = badRecords;
     this.declared = declared;
     this.aliases = aliases;
+    this.typeAliases = typeAliases;
+  }
+
+  private get types(): Declared {
+    return {
+      records: new Set(this.records.keys()),
+      recordsByName: this.records,
+      aliases: this.typeAliases,
+    };
+  }
+
+  private get ctx(): TypeContext {
+    return { records: this.records, signatures: this.signatures };
   }
 
   /** `export function name(params): Type` at the reader, up to and including the body's `{`. */
@@ -493,7 +734,7 @@ class FunctionParser {
       if (r.isPunct("?")) r.fail(`optional parameter ${pname}`);
       if (!r.isPunct(":")) r.fail(`parameter ${pname} without a type`);
       r.at++;
-      const type = typeAnnotation(r, new Set(this.records.keys()), this.badRecords);
+      const type = typeAnnotation(r, this.types, this.badRecords);
       if (r.isPunct("=")) r.fail(`a default value for ${pname}`);
       params.push({ name: pname, type });
       if (r.isPunct(",")) r.at++;
@@ -502,7 +743,7 @@ class FunctionParser {
     if (!r.isPunct(":"))
       r.fail(`${name} without a return type (the subset needs it to name the record returned)`);
     r.at++;
-    const returns = typeAnnotation(r, new Set(this.records.keys()), this.badRecords);
+    const returns = typeAnnotation(r, this.types, this.badRecords);
     r.expectPunct("{");
     return { name, params, returns, line, offset, body: r.at };
   }
@@ -511,13 +752,14 @@ class FunctionParser {
   declaration(sig: Signature): SubsetFunction {
     this.r.at = sig.body;
     const scope = new Map(sig.params.map((p) => [p.name, p.type]));
-    const body = this.block(scope, sig.returns);
+    // Null checks narrow the names they guard in the branches they guard, before anything is typed.
+    const body = this.narrowed(this.block(scope, sig.returns), scope);
     // Typing the whole body here: a record literal of no declared type, a field read on an integer or
-    // a body of another type than declared are all outside the subset, found now rather than by Lean.
+    // a body of another type than declared are all outside the subset, found now rather than by an engine.
     const actual = this.typeOfExpr(body, scope);
-    if (JSON.stringify(actual) !== JSON.stringify(sig.returns))
+    if (!fits(actual, sig.returns, this.ctx))
       this.r.fail(
-        `${sig.name} returns a ${actual.kind === "record" ? actual.name : actual.kind} but declares ${sig.returns.kind === "record" ? sig.returns.name : sig.returns.kind}`,
+        `${sig.name} returns a ${describe(actual)} but declares ${describe(sig.returns)}`,
       );
     return {
       name: sig.name,
@@ -539,6 +781,11 @@ class FunctionParser {
     return this.block(scope, returns);
   }
 
+  /** The expression with `narrow` nodes inserted where a null check guards a nullable name. */
+  narrowed(e: Expr, scope: ReadonlyMap<string, SubsetType>): Expr {
+    return insertNarrows(e, scope, this.ctx, (m) => this.r.fail(m));
+  }
+
   private block(scope: Map<string, SubsetType>, returns: SubsetType): Expr {
     const r: Reader = this.r;
     if (r.isWord("const")) {
@@ -552,20 +799,18 @@ class FunctionParser {
       let annotated: SubsetType | undefined;
       if (r.isPunct(":")) {
         r.at++;
-        annotated = typeAnnotation(r, new Set(this.records.keys()), this.badRecords);
+        annotated = typeAnnotation(r, this.types, this.badRecords);
       }
       r.expectPunct("=");
       const value = this.expression(scope);
       if (r.isPunct(";")) r.at++;
+      // While parsing, the scope carries names; types come from `typeOf` once null checks have narrowed
+      // the tree, so an initializer under a guard is typed as the guard allows. The annotation is the
+      // binding's type (a null initializer is then a nullable, not null); `typeOf` checks it fits.
       const inner = new Map(scope);
-      const inferred = this.typeOfExpr(value, scope);
-      if (annotated && JSON.stringify(annotated) !== JSON.stringify(inferred))
-        r.fail(
-          `const ${name} is annotated ${describe(annotated)} but holds a ${describe(inferred)}`,
-        );
-      inner.set(name, inferred);
+      inner.set(name, annotated ?? { kind: "null" });
       const body = this.block(inner, returns);
-      return { kind: "let", name, value, body };
+      return { kind: "let", name, value, body, ...(annotated ? { type: annotated } : {}) };
     }
     if (r.isWord("if")) {
       r.at++;
@@ -740,7 +985,8 @@ class FunctionParser {
       case "ident":
         if (t.text === "true" || t.text === "false")
           return { kind: "bool", value: t.text === "true" };
-        if (t.text === "null" || t.text === "undefined") r.fail(`${t.text}`, t);
+        if (t.text === "null") return { kind: "null" };
+        if (t.text === "undefined") r.fail("undefined (the subset has null)", t);
         if (
           t.text === "Number" &&
           !scope.has("Number") &&
@@ -802,15 +1048,179 @@ class FunctionParser {
   }
 
   typeOfExpr(e: Expr, scope: ReadonlyMap<string, SubsetType>): SubsetType {
-    return typeOf(e, scope, { records: this.records, signatures: this.signatures }, (m) =>
-      this.r.fail(m),
-    );
+    return typeOf(e, scope, this.ctx, (m) => this.r.fail(m));
   }
 }
 
 /** A type, for messages. */
-function describe(t: SubsetType): string {
-  return t.kind === "record" ? t.name : t.kind;
+export function describe(t: SubsetType): string {
+  switch (t.kind) {
+    case "record":
+    case "union":
+      return t.name;
+    case "nullable":
+      return `${describe(t.inner)} | null`;
+    default:
+      return t.kind;
+  }
+}
+
+const sameType = (a: SubsetType, b: SubsetType): boolean => JSON.stringify(a) === JSON.stringify(b);
+
+/**
+ * Whether a value of one type may stand where another is expected: the
+ * same type; a member record where its union is; `null`, or the inner
+ * type, where a nullable is.
+ */
+export function fits(actual: SubsetType, expected: SubsetType, ctx: TypeContext): boolean {
+  if (sameType(actual, expected)) return true;
+  if (expected.kind === "union")
+    return actual.kind === "record" && ctx.records.get(actual.name)?.union === expected.name;
+  if (expected.kind === "nullable")
+    return (
+      actual.kind === "null" ||
+      (actual.kind === "nullable"
+        ? fits(actual.inner, expected.inner, ctx)
+        : fits(actual, expected.inner, ctx))
+    );
+  return false;
+}
+
+/** The type two branches share, or undefined when they share none. */
+function join(a: SubsetType, b: SubsetType, ctx: TypeContext): SubsetType | undefined {
+  if (fits(a, b, ctx)) return b;
+  if (fits(b, a, ctx)) return a;
+  if (a.kind === "record" && b.kind === "record") {
+    const ua = ctx.records.get(a.name)?.union;
+    if (ua !== undefined && ua === ctx.records.get(b.name)?.union)
+      return { kind: "union", name: ua };
+  }
+  if (a.kind === "null" && b.kind !== "null") return { kind: "nullable", inner: b };
+  if (b.kind === "null" && a.kind !== "null") return { kind: "nullable", inner: a };
+  if (a.kind === "nullable" && b.kind !== "null" && b.kind !== "nullable") {
+    const inner = join(a.inner, b, ctx);
+    return inner && { kind: "nullable", inner };
+  }
+  if (b.kind === "nullable" && a.kind !== "null" && a.kind !== "nullable") {
+    const inner = join(a, b.inner, ctx);
+    return inner && { kind: "nullable", inner };
+  }
+  return undefined;
+}
+
+/** Whether `===` between the two types is in the subset, and on records (references in JavaScript) it is not. */
+function comparable(l: SubsetType, r: SubsetType): boolean {
+  const base = (t: SubsetType): SubsetType => (t.kind === "nullable" ? t.inner : t);
+  if (l.kind === "null" && r.kind === "null") return false;
+  if (l.kind === "null") return r.kind === "nullable";
+  if (r.kind === "null") return l.kind === "nullable";
+  return sameType(base(l), base(r)) && !isReference(base(l));
+}
+
+const isReference = (t: SubsetType): boolean => t.kind === "record" || t.kind === "union";
+
+/**
+ * The names a test, holding or failing, shows to be non-null: `x !== null`
+ * holding, `x === null` failing, through `!`, `&&` (holding) and `||`
+ * (failing).
+ */
+export function narrowsOf(test: Expr, holds: boolean): string[] {
+  const isNull = (e: Expr) => e.kind === "null";
+  if (test.kind === "binary" && (test.op === "===" || test.op === "!==")) {
+    const other = isNull(test.right) ? test.left : isNull(test.left) ? test.right : undefined;
+    if (other?.kind !== "var") return [];
+    return (test.op === "!==") === holds ? [other.name] : [];
+  }
+  if (test.kind === "not") return narrowsOf(test.operand, !holds);
+  if (test.kind === "binary" && test.op === "&&" && holds)
+    return [...narrowsOf(test.left, true), ...narrowsOf(test.right, true)];
+  if (test.kind === "binary" && test.op === "||" && !holds)
+    return [...narrowsOf(test.left, false), ...narrowsOf(test.right, false)];
+  return [];
+}
+
+/**
+ * `narrow` nodes inserted where a null check guards: in a conditional's
+ * branches, and in the right operand of `&&` and `||`, for each nullable
+ * name the test shows to be non-null there.
+ */
+export function insertNarrows(
+  e: Expr,
+  scope: ReadonlyMap<string, SubsetType>,
+  ctx: TypeContext,
+  fail: (message: string) => never,
+): Expr {
+  const go = (x: Expr, sc: ReadonlyMap<string, SubsetType>): Expr =>
+    insertNarrows(x, sc, ctx, fail);
+  const wrap = (
+    body: Expr,
+    names: readonly string[],
+    sc: ReadonlyMap<string, SubsetType>,
+  ): Expr => {
+    const inner = new Map(sc);
+    let out = body;
+    const nullable = [...new Set(names)].filter((n) => sc.get(n)?.kind === "nullable");
+    for (const n of nullable) inner.set(n, (sc.get(n) as { inner: SubsetType }).inner);
+    out = go(out, inner);
+    for (const n of nullable.reverse()) out = { kind: "narrow", name: n, body: out };
+    return out;
+  };
+  switch (e.kind) {
+    case "int":
+    case "bool":
+    case "string":
+    case "null":
+    case "var":
+      return e;
+    case "neg":
+    case "not":
+    case "isInteger":
+      return { kind: e.kind, operand: go(e.operand, scope) };
+    case "narrow":
+      return e;
+    case "binary": {
+      const left = go(e.left, scope);
+      if (e.op === "&&")
+        return {
+          kind: "binary",
+          op: e.op,
+          left,
+          right: wrap(e.right, narrowsOf(left, true), scope),
+        };
+      if (e.op === "||")
+        return {
+          kind: "binary",
+          op: e.op,
+          left,
+          right: wrap(e.right, narrowsOf(left, false), scope),
+        };
+      return { kind: "binary", op: e.op, left, right: go(e.right, scope) };
+    }
+    case "cond": {
+      const test = go(e.test, scope);
+      return {
+        kind: "cond",
+        test,
+        ifTrue: wrap(e.ifTrue, narrowsOf(test, true), scope),
+        ifFalse: wrap(e.ifFalse, narrowsOf(test, false), scope),
+      };
+    }
+    case "call":
+      return { kind: "call", callee: e.callee, args: e.args.map((a) => go(a, scope)) };
+    case "field":
+      return { kind: "field", object: go(e.object, scope), field: e.field };
+    case "record":
+      return {
+        kind: "record",
+        fields: e.fields.map((f) => ({ name: f.name, value: go(f.value, scope) })),
+      };
+    case "let": {
+      const value = go(e.value, scope);
+      const inner = new Map(scope);
+      inner.set(e.name, e.type ?? typeOf(value, scope, ctx, fail));
+      return { ...e, value, body: go(e.body, inner) };
+    }
+  }
 }
 
 /** A function's parameters and return type, for typing calls. */
@@ -839,10 +1249,19 @@ export function typeOf(
       return { kind: "bool" };
     case "string":
       return { kind: "string" };
+    case "null":
+      return { kind: "null" };
     case "var": {
       const t = scope.get(e.name);
       if (!t) fail(`${e.name} is not in scope`);
       return t;
+    }
+    case "narrow": {
+      const t = scope.get(e.name);
+      if (!t) fail(`${e.name} is not in scope`);
+      if (t.kind !== "nullable")
+        fail(`${e.name} is narrowed but is a ${describe(t)}, not a nullable`);
+      return typeOf(e.body, new Map([...scope, [e.name, t.inner]]), ctx, fail);
     }
     case "binary": {
       const l = typeOf(e.left, scope, ctx, fail);
@@ -857,10 +1276,16 @@ export function typeOf(
         );
       if ((e.op === "&&" || e.op === "||") && (l.kind !== "bool" || r.kind !== "bool"))
         fail(`${e.op} on a ${l.kind} and a ${r.kind} (the subset has it on booleans)`);
-      if ((e.op === "===" || e.op === "!==") && JSON.stringify(l) !== JSON.stringify(r))
-        fail(`${e.op} between a ${l.kind} and a ${r.kind}`);
-      if ((e.op === "===" || e.op === "!==") && l.kind === "record")
-        fail(`${e.op} on records compares references in JavaScript; compare their fields instead`);
+      if (e.op === "===" || e.op === "!==") {
+        // Against null, any nullable; otherwise records and unions are references in JavaScript.
+        const againstNull = l.kind === "null" || r.kind === "null";
+        const base = (t: SubsetType): SubsetType => (t.kind === "nullable" ? t.inner : t);
+        if (!againstNull && (isReference(base(l)) || isReference(base(r))))
+          fail(
+            `${e.op} on records compares references in JavaScript; compare their fields instead`,
+          );
+        if (!comparable(l, r)) fail(`${e.op} between a ${describe(l)} and a ${describe(r)}`);
+      }
       return ["+", "-", "*"].includes(e.op) ? { kind: "int" } : { kind: "bool" };
     }
     case "neg": {
@@ -886,17 +1311,19 @@ export function typeOf(
         );
       const a = typeOf(e.ifTrue, scope, ctx, fail);
       const b = typeOf(e.ifFalse, scope, ctx, fail);
-      if (JSON.stringify(a) !== JSON.stringify(b))
-        fail("the branches of a conditional have different types");
-      return a;
+      const joined = join(a, b, ctx);
+      if (!joined)
+        fail(
+          `the branches of a conditional have different types (${describe(a)} and ${describe(b)})`,
+        );
+      return joined;
     }
-    case "let":
-      return typeOf(
-        e.body,
-        new Map([...scope, [e.name, typeOf(e.value, scope, ctx, fail)]]),
-        ctx,
-        fail,
-      );
+    case "let": {
+      const inferred = typeOf(e.value, scope, ctx, fail);
+      if (e.type && !fits(inferred, e.type, ctx))
+        fail(`const ${e.name} is annotated ${describe(e.type)} but holds a ${describe(inferred)}`);
+      return typeOf(e.body, new Map([...scope, [e.name, e.type ?? inferred]]), ctx, fail);
+    }
     case "call": {
       const sig = ctx.signatures.get(e.callee);
       if (!sig) fail(`the signature of ${e.callee} is not known`);
@@ -905,14 +1332,33 @@ export function typeOf(
       e.args.forEach((a, i) => {
         const want = sig.params[i]?.type as SubsetType;
         const got = typeOf(a, scope, ctx, fail);
-        if (JSON.stringify(want) !== JSON.stringify(got))
-          fail(`argument ${i + 1} of ${e.callee} is a ${got.kind}, not the ${want.kind} it takes`);
+        if (!fits(got, want, ctx))
+          fail(
+            `argument ${i + 1} of ${e.callee} is a ${describe(got)}, not the ${describe(want)} it takes`,
+          );
       });
       return sig.returns;
     }
     case "field": {
       const o = typeOf(e.object, scope, ctx, fail);
-      if (o.kind !== "record") fail(`field ${e.field} read from a ${o.kind}`);
+      if (o.kind === "nullable")
+        fail(
+          `field ${e.field} read from a ${describe(o)}: compare it with null first, which narrows it`,
+        );
+      if (o.kind === "union") {
+        // Only a field every member has, with one type: the tag, typically. Narrowing by the tag is not in the subset yet.
+        const members = [...ctx.records.values()].filter((rec) => rec.union === o.name);
+        const types = members.map((rec) => rec.fields.find((x) => x.name === e.field)?.type);
+        if (types.some((t) => t === undefined))
+          fail(
+            `field ${e.field} is not on every member of ${o.name} (narrowing by the tag is not in the subset yet)`,
+          );
+        const first = types[0] as SubsetType;
+        if (!types.every((t) => sameType(t as SubsetType, first)))
+          fail(`field ${e.field} has different types across the members of ${o.name}`);
+        return first;
+      }
+      if (o.kind !== "record") fail(`field ${e.field} read from a ${describe(o)}`);
       const f = ctx.records.get(o.name)?.fields.find((x) => x.name === e.field);
       if (!f) fail(`${o.name} has no field ${e.field}`);
       return f.type;
@@ -933,23 +1379,32 @@ export function typeOf(
       if (byNames.length === 0)
         fail(`a record literal with fields ${names} matches no declared record type`);
       const types = new Map(e.fields.map((f) => [f.name, typeOf(f.value, scope, ctx, fail)]));
-      const fits = byNames.filter((rec) =>
-        rec.fields.every((f) => JSON.stringify(types.get(f.name)) === JSON.stringify(f.type)),
+      const fitting = byNames.filter((rec) =>
+        rec.fields.every((f) => fits(types.get(f.name) as SubsetType, f.type, ctx)),
       );
-      if (fits.length === 0) {
+      if (fitting.length === 0) {
         const rec = byNames[0] as RecordType;
         const off = rec.fields.find(
-          (f) => JSON.stringify(types.get(f.name)) !== JSON.stringify(f.type),
+          (f) => !fits(types.get(f.name) as SubsetType, f.type, ctx),
         ) as Field;
         fail(
           `field ${off.name} of a ${rec.name} literal holds a ${describe(types.get(off.name) as SubsetType)}, not a ${describe(off.type)}`,
         );
       }
-      if (fits.length > 1)
+      // Among a union's members, the literal's tag tells them apart.
+      const literalOf = (name: string): string | boolean | undefined => {
+        const v = e.fields.find((f) => f.name === name)?.value;
+        return v?.kind === "string" || v?.kind === "bool" ? v.value : undefined;
+      };
+      const tagged = fitting.filter((rec) =>
+        rec.fields.every((f) => f.literal === undefined || literalOf(f.name) === f.literal),
+      );
+      const chosen = tagged.length > 0 ? tagged : fitting;
+      if (chosen.length > 1)
         fail(
-          `a record literal with fields ${names} matches ${fits.map((r) => r.name).join(" and ")} alike`,
+          `a record literal with fields ${names} matches ${chosen.map((r) => r.name).join(" and ")} alike`,
         );
-      return { kind: "record", name: (fits[0] as RecordType).name };
+      return { kind: "record", name: (chosen[0] as RecordType).name };
     }
   }
 }
@@ -983,7 +1438,18 @@ function parserFor(
     functions = inSubset;
     declared = new Set([...inSubset, ...module.outside.map((o) => o.name)]);
   }
-  const parser = new FunctionParser(r, records, functions, new Map(), declared, aliases);
+  const typeAliases = new Map<string, SubsetType>(
+    module.unions.map((u) => [u.name, { kind: "union", name: u.name }]),
+  );
+  const parser = new FunctionParser(
+    r,
+    records,
+    functions,
+    new Map(),
+    declared,
+    aliases,
+    typeAliases,
+  );
   for (const f of module.functions)
     parser.signatures.set(f.name, { params: f.params, returns: f.returns });
   return { r, parser };
@@ -1021,11 +1487,16 @@ export function readArrowBody(
   module: SubsetModule,
   aliases: ReadonlyMap<string, string> = new Map(),
 ): Expr {
-  if (!arrow.block) return readExpression(arrow.body, scope, module, aliases);
+  if (!arrow.block) {
+    const { r, parser } = parserFor(arrow.body, module, aliases);
+    const e = parser.expression(scope);
+    if (r.at < r.tokens.length) r.fail(`unexpected ${r.peek()?.text} after the expression`);
+    return parser.narrowed(e, scope);
+  }
   const { r, parser } = parserFor(`${arrow.body}}`, module, aliases);
   const e = parser.blockBody(new Map(scope), { kind: "bool" });
   if (r.at < r.tokens.length) r.fail(`unexpected ${r.peek()?.text} after the block`);
-  return e;
+  return parser.narrowed(e, scope);
 }
 
 /** Every name an expression binds or refers to: its variables and its lets. */
@@ -1034,10 +1505,14 @@ function boundNames(e: Expr, out = new Set<string>()): Set<string> {
     case "int":
     case "bool":
     case "string":
+    case "null":
       return out;
     case "var":
       out.add(e.name);
       return out;
+    case "narrow":
+      out.add(e.name);
+      return boundNames(e.body, out);
     case "neg":
     case "not":
     case "isInteger":
@@ -1087,9 +1562,12 @@ export function renameVars(
     case "int":
     case "bool":
     case "string":
+    case "null":
       return e;
     case "var":
       return { kind: "var", name: names.get(e.name) ?? e.name };
+    case "narrow":
+      return { kind: "narrow", name: names.get(e.name) ?? e.name, body: go(e.body) };
     case "neg":
     case "not":
     case "isInteger":
@@ -1120,7 +1598,7 @@ export function renameVars(
         inner.set(e.name, bound);
       }
       return {
-        kind: "let",
+        ...e,
         name: bound,
         value: go(e.value),
         body: renameVars(e.body, inner, new Set([...taken, bound])),
@@ -1135,8 +1613,11 @@ function callees(e: Expr, out = new Set<string>()): Set<string> {
     case "int":
     case "bool":
     case "string":
+    case "null":
     case "var":
       return out;
+    case "narrow":
+      return callees(e.body, out);
     case "neg":
     case "not":
     case "isInteger":
@@ -1192,6 +1673,7 @@ export function readSubset(source: string, functions?: readonly string[]): Subse
     if (!(err instanceof TokenizeError)) throw err;
     return {
       records: [],
+      unions: [],
       functions: [],
       outside: (functions ?? []).map((name) => ({
         name,
@@ -1203,6 +1685,13 @@ export function readSubset(source: string, functions?: readonly string[]): Subse
   const r = new Reader(tokens, lineOf);
   // Pass 1: record types, and where every function declaration starts.
   const records = new Map<string, RecordType>();
+  const unions: UnionType[] = [];
+  const typeAliases = new Map<string, SubsetType>();
+  const declaredTypes = (): Declared => ({
+    records: new Set(records.keys()),
+    recordsByName: records,
+    aliases: typeAliases,
+  });
   const badRecords = new Map<string, string>();
   const declared = new Set<string>();
   const assigned = new Map<string, number>();
@@ -1221,9 +1710,29 @@ export function readSubset(source: string, functions?: readonly string[]): Subse
     ) {
       const save = r.at;
       try {
-        const rec = recordAt(r, new Set(records.keys()));
-        if (rec) {
-          records.set(rec.name, rec);
+        const decl = declarationAt(r, declaredTypes());
+        if (decl) {
+          if (decl.kind === "record") records.set(decl.record.name, decl.record);
+          else if (decl.kind === "alias") typeAliases.set(decl.name, decl.type);
+          else {
+            for (const m of decl.members) records.set(m.name, m);
+            // A named member is the module's own record, now also a member of the union.
+            for (const m of decl.union.members) {
+              const rec = records.get(m.record);
+              if (rec && rec.union === undefined)
+                records.set(m.record, { ...rec, union: decl.union.name });
+              else if (rec && rec.union !== decl.union.name)
+                // One datatype per record: a record in two unions would need two constructors.
+                badRecords.set(
+                  decl.union.name,
+                  `${m.record} is already a member of ${rec.union}; a record belongs to one union`,
+                );
+            }
+            if (!badRecords.has(decl.union.name)) {
+              unions.push(decl.union);
+              typeAliases.set(decl.union.name, { kind: "union", name: decl.union.name });
+            }
+          }
           continue;
         }
       } catch (err) {
@@ -1299,7 +1808,15 @@ export function readSubset(source: string, functions?: readonly string[]): Subse
         message: `${name} is used as a value in the module (not only called), so what runs under its name may not be its declaration`,
       });
   // Pass 2: signatures, so every function's return type is known before any body is read.
-  const parser = new FunctionParser(r, records, declared, badRecords);
+  const parser = new FunctionParser(
+    r,
+    records,
+    declared,
+    badRecords,
+    declared,
+    undefined,
+    typeAliases,
+  );
   const signatures: Signature[] = [];
   for (const start of starts) {
     r.at = start;
@@ -1388,5 +1905,109 @@ export function readSubset(source: string, functions?: readonly string[]): Subse
         ordered.push(fn);
         placed.add(name);
       }
-  return { records: [...records.values()], functions: ordered, outside: [...outside.values()] };
+  return {
+    records: [...records.values()],
+    unions,
+    functions: ordered,
+    outside: [...outside.values()],
+  };
+}
+
+/** Whether an expression holds a node of the kinds named. */
+function hasNode(e: Expr, kinds: ReadonlySet<Expr["kind"]>): boolean {
+  if (kinds.has(e.kind)) return true;
+  switch (e.kind) {
+    case "int":
+    case "bool":
+    case "string":
+    case "null":
+    case "var":
+      return false;
+    case "narrow":
+      return hasNode(e.body, kinds);
+    case "neg":
+    case "not":
+    case "isInteger":
+      return hasNode(e.operand, kinds);
+    case "binary":
+      return hasNode(e.left, kinds) || hasNode(e.right, kinds);
+    case "cond":
+      return hasNode(e.test, kinds) || hasNode(e.ifTrue, kinds) || hasNode(e.ifFalse, kinds);
+    case "call":
+      return e.args.some((a) => hasNode(a, kinds));
+    case "field":
+      return hasNode(e.object, kinds);
+    case "record":
+      return e.fields.some((f) => hasNode(f.value, kinds));
+    case "let":
+      return hasNode(e.value, kinds) || hasNode(e.body, kinds);
+  }
+}
+
+/**
+ * The module as an engine that takes only some of the subset's types sees
+ * it: records with a field of a type it does not take are dropped, and so
+ * are functions whose signature holds one, whose body uses what the
+ * types bring (`null`, narrowing), or which call such a function; each is
+ * reported outside with `reason`.
+ */
+export function restrictModule(
+  module: SubsetModule,
+  takes: (t: SubsetType) => boolean,
+  reason: string,
+): SubsetModule {
+  const badRecords = new Set<string>();
+  for (let changed = true; changed; ) {
+    changed = false;
+    for (const rec of module.records)
+      if (
+        !badRecords.has(rec.name) &&
+        rec.fields.some((f) => !typeTaken(f.type, takes, badRecords))
+      ) {
+        badRecords.add(rec.name);
+        changed = true;
+      }
+  }
+  const outside = new Map(module.outside.map((o) => [o.name, o]));
+  const kept = new Map(module.functions.map((f) => [f.name, f]));
+  const uses = (f: SubsetFunction) =>
+    !f.params.every((p) => typeTaken(p.type, takes, badRecords)) ||
+    !typeTaken(f.returns, takes, badRecords) ||
+    hasNode(f.body, new Set(["null", "narrow"]));
+  for (const f of module.functions)
+    if (uses(f)) {
+      kept.delete(f.name);
+      outside.set(f.name, { name: f.name, line: f.line, message: reason });
+    }
+  for (let changed = true; changed; ) {
+    changed = false;
+    for (const [name, f] of kept) {
+      const bad = [...callees(f.body)].find((c) => outside.has(c));
+      if (bad === undefined) continue;
+      kept.delete(name);
+      outside.set(name, {
+        name,
+        line: f.line,
+        message: `calls ${bad}, which is outside the engine's subset: ${outside.get(bad)?.message}`,
+      });
+      changed = true;
+    }
+  }
+  return {
+    records: module.records.filter((r) => !badRecords.has(r.name)),
+    unions: module.unions.filter((u) => takes({ kind: "union", name: u.name })),
+    functions: module.functions.filter((f) => kept.has(f.name)),
+    outside: [...outside.values()],
+  };
+}
+
+function typeTaken(
+  t: SubsetType,
+  takes: (t: SubsetType) => boolean,
+  badRecords: ReadonlySet<string>,
+): boolean {
+  if (!takes(t)) return false;
+  if (t.kind === "record") return !badRecords.has(t.name);
+  if (t.kind === "nullable") return typeTaken(t.inner, takes, badRecords);
+  return true;
 }

@@ -62,6 +62,10 @@ function leanType(t: SubsetType): string {
       return "String";
     case "record":
       return ident.record(t.name);
+    case "nullable":
+    case "union":
+    case "null":
+      return fail(`a ${t.kind} type, which the Lean engine does not take yet`);
   }
 }
 
@@ -106,6 +110,9 @@ export function term(e: Expr, scope: ReadonlyMap<string, SubsetType>, env: Env):
       return leanString(e.value);
     case "var":
       return ident.variable(e.name);
+    case "null":
+    case "narrow":
+      return fail("null, which the Lean engine does not take yet");
     case "neg":
       return `(-${t(e.operand)})`;
     case "not":
@@ -433,5 +440,9 @@ export function value(v: unknown, t: SubsetType, module: SubsetModule): string {
       if (extra.length > 0) fail(`${t.name} value has unexpected fields ${extra.join(", ")}`);
       return `({ ${rec.fields.map((f) => `${ident.field(f.name)} := ${value(o[f.name], f.type, module)}`).join(", ")} } : ${ident.record(t.name)})`;
     }
+    case "nullable":
+    case "union":
+    case "null":
+      return fail(`a ${t.kind} type, which the Lean engine does not take yet`);
   }
 }

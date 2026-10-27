@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { readExpression, readSubset } from "./subset.ts";
+import { readExpression, readSubset, restrictModule } from "./subset.ts";
 
 const refund = `
 export interface RefundDecision {
@@ -164,11 +164,6 @@ export function fine(n: number): number { return n; }
     ["export function f(x: number): number { let y = x; return y; }", "mutable binding"],
     ["export function f(x: number): number { for (;;) {} }", "a loop"],
     ["export function f(x: number) { return x; }", "without a return type"],
-    ["export function f(x: string | null): number { return 1; }", "arrays, generics, unions"],
-    [
-      'export function f(x: "a" | null): number { return 1; }',
-      "a union mixing string literals with null",
-    ],
     ['export function f(x: string): boolean { return x < "b"; }', "< on a string and a string"],
     // biome-ignore lint/suspicious/noTemplateCurlyInString: the source under test contains a template literal on purpose
     ["export function f(x: string): string { return `${x}`; }", "a template literal"],
@@ -192,7 +187,7 @@ export function fine(n: number): number { return n; }
     ["export function f(x: number): number { return y; }", "y, which is neither"],
     [
       "export interface P { a?: number }\nexport function f(x: number): P { return {}; }",
-      "record type P is outside the subset: optional field a",
+      "type P is outside the subset: optional field a",
     ],
     ["export function f(x: number): number { return [x][0]; }", "an array literal"],
   ])("outside the subset: %s", (source, reason) => {
@@ -234,7 +229,7 @@ export function fine(n: number): number { return n; }
     ],
     [
       "export interface P { mk: number }\nexport function f(x: number): P { return { mk: x }; }",
-      "record type P is outside the subset: field mk takes a name Lean's structures reserve",
+      "type P is outside the subset: field mk takes a name Lean's structures reserve",
     ],
     [
       "export interface P { a: number }\nexport function f(x: number): P { return { b: x }; }",
@@ -483,5 +478,185 @@ describe("readExpression", () => {
     expect(() => readExpression("loops(n)", new Map([["n", { kind: "int" }]]), partial)).toThrow(
       "a call to loops, which is outside the subset",
     );
+  });
+});
+
+describe("nullable types and tagged unions", () => {
+  const source = `
+export interface Challenge { readonly attempts: number; readonly locked: boolean }
+export type Refused = { readonly type: "invalid_code" } | { readonly type: "code_locked" };
+export type Outcome = { readonly ok: true; readonly value: Challenge } | { readonly ok: false; readonly error: Refused };
+export type Status = "invited" | "active" | "disabled";
+export type MaybeChallenge = Challenge | null;
+
+export function admit(c: Challenge | null, matches: boolean): Outcome {
+  if (c === null) return { ok: false, error: { type: "invalid_code" } };
+  if (c.locked) return { ok: false, error: { type: "code_locked" } };
+  if (!matches) return { ok: false, error: { type: "invalid_code" } };
+  return { ok: true, value: c };
+}
+export function decideAccess(status: Status | null): "send_code" | "waitlist" {
+  if (status === "invited" || status === "active") return "send_code";
+  return "waitlist";
+}
+export function attempts(c: MaybeChallenge): number {
+  return c !== null && !c.locked ? c.attempts : 0;
+}
+export function okOf(o: Outcome): boolean { return o.ok; }
+export function wrong(c: Challenge | null): number { return c.attempts; }
+export function valueOf(o: Outcome): Challenge { return o.value; }
+export function compare(a: Challenge | null, b: Challenge | null): boolean { return a === b; }
+`;
+  const module = readSubset(source);
+  const outside = Object.fromEntries(module.outside.map((o) => [o.name, o.message]));
+
+  test("declarations: nullable parameters, aliases, unions with their tags and members named by tag", () => {
+    expect(module.unions).toEqual([
+      {
+        name: "Refused",
+        tag: "type",
+        members: [
+          { tag: "invalid_code", record: "Refused.invalid_code" },
+          { tag: "code_locked", record: "Refused.code_locked" },
+        ],
+      },
+      {
+        name: "Outcome",
+        tag: "ok",
+        members: [
+          { tag: true, record: "Outcome.true" },
+          { tag: false, record: "Outcome.false" },
+        ],
+      },
+    ]);
+    expect(module.records.find((r) => r.name === "Outcome.false")).toEqual({
+      name: "Outcome.false",
+      fields: [
+        { name: "ok", type: { kind: "bool" }, literal: false },
+        { name: "error", type: { kind: "union", name: "Refused" } },
+      ],
+      union: "Outcome",
+    });
+    const admit = module.functions.find((f) => f.name === "admit");
+    expect(admit?.params[0]?.type).toEqual({
+      kind: "nullable",
+      inner: { kind: "record", name: "Challenge" },
+    });
+    expect(admit?.returns).toEqual({ kind: "union", name: "Outcome" });
+    expect(module.functions.find((f) => f.name === "decideAccess")?.params[0]?.type).toEqual({
+      kind: "nullable",
+      inner: { kind: "string" },
+    });
+    expect(module.functions.find((f) => f.name === "attempts")?.params[0]?.type).toEqual({
+      kind: "nullable",
+      inner: { kind: "record", name: "Challenge" },
+    });
+  });
+
+  test("a null check narrows the name it guards, in the branch it guards and in the right operand of && and ||", () => {
+    const admit = module.functions.find((f) => f.name === "admit");
+    // `if (c === null) return …; rest`: in rest, c is narrowed.
+    expect(admit?.body).toMatchObject({ kind: "cond", ifFalse: { kind: "narrow", name: "c" } });
+    const attempts = module.functions.find((f) => f.name === "attempts");
+    expect(attempts?.body).toMatchObject({
+      kind: "cond",
+      test: { kind: "binary", op: "&&", right: { kind: "narrow", name: "c" } },
+      ifTrue: { kind: "narrow", name: "c" },
+    });
+  });
+
+  test("the tag of a union is read from every member; other fields and unguarded reads are outside", () => {
+    expect(module.functions.map((f) => f.name)).toContain("okOf");
+    expect(outside["wrong"]).toContain("compare it with null first, which narrows it");
+    expect(outside["valueOf"]).toContain("not on every member of Outcome");
+    expect(outside["compare"]).toContain("compares references");
+  });
+
+  test("a record literal picks its union member by the tag; a member stands where its union is expected", () => {
+    const admit = module.functions.find((f) => f.name === "admit");
+    expect(admit?.body).toMatchObject({
+      ifTrue: { kind: "record", fields: [{ name: "ok" }, { name: "error" }] },
+    });
+  });
+
+  test("a union of records without a tag, or mixed with other types, is outside with why", () => {
+    const m = readSubset(`
+export type NoTag = { readonly a: number } | { readonly b: number };
+export type Mixed = { readonly a: number } | number;
+export function f(x: NoTag): number { return 1; }
+export function g(x: Mixed): number { return 1; }
+`);
+    expect(m.outside.find((o) => o.name === "f")?.message).toContain("without a tag");
+    expect(m.outside.find((o) => o.name === "g")?.message).toContain(
+      "mixing records with other types",
+    );
+  });
+
+  test("restrictModule drops what an engine does not take, and the callers of what it drops", () => {
+    const restricted = restrictModule(
+      module,
+      (t) => t.kind === "int" || t.kind === "bool" || t.kind === "string" || t.kind === "record",
+      "not taken",
+    );
+    expect(restricted.functions.map((f) => f.name)).toEqual([]);
+    expect(restricted.outside.find((o) => o.name === "admit")?.message).toBe("not taken");
+    expect(restricted.unions).toEqual([]);
+    const plain = readSubset(
+      "export function f(x: number): number { return x; }\nexport function g(x: number): number { return f(x); }",
+    );
+    expect(restrictModule(plain, () => true, "never").functions.map((f) => f.name)).toEqual([
+      "f",
+      "g",
+    ]);
+  });
+});
+
+describe("nullable types and tagged unions, after review", () => {
+  test("an initializer under a null check is typed as the check allows; an annotation is the binding's type", () => {
+    const m = readSubset(`
+export interface C { readonly n: number }
+export function guarded(x: number | null): number {
+  const y = x === null ? 0 : x + 1;
+  return y;
+}
+export function early(c: C | null): number {
+  if (c === null) return 0;
+  const n = c.n;
+  return n;
+}
+export function annotated(x: number): number {
+  const c: C | null = null;
+  return c === null ? x : c.n;
+}
+export function wrongAnnotation(x: number): number {
+  const c: C = null;
+  return x;
+}
+`);
+    expect(m.functions.map((f) => f.name)).toEqual(["guarded", "early", "annotated"]);
+    expect(m.functions.find((f) => f.name === "annotated")?.body).toMatchObject({
+      kind: "let",
+      name: "c",
+      type: { kind: "nullable", inner: { kind: "record", name: "C" } },
+    });
+    expect(m.outside.find((o) => o.name === "wrongAnnotation")?.message).toContain(
+      "annotated C but holds a null",
+    );
+  });
+
+  test("a field typed with a union of literals is no tag; a record in two unions is refused", () => {
+    const m = readSubset(`
+export type Ev = { readonly kind: "a" | "b"; readonly x: number } | { readonly kind: "c"; readonly y: number };
+export interface A { readonly t: "a" }
+export interface B { readonly t: "b" }
+export interface Cc { readonly t: "c" }
+export type U1 = A | B;
+export type U2 = A | Cc;
+export function f(e: Ev): number { return 1; }
+export function g(x: boolean): U2 { return x ? { t: "a" } : { t: "c" }; }
+`);
+    expect(m.outside.find((o) => o.name === "f")?.message).toContain("without a tag");
+    expect(m.unions.map((u) => u.name)).toEqual(["U1"]);
+    expect(m.outside.find((o) => o.name === "g")?.message).toContain("already a member of U1");
   });
 });

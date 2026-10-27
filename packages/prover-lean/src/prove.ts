@@ -15,12 +15,22 @@ import type {
   Prover,
   ProveInput as ProverInput,
 } from "@eutaxy/prover";
-import { OutsideSubset, readSubset, type SubsetModule } from "@eutaxy/prover/reader";
+import {
+  OutsideSubset,
+  readSubset,
+  restrictModule,
+  type SubsetModule,
+  type SubsetType,
+} from "@eutaxy/prover/reader";
 import type { FunctionSpec, Property, SpecError } from "@eutaxy/spec";
 import { type Emitted, emitModule } from "./emit.ts";
 import { checkLean, findLean, type LeanDiagnostic, leanVersion } from "./lean.ts";
 
 export const engineName = "lean";
+
+/** The types this engine translates: the integers, Bool, String and records of those. */
+export const leanTakes = (t: SubsetType): boolean =>
+  t.kind === "int" || t.kind === "bool" || t.kind === "string" || t.kind === "record";
 
 export type { ModuleProofs, ProofOutcome, PropertyProof } from "@eutaxy/prover";
 
@@ -85,9 +95,14 @@ export function prepare(input: ProveInput): Prepared {
   const specs = input.specs;
   const wanted = input.functions ? new Set(input.functions) : undefined;
   const fns = specs.functions.filter((f) => !wanted || wanted.has(f.name));
-  const module = readSubset(
-    input.source,
-    fns.map((f) => f.name),
+  // Nullable types and tagged unions are read, but this engine does not take them yet: the SMT engine does.
+  const module = restrictModule(
+    readSubset(
+      input.source,
+      fns.map((f) => f.name),
+    ),
+    leanTakes,
+    "nullable types and tagged unions are not in the Lean engine's subset yet",
   );
   const outside = new Map<string, string>();
   for (const o of module.outside)

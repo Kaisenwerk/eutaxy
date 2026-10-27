@@ -12,8 +12,9 @@
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { type PrngState, seedPrng } from "@eutaxy/core";
-import { generate, type ProofOutcome } from "@eutaxy/prover";
+import { generate, type ProofOutcome, testedRung } from "@eutaxy/prover";
 import { readSpecs, readSubset, type SubsetType } from "@eutaxy/prover/reader";
 import {
   findLean,
@@ -28,7 +29,7 @@ import {
   ident as smtIdent,
   value as smtValue,
 } from "@eutaxy/prover-smt";
-import type { Binder } from "@eutaxy/spec";
+import { type Binder, isSpec } from "@eutaxy/spec";
 import { describe, expect, test } from "vitest";
 
 const root = import.meta.dirname;
@@ -40,7 +41,8 @@ const entries = readdirSync(root, { withFileTypes: true })
 type Expected = { readonly [fn: string]: { readonly [property: string]: string } };
 interface Manifest {
   readonly description: string;
-  readonly expect: { readonly lean: Expected; readonly smt: Expected };
+  /** Per rung and engine: the TESTED rung on inputs drawn from the parameter types, then each engine. */
+  readonly expect: { readonly tested: Expected; readonly lean: Expected; readonly smt: Expected };
 }
 
 const lean = await findLean();
@@ -85,7 +87,10 @@ function drawArgs(types: readonly SubsetType[], count: number): unknown[][] {
   return out;
 }
 
-/** The functions the translation can be validated on: in the subset, exported, no record parameter (not drawn yet). */
+/** Parameter types the translation checks draw from; records, nullable types and unions are not drawn yet. */
+const drawable = new Set(["int", "bool", "string"]);
+
+/** The functions the translation can be validated on: in the subset, exported, every parameter drawable. */
 async function drawn(dir: string, source: string) {
   const subset = readSubset(source);
   const module = (await import(join(dir, "domain.ts"))) as Record<
@@ -96,7 +101,7 @@ async function drawn(dir: string, source: string) {
   let functions = 0;
   for (const fn of subset.functions) {
     if (typeof module[fn.name] !== "function") continue;
-    if (fn.params.some((p) => p.type.kind === "record")) continue;
+    if (fn.params.some((p) => !drawable.has(p.type.kind))) continue;
     functions++;
     for (const args of drawArgs(
       fn.params.map((p) => p.type),
@@ -109,7 +114,7 @@ async function drawn(dir: string, source: string) {
   expect(functions).toBe(
     subset.functions.filter(
       (f) =>
-        f.params.every((p) => p.type.kind !== "record") &&
+        f.params.every((p) => drawable.has(p.type.kind)) &&
         source.includes(`export function ${f.name}(`),
     ).length,
   );
@@ -148,6 +153,28 @@ for (const entry of entries) {
         [],
       );
     });
+
+    test("tested", async () => {
+      // The TESTED rung on every property, the spec file loaded as the generated check loads it.
+      const specs = readSpecs({ module: source, spec, moduleSpecifiers: ["./domain.ts"] });
+      const props = (await import(pathToFileURL(specPath).href)) as Record<string, unknown>;
+      const got: Record<string, Record<string, string>> = {};
+      for (const fn of specs.functions)
+        for (const property of fn.properties) {
+          const exported = props[property.name];
+          const verdict = testedRung({
+            module: entry,
+            fn,
+            property,
+            spec: isSpec(exported) && exported.kind === "forall" ? exported : undefined,
+            seed: "contracts",
+          });
+          const byProperty = got[fn.name] ?? {};
+          byProperty[property.name] = verdict.kind === "UNKNOWN" ? verdict.cause : verdict.kind;
+          got[fn.name] = byProperty;
+        }
+      expect(got).toEqual(manifest.expect.tested);
+    }, 60_000);
 
     test.skipIf("unavailable" in lean && !requireLean)(
       "lean",

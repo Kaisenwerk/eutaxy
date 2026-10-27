@@ -77,7 +77,7 @@ describe("prelude and property scripts", () => {
   test("datatypes with prefixed selectors, functions as define-fun with record fields in declaration order", () => {
     const pre = prelude(module);
     expect(pre).toContain(
-      "(declare-datatype R_Decision ((mk_Decision (fld.Decision.ok Bool) (fld.Decision.left (_ FloatingPoint 11 53)))))",
+      "(declare-datatypes ((R_Decision 0) (Opt.F64 0) (Opt.Bool 0) (Opt.Str 0) (Opt.R_Decision 0)) (((mk_Decision (fld.Decision.ok Bool) (fld.Decision.left (_ FloatingPoint 11 53))))",
     );
     expect(pre).toContain(
       "(define-fun f_take ((v_balance (_ FloatingPoint 11 53)) (v_amount (_ FloatingPoint 11 53))) R_Decision\n  (let ((v_fits (fp.leq v_amount v_balance))) (ite v_fits (mk_Decision true (fp.sub RNE v_balance v_amount)) (mk_Decision false v_balance))))",
@@ -182,7 +182,9 @@ describe("review findings", () => {
       "export interface Empty {}\nexport function same(e: Empty): Empty { return e; }\nexport function fresh(): Empty { return {}; }";
     const m = readSubset(src);
     const pre = prelude(m);
-    expect(pre).toContain("(declare-datatype R_Empty ((mk_Empty)))");
+    expect(pre).toContain(
+      "(declare-datatypes ((R_Empty 0) (Opt.F64 0) (Opt.Bool 0) (Opt.Str 0) (Opt.R_Empty 0)) (((mk_Empty))",
+    );
     expect(pre).toContain("(define-fun f_fresh () R_Empty\n  mk_Empty)");
     expect(value({}, { kind: "record", name: "Empty" }, m)).toBe("mk_Empty");
     expect(equal("a", "b", { kind: "record", name: "Empty" }, m)).toBe("true");
@@ -206,5 +208,170 @@ describe("review findings", () => {
     expect(
       readAnswer('unsat\n(error "line 9 column 45: model is not available")\n').errors,
     ).toEqual([]);
+  });
+});
+
+describe("nullable types and tagged unions", () => {
+  const src = `
+export interface Challenge { readonly attempts: number; readonly locked: boolean }
+export type Refused = { readonly type: "invalid_code" } | { readonly type: "code_locked" };
+export type Outcome = { readonly ok: true; readonly value: Challenge } | { readonly ok: false; readonly error: Refused };
+export function admit(c: Challenge | null, matches: boolean): Outcome {
+  if (c === null) return { ok: false, error: { type: "invalid_code" } };
+  if (c.locked) return { ok: false, error: { type: "code_locked" } };
+  if (!matches) return { ok: false, error: { type: "invalid_code" } };
+  return { ok: true, value: c };
+}
+export function decideAccess(status: "invited" | "active" | "disabled" | null): "send_code" | "waitlist" {
+  if (status === "invited" || status === "active") return "send_code";
+  return "waitlist";
+}
+`;
+  const m = readSubset(src);
+  const pre = prelude(m);
+
+  test("one datatypes block: records, unions with a constructor per member, options over the sorts used", () => {
+    expect(pre).toContain(
+      "(declare-datatypes ((R_Challenge 0) (R_Refused 0) (R_Outcome 0) (Opt.F64 0) (Opt.Bool 0) (Opt.Str 0) (Opt.R_Challenge 0) (Opt.R_Refused 0) (Opt.R_Outcome 0))",
+    );
+    expect(pre).toContain(
+      "((mk_Refused.invalid_code (fld.Refused.invalid_code.type (Seq (_ BitVec 16)))) (mk_Refused.code_locked",
+    );
+    expect(pre).toContain(
+      "((mk_Outcome.true (fld.Outcome.true.ok Bool) (fld.Outcome.true.value R_Challenge)) (mk_Outcome.false",
+    );
+    expect(pre).toContain("((none.R_Challenge) (some.R_Challenge (val.R_Challenge R_Challenge)))");
+    expect(pre).toContain("(define-fun f_admit ((v_c Opt.R_Challenge) (v_matches Bool)) R_Outcome");
+  });
+
+  test("a null check is a tester; a narrowed name is bound to its value in the branch it guards", () => {
+    expect(pre).toContain(
+      "(ite (is-none.R_Challenge v_c) (mk_Outcome.false false (mk_Refused.invalid_code (seq.++",
+    );
+    expect(pre).toContain("(let ((v_c (val.R_Challenge v_c))) (ite (fld.Challenge.locked v_c)");
+  });
+
+  test("a nullable string against a literal: some and equal", () => {
+    expect(pre).toContain("(and (is-some.Str v_status) (= (val.Str v_status) (seq.++");
+  });
+
+  test("binders: a nullable record, a nullable union of literals constrained to them, a union of records matched to its declaration", () => {
+    const sp = readSpecs({
+      module: src,
+      spec: `import { forall } from "eutaxy/spec";
+import { admit, decideAccess } from "./m.ts";
+export const admits = forall(admit, { when: (c) => c !== null && !c.locked, ensures: (c, m) => admit(c, m).ok === m });
+export const sendCode = forall(decideAccess, { ensures: (s) => decideAccess(s) === "send_code" || s === null || s === "disabled" });`,
+      moduleSpecifiers: ["./m.ts"],
+    });
+    expect(sp.errors).toEqual([]);
+    const [admits, sendCode] = sp.functions.flatMap((f) => f.properties);
+    if (!admits || !sendCode) throw new Error("fixtures");
+    const a = propertyScript(admits, m);
+    expect(a.script).toContain("(declare-const v_c Opt.R_Challenge)");
+    expect(a.script).toContain(
+      "(assert (and (not (is-none.R_Challenge v_c)) (let ((v_c (val.R_Challenge v_c))) (not (fld.Challenge.locked v_c)))))",
+    );
+    // The tag read on the union, from whichever member the value is.
+    expect(a.script).toContain(
+      "(ite (is-mk_Outcome.true (f_admit v_c v_m)) (fld.Outcome.true.ok (f_admit v_c v_m)) (fld.Outcome.false.ok (f_admit v_c v_m)))",
+    );
+    const s = propertyScript(sendCode, m);
+    expect(s.script).toContain(
+      "(assert (or (is-none.Str v_s) (and (is-some.Str v_s) (or (= (val.Str v_s)",
+    );
+  });
+
+  test("values and models of the new types", () => {
+    const c = { attempts: 1, locked: false };
+    expect(value(null, { kind: "nullable", inner: { kind: "record", name: "Challenge" } }, m)).toBe(
+      "none.R_Challenge",
+    );
+    expect(
+      value(c, { kind: "nullable", inner: { kind: "record", name: "Challenge" } }, m),
+    ).toContain("(some.R_Challenge (mk_Challenge");
+    expect(value({ ok: true, value: c }, { kind: "union", name: "Outcome" }, m)).toContain(
+      "(mk_Outcome.true true (mk_Challenge",
+    );
+    expect(
+      decode(
+        "none.R_Challenge",
+        { kind: "nullable", inner: { kind: "record", name: "Challenge" } },
+        m,
+      ),
+    ).toBeNull();
+    const some = parseSExprs("(some.R_Challenge (mk_Challenge (_ NaN 11 53) true))")[0] as never;
+    expect(
+      decode(some, { kind: "nullable", inner: { kind: "record", name: "Challenge" } }, m),
+    ).toEqual({ attempts: Number.NaN, locked: true });
+    const o = parseSExprs(
+      "(mk_Outcome.false false (mk_Refused.code_locked (seq.unit #x0061)))",
+    )[0] as never;
+    expect(decode(o, { kind: "union", name: "Outcome" }, m)).toEqual({
+      ok: false,
+      error: { type: "a" },
+    });
+    expect(equal("a", "b", { kind: "nullable", inner: { kind: "int" } }, m)).toBe(
+      "(ite (and (is-some.F64 a) (is-some.F64 b)) (fp.eq (val.F64 a) (val.F64 b)) (and (is-none.F64 a) (is-none.F64 b)))",
+    );
+  });
+});
+
+describe("nullable types and tagged unions, after review", () => {
+  const src = `
+export interface Challenge { readonly attempts: number; readonly locked: boolean }
+export interface A { readonly t: "a"; readonly n: number }
+export interface B { readonly t: "b"; readonly n: number }
+export type U = A | B;
+export function maybe(x: number, c: Challenge): Challenge | null { return x > 0 ? c : c; }
+export function local(c: Challenge, x: number): number {
+  const d = x > 0 ? c : null;
+  return d === null ? 0 : d.attempts;
+}
+export function annotated(): number | null {
+  const x: number | null = null;
+  return x;
+}
+export function pick(b: boolean): number | null { return b ? 1 : 2; }
+export function onlyA(a: A): number { return a.n; }
+export function tagOf(u: U): string { return u.t; }
+`;
+  const m = readSubset(src);
+  const pre = prelude(m);
+
+  test("a conditional, a let or a null where a nullable is expected is wrapped once", () => {
+    expect(pre).toContain(
+      "(define-fun f_maybe ((v_x (_ FloatingPoint 11 53)) (v_c R_Challenge)) Opt.R_Challenge\n  (ite (fp.gt v_x (_ +zero 11 53)) (some.R_Challenge v_c) (some.R_Challenge v_c)))",
+    );
+    expect(pre).not.toContain("(some.R_Challenge (ite");
+    expect(pre).toContain("(define-fun f_pick ((v_b Bool)) Opt.F64\n  (ite v_b (some.F64");
+    expect(pre).toContain("(define-fun f_annotated () Opt.F64\n  (let ((v_x none.F64)) v_x))");
+  });
+
+  test("option sorts exist for every sort, so a local join with null declares nothing new", () => {
+    expect(pre).toContain("(Opt.F64 0) (Opt.Bool 0) (Opt.Str 0) (Opt.R_Challenge 0) (Opt.R_U 0)");
+    expect(pre).toContain(
+      "(let ((v_d (ite (fp.gt v_x (_ +zero 11 53)) (some.R_Challenge v_c) none.R_Challenge)))",
+    );
+  });
+
+  test("a binder over a member record is its constructor; a union binder's members carry their tags", () => {
+    const sp = readSpecs({
+      module: src,
+      spec: `import { forall } from "eutaxy/spec";
+import { onlyA, tagOf } from "./m.ts";
+export const a = forall(onlyA, { ensures: (x) => onlyA(x) === x.n });
+export const tags = forall(tagOf, { ensures: (u) => tagOf(u) === "a" || tagOf(u) === "b" });`,
+      moduleSpecifiers: ["./m.ts"],
+    });
+    expect(sp.errors).toEqual([]);
+    const [a, tags] = sp.functions.flatMap((f) => f.properties);
+    if (!a || !tags) throw new Error("fixtures");
+    expect(propertyScript(a, m).script).toContain(
+      "(assert (and (is-mk_A v_x) (= (fld.A.t v_x) (seq.unit #x0061))))",
+    );
+    expect(propertyScript(tags, m).script).toContain(
+      "(assert (or (and (is-mk_A v_u) (= (fld.A.t v_u) (seq.unit #x0061))) (and (is-mk_B v_u) (= (fld.B.t v_u) (seq.unit #x0062)))))",
+    );
   });
 });

@@ -1,6 +1,17 @@
 {
   "description": "number binders are proved under the integer model (an assumption every PROVEN names); a regex test in the precondition is refused per property, and the plain-string property on the same function is proved.",
   "expect": {
+    "tested": {
+      "abs": {
+        "overDoubles": "REFUTED",
+        "overIntegers": "TESTED",
+        "fixpoint": "TESTED"
+      },
+      "shout": {
+        "plainString": "TESTED",
+        "needsARegex": "TESTED"
+      }
+    },
     "lean": {
       "abs": {
         "overDoubles": "PROVEN",

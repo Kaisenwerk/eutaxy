@@ -141,7 +141,10 @@ differential scenarios, prover contracts; never published), `examples/` and
   the CLI share: `spec` holds its shape, `prover` reads and checks it, the
   engines translate it, the CLI finds it. A change to that interface
   touches all of them at once, which is the exception the two-package rule
-  allows for a shared interface; the boundary itself does not move.
+  allows for a shared interface; the boundary itself does not move. The
+  subset reader is shared the same way: a type the reader learns to read
+  reaches every engine's emitter in the same change, which takes it or
+  restricts the module to what it takes.
 
 ## Spec language, invariants and refines
 
@@ -809,16 +812,24 @@ tactic script, and maps Lean's diagnostics back to properties. The subset
 is specified operationally by the contract corpus
 (`corpus/prover-contracts`: functions with known outcomes, provable, given
 up on, and outside the subset) and widens one characterised class at a
-time. Today it is: exported functions over `number`, `boolean` and
+time. Today the subset is: exported functions over `number`, `boolean` and
 `string` (a union of string literals reads as `string`: the proof covers
-every string, more than the type admits), returning those or a record type
-(`interface` or object `type`) declared in the module; bodies of `const`
-bindings, `if` with early returns and `return`; expressions from `+ - *`
-on integers and `+` joining two strings, comparisons on integers and
-`===`/`!==` on any one type, `&& || !`, the conditional operator, string
-literals (escapes decoded; a lone surrogate has no Lean character and is
-refused), record literals, field reads and calls to the module's own
-functions. Ordering strings is refused: JavaScript compares UTF-16 code
+every string, more than the type admits), record types (`interface` or
+object `type`) declared in the module, nullable types (`T | null`) and
+tagged unions of records declared as type aliases (a union needs a tag, a
+literal-typed field every member has with a different literal in each),
+returning any of those; bodies of `const` bindings, `if` with early
+returns and `return`; expressions from `+ - *` on numbers and `+` joining
+two strings, comparisons on numbers, `===`/`!==` on any one primitive
+type and against `null` (which narrows the name it tests in the branch it
+guards, so a field read on a nullable is in the subset only there),
+`&& || !`, the conditional operator, string literals (escapes decoded; a
+lone surrogate has no Lean character and is refused), record literals
+(a union member's by its tag), field reads (on a union, a field every
+member has: its tag), `Number.isInteger`, and calls to the module's own
+functions. Of these the Lean engine takes everything but the nullable
+types and the unions, which the SMT engine takes first; a function using
+them is `unsupported` for Lean, as is a caller of one. Ordering strings is refused: JavaScript compares UTF-16 code
 units, Lean characters, and the two disagree beyond the basic plane. A function outside the subset, or one calling such a function,
 is `UNKNOWN` (`unsupported`) with the construct and the line, and the rest
 of the module still goes through; a record type outside it makes the
@@ -880,8 +891,10 @@ like Lean. It models what the Lean engine assumes away: `number` is the
 IEEE double (the floating-point theory, so `NaN`, the infinities, `-0` and
 the integers past 2^53 are in every binder's domain), `string` is a
 sequence of 16-bit code units (so `length` and ordering are JavaScript's),
-records and tagged unions are algebraic datatypes and `null` a
-constructor. Budgets are the solver's resource limit, never wall-clock
+records and tagged unions are algebraic datatypes (a constructor per
+member), a nullable type an option datatype with `null` its `none`, and a
+name narrowed by a null check is bound to the option's value in the branch
+the check guards. Budgets are the solver's resource limit, never wall-clock
 time, so the same input gives the same outcome on every machine, and
 exhausting it is `gave_up`. `unsat` is `PROVEN` with the engine's models
 as assumptions. `sat` gives a model, which is a candidate counterexample,

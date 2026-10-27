@@ -18,3 +18,8 @@ export const sendCodeIff = forall(decideAccess, {
   ensures: (status) =>
     (decideAccess(status) === "send_code") === (status === "invited" || status === "active"),
 });
+// Planted false claim: a locked challenge is refused whatever the guess matches.
+export const admitsWhenNotNull = forall(admit, {
+  when: (c) => c !== null,
+  ensures: (c, matches) => admit(c, matches).ok === matches,
+});

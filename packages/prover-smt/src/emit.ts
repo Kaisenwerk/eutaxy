@@ -3,12 +3,15 @@
  * reads it. `number` is the IEEE double (the floating-point theory, so
  * NaN, the infinities and -0 are in every binder's domain and `===` is
  * `fp.eq`, as in JavaScript), `string` a sequence of 16-bit code units,
- * a record a datatype with one constructor, `boolean` Bool. Each property
- * is one script: the definitions, the binders as constants with what
- * their TypeScript types say beyond their sorts, the precondition
- * asserted, the claim's negation asserted, `check-sat`; an `unsat` is a
- * proof, a model is a candidate counterexample. Values in Z3's models are
- * decoded back to JavaScript values by this module too.
+ * `boolean` Bool, a record a datatype with one constructor, a tagged
+ * union a datatype with one constructor per member, a nullable type an
+ * option datatype (`none`, `some`), with a name narrowed by a null check
+ * bound to its value in the branch the check guards. Each property is one
+ * script: the definitions, the binders as constants with what their
+ * TypeScript types say beyond their sorts, the precondition asserted, the
+ * claim's negation asserted, `check-sat`; an `unsat` is a proof, a model
+ * is a candidate counterexample. Values in Z3's models are decoded back to
+ * JavaScript values by this module too.
  */
 
 import {
@@ -22,6 +25,7 @@ import {
   type SubsetType,
   type TypeContext,
   typeOf,
+  type UnionType,
 } from "@eutaxy/prover/reader";
 import { type Arrow, describeType, type Property, type SpecType } from "@eutaxy/spec";
 
@@ -38,14 +42,45 @@ export function symbol(name: string): string {
 /** TypeScript names as SMT symbols that cannot clash with each other or with the theories' names. */
 export const ident = {
   fn: (name: string) => symbol(`f_${name}`),
+  /** The datatype of a record that is no union member, or of a union. */
   record: (name: string) => symbol(`R_${name}`),
   constructor: (name: string) => symbol(`mk_${name}`),
   // A dot, which no TypeScript identifier holds, so selectors of different records never coincide.
   field: (record: string, field: string) => symbol(`fld.${record}.${field}`),
   variable: (name: string) => symbol(`v_${name}`),
+  /** The option datatype over a sort, and its constructors and selector. */
+  option: (base: string) => symbol(`Opt.${base}`),
+  none: (base: string) => symbol(`none.${base}`),
+  some: (base: string) => symbol(`some.${base}`),
+  val: (base: string) => symbol(`val.${base}`),
 };
 
-export function sort(t: SubsetType): string {
+/** The short name a sort has inside option names: `Opt.F64`, `Opt.R_X`. */
+export function sortName(t: SubsetType, module: SubsetModule): string {
+  switch (t.kind) {
+    case "int":
+      return "F64";
+    case "bool":
+      return "Bool";
+    case "string":
+      return "Str";
+    case "record":
+      return ident.record(unionOf(t.name, module) ?? t.name);
+    case "union":
+      return ident.record(t.name);
+    case "nullable":
+      return ident.option(sortName(t.inner, module));
+    case "null":
+      return fail("null has no sort of its own");
+  }
+}
+
+/** The union a record is a member of, by the record's name. */
+function unionOf(record: string, module: SubsetModule): string | undefined {
+  return module.records.find((r) => r.name === record)?.union;
+}
+
+export function sort(t: SubsetType, module: SubsetModule): string {
   switch (t.kind) {
     case "int":
       return F64;
@@ -54,20 +89,19 @@ export function sort(t: SubsetType): string {
     case "string":
       return STR;
     case "record":
-      return ident.record(t.name);
+    case "union":
+    case "nullable":
+      return sortName(t, module);
+    case "null":
+      return fail("null has no sort of its own");
   }
 }
 
-export function emitRecord(r: RecordType): string {
-  const fields = r.fields.map((f) => ` (${ident.field(r.name, f.name)} ${sort(f.type)})`).join("");
-  return `(declare-datatype ${ident.record(r.name)} ((${ident.constructor(r.name)}${fields})))`;
-}
-
-/** A constructor applied: a bare symbol when the record has no fields. */
-function construct(record: string, values: readonly string[]): string {
+/** A constructor applied: a bare symbol when there are no arguments. */
+function construct(name: string, values: readonly string[]): string {
   return values.length === 0
-    ? ident.constructor(record)
-    : `(${ident.constructor(record)} ${values.join(" ")})`;
+    ? ident.constructor(name)
+    : `(${ident.constructor(name)} ${values.join(" ")})`;
 }
 
 /** A double as a floating-point literal. */
@@ -99,11 +133,14 @@ export function stringTerm(s: string): string {
 interface Env {
   readonly module: SubsetModule;
   readonly ctx: TypeContext;
+  /** Each node's type per scope, computed once: emission asks for types at every level. */
+  readonly types: WeakMap<Expr, Map<string, SubsetType>>;
 }
 
 function env(module: SubsetModule): Env {
   return {
     module,
+    types: new WeakMap(),
     ctx: {
       records: new Map(module.records.map((r) => [r.name, r])),
       signatures: new Map(
@@ -122,9 +159,74 @@ function isIntegerTerm(x: string): string {
   return `(and (not (fp.isNaN ${x})) (not (fp.isInfinite ${x})) (fp.eq ${x} (fp.roundToIntegral RTZ ${x})))`;
 }
 
-/** A term of the expression's type. */
-export function term(e: Expr, scope: ReadonlyMap<string, SubsetType>, env: Env): string {
-  const t = (x: Expr) => term(x, scope, env);
+/** The members of a union, as records, in declaration order. */
+function membersOf(union: string, env: Env): RecordType[] {
+  const u = env.module.unions.find((x) => x.name === union) ?? fail(`no union ${union}`);
+  return u.members.map((m) => env.ctx.records.get(m.record) ?? fail(`no record ${m.record}`));
+}
+
+const tester = (constructorSymbol: string): string =>
+  constructorSymbol.startsWith("|")
+    ? `|is-${constructorSymbol.slice(1)}`
+    : `is-${constructorSymbol}`;
+
+/** `===` of two terms of a type, as JavaScript has it. */
+function sameAs(a: string, b: string, t: SubsetType, env: Env): string {
+  switch (t.kind) {
+    case "int":
+      return `(fp.eq ${a} ${b})`;
+    case "bool":
+    case "string":
+      return `(= ${a} ${b})`;
+    case "nullable": {
+      const base = sortName(t.inner, env.module);
+      return `(ite (and (${tester(ident.some(base))} ${a}) (${tester(ident.some(base))} ${b})) ${sameAs(`(${ident.val(base)} ${a})`, `(${ident.val(base)} ${b})`, t.inner, env)} (and (${tester(ident.none(base))} ${a}) (${tester(ident.none(base))} ${b})))`;
+    }
+    case "record":
+    case "union":
+    case "null":
+      return fail("=== on records compares references in JavaScript; compare their fields instead");
+  }
+}
+
+/**
+ * A term of the expression's type, or of `expected` where one is given:
+ * `null` and a non-null value become the option's constructors where a
+ * nullable is expected, and a member record is already of its union's sort.
+ */
+export function term(
+  e: Expr,
+  scope: ReadonlyMap<string, SubsetType>,
+  env: Env,
+  expected?: SubsetType,
+): string {
+  const t = (x: Expr, want?: SubsetType) => term(x, scope, env, want);
+  // A node's type depends on the scope it is typed in (narrowing), so the memo is keyed by both.
+  const typed = (x: Expr): SubsetType => {
+    const key = JSON.stringify([...scope]);
+    let byScope = env.types.get(x);
+    if (!byScope) {
+      byScope = new Map();
+      env.types.set(x, byScope);
+    }
+    let found = byScope.get(key);
+    if (!found) {
+      found = typeOf(x, scope, env.ctx, fail);
+      byScope.set(key, found);
+    }
+    return found;
+  };
+  // A value where `want` is expected: a conditional, a let or a narrowing produce the expected sort
+  // themselves; anything else is wrapped in `some` when a nullable is wanted and the value is not one.
+  const coerce = (x: Expr, want: SubsetType): string => {
+    if (x.kind === "cond" || x.kind === "let" || x.kind === "narrow" || x.kind === "null")
+      return t(x, want);
+    const actual = typed(x);
+    const inner = t(x, want);
+    if (want.kind === "nullable" && actual.kind !== "nullable" && actual.kind !== "null")
+      return `(${ident.some(sortName(want.inner, env.module))} ${inner})`;
+    return inner;
+  };
   switch (e.kind) {
     case "int":
       return numberTerm(Number(e.value));
@@ -132,8 +234,19 @@ export function term(e: Expr, scope: ReadonlyMap<string, SubsetType>, env: Env):
       return e.value ? "true" : "false";
     case "string":
       return stringTerm(e.value);
+    case "null":
+      if (expected?.kind !== "nullable") fail("null where no nullable type is expected");
+      return ident.none(sortName(expected.inner, env.module));
     case "var":
       return ident.variable(e.name);
+    case "narrow": {
+      const nt = scope.get(e.name);
+      if (nt?.kind !== "nullable") fail(`${e.name} is narrowed but is not a nullable`);
+      const base = sortName(nt.inner, env.module);
+      const inner = new Map(scope);
+      inner.set(e.name, nt.inner);
+      return `(let ((${ident.variable(e.name)} (${ident.val(base)} ${ident.variable(e.name)}))) ${term(e.body, inner, env, expected)})`;
+    }
     case "neg":
       return `(fp.neg ${t(e.operand)})`;
     case "not":
@@ -141,68 +254,97 @@ export function term(e: Expr, scope: ReadonlyMap<string, SubsetType>, env: Env):
     case "isInteger":
       return isIntegerTerm(t(e.operand));
     case "binary": {
-      const lt = typeOf(e.left, scope, env.ctx, fail);
-      const l = t(e.left);
-      const r = t(e.right);
+      const lt = typed(e.left);
+      const rt = typed(e.right);
       switch (e.op) {
         case "+":
-          return lt.kind === "string" ? `(seq.++ ${l} ${r})` : `(fp.add RNE ${l} ${r})`;
+          return lt.kind === "string"
+            ? `(seq.++ ${t(e.left)} ${t(e.right)})`
+            : `(fp.add RNE ${t(e.left)} ${t(e.right)})`;
         case "-":
-          return `(fp.sub RNE ${l} ${r})`;
+          return `(fp.sub RNE ${t(e.left)} ${t(e.right)})`;
         case "*":
-          return `(fp.mul RNE ${l} ${r})`;
+          return `(fp.mul RNE ${t(e.left)} ${t(e.right)})`;
         case "<":
-          return `(fp.lt ${l} ${r})`;
+          return `(fp.lt ${t(e.left)} ${t(e.right)})`;
         case "<=":
-          return `(fp.leq ${l} ${r})`;
+          return `(fp.leq ${t(e.left)} ${t(e.right)})`;
         case ">":
-          return `(fp.gt ${l} ${r})`;
+          return `(fp.gt ${t(e.left)} ${t(e.right)})`;
         case ">=":
-          return `(fp.geq ${l} ${r})`;
+          return `(fp.geq ${t(e.left)} ${t(e.right)})`;
         case "===":
         case "!==": {
-          // === on objects compares references in JavaScript; a datatype's = would compare the fields.
-          if (lt.kind === "record")
-            fail(
-              `${e.op} on records compares references in JavaScript; compare their fields instead`,
-            );
-          const eq = lt.kind === "int" ? `(fp.eq ${l} ${r})` : `(= ${l} ${r})`;
+          let eq: string;
+          if (lt.kind === "null" || rt.kind === "null") {
+            // Against null: whether the nullable side is none.
+            const side = lt.kind === "null" ? e.right : e.left;
+            const st = lt.kind === "null" ? rt : lt;
+            if (st.kind !== "nullable")
+              fail("a comparison with null of something that is not nullable");
+            eq = `(${tester(ident.none(sortName(st.inner, env.module)))} ${t(side)})`;
+          } else if (lt.kind === "nullable" && rt.kind !== "nullable") {
+            const base = sortName(lt.inner, env.module);
+            eq = `(and (${tester(ident.some(base))} ${t(e.left)}) ${sameAs(`(${ident.val(base)} ${t(e.left)})`, t(e.right), lt.inner, env)})`;
+          } else if (rt.kind === "nullable" && lt.kind !== "nullable") {
+            const base = sortName(rt.inner, env.module);
+            eq = `(and (${tester(ident.some(base))} ${t(e.right)}) ${sameAs(t(e.left), `(${ident.val(base)} ${t(e.right)})`, rt.inner, env)})`;
+          } else eq = sameAs(t(e.left), t(e.right), lt, env);
           return e.op === "===" ? eq : `(not ${eq})`;
         }
         case "&&":
-          return `(and ${l} ${r})`;
+          return `(and ${t(e.left)} ${t(e.right)})`;
         case "||":
-          return `(or ${l} ${r})`;
+          return `(or ${t(e.left)} ${t(e.right)})`;
       }
       break;
     }
-    case "cond":
-      return `(ite ${t(e.test)} ${t(e.ifTrue)} ${t(e.ifFalse)})`;
-    case "call":
-      return e.args.length === 0
-        ? ident.fn(e.callee)
-        : `(${ident.fn(e.callee)} ${e.args.map(t).join(" ")})`;
+    case "cond": {
+      // Both branches of one sort: the expected one, or what the branches share.
+      const want = expected ?? typed(e);
+      return `(ite ${t(e.test)} ${coerce(e.ifTrue, want)} ${coerce(e.ifFalse, want)})`;
+    }
+    case "call": {
+      const sig = env.ctx.signatures.get(e.callee) ?? fail(`no signature for ${e.callee}`);
+      const args = e.args.map((a, i) =>
+        coerce(a, (sig.params[i] as (typeof sig.params)[number]).type),
+      );
+      return args.length === 0 ? ident.fn(e.callee) : `(${ident.fn(e.callee)} ${args.join(" ")})`;
+    }
     case "field": {
-      const o = typeOf(e.object, scope, env.ctx, fail);
+      const o = typed(e.object);
+      const obj = t(e.object);
+      if (o.kind === "union") {
+        // The field every member has: read from whichever member the value is.
+        const members = membersOf(o.name, env);
+        return members.reduceRight<string | undefined>((rest, m) => {
+          const read = `(${ident.field(m.name, e.field)} ${obj})`;
+          return rest === undefined
+            ? read
+            : `(ite (${tester(ident.constructor(m.name))} ${obj}) ${read} ${rest})`;
+        }, undefined) as string;
+      }
       if (o.kind !== "record") fail(`field ${e.field} read from a ${o.kind}`);
-      return `(${ident.field(o.name, e.field)} ${t(e.object)})`;
+      return `(${ident.field(o.name, e.field)} ${obj})`;
     }
     case "record": {
-      const type = typeOf(e, scope, env.ctx, fail);
+      const type = typed(e);
       if (type.kind !== "record") fail("a record literal of no record type");
       const rec = env.ctx.records.get(type.name) ?? fail(`no record ${type.name}`);
       // Fields in the declaration's order, whatever order the literal wrote them in.
       const values = rec.fields.map((f) => {
         const given =
           e.fields.find((x) => x.name === f.name) ?? fail(`${type.name} literal without ${f.name}`);
-        return t(given.value);
+        return coerce(given.value, f.type);
       });
       return construct(type.name, values);
     }
     case "let": {
       const inner = new Map(scope);
-      inner.set(e.name, typeOf(e.value, scope, env.ctx, fail));
-      return `(let ((${ident.variable(e.name)} ${t(e.value)})) ${term(e.body, inner, env)})`;
+      const bound = e.type ?? typed(e.value);
+      inner.set(e.name, bound);
+      const value = e.type ? coerce(e.value, e.type) : t(e.value);
+      return `(let ((${ident.variable(e.name)} ${value})) ${term(e.body, inner, env, expected)})`;
     }
   }
 }
@@ -210,16 +352,82 @@ export function term(e: Expr, scope: ReadonlyMap<string, SubsetType>, env: Env):
 export function emitFunction(f: SubsetFunction, module: SubsetModule): string {
   const e = env(module);
   const scope = new Map(f.params.map((p) => [p.name, p.type]));
-  const params = f.params.map((p) => `(${ident.variable(p.name)} ${sort(p.type)})`).join(" ");
-  return `(define-fun ${ident.fn(f.name)} (${params}) ${sort(f.returns)}\n  ${term(f.body, scope, e)})`;
+  const params = f.params
+    .map((p) => `(${ident.variable(p.name)} ${sort(p.type, module)})`)
+    .join(" ");
+  // The body as a value of the declared return type (`coerce` is local to `term`; the rule is repeated).
+  const body = (() => {
+    const b = f.body;
+    if (b.kind === "cond" || b.kind === "let" || b.kind === "narrow" || b.kind === "null")
+      return term(b, scope, e, f.returns);
+    const actual = typeOf(b, scope, e.ctx, fail);
+    const inner = term(b, scope, e, f.returns);
+    return f.returns.kind === "nullable" && actual.kind !== "nullable" && actual.kind !== "null"
+      ? `(${ident.some(sortName(f.returns.inner, module))} ${inner})`
+      : inner;
+  })();
+  return `(define-fun ${ident.fn(f.name)} (${params}) ${sort(f.returns, module)}\n  ${body})`;
+}
+
+/**
+ * An option sort over every sort the module could mention: the primitives,
+ * every record that is no union member, every union. A body may join a
+ * value with `null` in a `const` that no signature shows, so nothing is
+ * left to discovery.
+ */
+function optionSorts(module: SubsetModule): Map<string, SubsetType> {
+  const out = new Map<string, SubsetType>();
+  const bases: SubsetType[] = [
+    { kind: "int" },
+    { kind: "bool" },
+    { kind: "string" },
+    ...module.records
+      .filter((r) => r.union === undefined)
+      .map((r): SubsetType => ({ kind: "record", name: r.name })),
+    ...module.unions.map((u): SubsetType => ({ kind: "union", name: u.name })),
+  ];
+  for (const b of bases) out.set(sortName(b, module), b);
+  return out;
+}
+
+/**
+ * Every datatype in one declaration, so records, unions and options may
+ * refer to one another in any order: a record is one constructor, a union
+ * one per member, an option `none` and `some` over its base sort.
+ */
+export function emitDatatypes(module: SubsetModule): string {
+  const plain = module.records.filter((r) => r.union === undefined);
+  const unions = module.unions;
+  const options = optionSorts(module);
+  const names = [
+    ...plain.map((r) => ident.record(r.name)),
+    ...unions.map((u) => ident.record(u.name)),
+    ...[...options.keys()].map((base) => ident.option(base)),
+  ];
+  if (names.length === 0) return "";
+  const constructorOf = (r: RecordType): string =>
+    `(${ident.constructor(r.name)}${r.fields.map((f) => ` (${ident.field(r.name, f.name)} ${sort(f.type, module)})`).join("")})`;
+  const bodies = [
+    ...plain.map((r) => `(${constructorOf(r)})`),
+    ...unions.map(
+      (u) =>
+        `(${u.members.map((m) => constructorOf(module.records.find((r) => r.name === m.record) as RecordType)).join(" ")})`,
+    ),
+    ...[...options].map(
+      ([base, inner]) =>
+        `((${ident.none(base)}) (${ident.some(base)} (${ident.val(base)} ${sort(inner, module)})))`,
+    ),
+  ];
+  return `(declare-datatypes (${names.map((n) => `(${n} 0)`).join(" ")}) (${bodies.join(" ")}))`;
 }
 
 /**
  * The subset type a binder ranges over, or `OutsideSubset`: `number` is
  * the double, a union of string literals is a string (constrained to the
  * literals in the script), a record is the module's datatype of that
- * name. Nullable types, tagged unions, bigint and what the reader could
- * not read are outside for now.
+ * name, `T | null` the option over `T`, a union of records the declared
+ * union whose members match. Bigint and what the reader could not read
+ * are outside.
  */
 export function binderType(name: string, t: SpecType, module: SubsetModule): SubsetType {
   switch (t.kind) {
@@ -236,15 +444,27 @@ export function binderType(name: string, t: SpecType, module: SubsetModule): Sub
     case "bigint":
       fail(`binder ${name} over bigint: the subset has no bigint`);
       break;
-    case "union":
-      if (t.members.every((m) => m.kind === "literal" && typeof m.value === "string"))
-        return { kind: "string" };
-      if (t.members.some((m) => m.kind === "null" || m.kind === "undefined"))
-        fail(
-          `binder ${name} over ${describeType(t)}: nullable types are not in the engine's subset yet`,
-        );
-      fail(`binder ${name} over ${describeType(t)}: unions are not in the engine's subset yet`);
-      break;
+    case "union": {
+      const nulls = t.members.filter((m) => m.kind === "null");
+      if (t.members.some((m) => m.kind === "undefined"))
+        fail(`binder ${name} over ${describeType(t)}: undefined is not in the subset (null is)`);
+      const rest = t.members.filter((m) => m.kind !== "null");
+      let inner: SubsetType;
+      if (rest.every((m) => m.kind === "literal" && typeof m.value === "string"))
+        inner = { kind: "string" };
+      else if (rest.every((m) => m.kind === "literal" && typeof m.value === "boolean"))
+        inner = { kind: "bool" };
+      else if (rest.length === 1) inner = binderType(name, rest[0] as SpecType, module);
+      else if (rest.every((m) => m.kind === "record")) {
+        const union = findUnion(rest as readonly Extract<SpecType, { kind: "record" }>[], module);
+        if (!union)
+          fail(
+            `binder ${name} over ${describeType(t)}: no union the module declares has these members`,
+          );
+        inner = { kind: "union", name: union.name };
+      } else fail(`binder ${name} over ${describeType(t)}: a union the subset does not read`);
+      return nulls.length > 0 ? { kind: "nullable", inner } : inner;
+    }
     case "record":
       if (t.name !== undefined && module.records.some((r) => r.name === t.name))
         return { kind: "record", name: t.name };
@@ -261,26 +481,126 @@ export function binderType(name: string, t: SpecType, module: SubsetModule): Sub
   }
 }
 
+/** The declared union whose members carry these tags with these fields, if any. */
+function findUnion(
+  members: readonly Extract<SpecType, { kind: "record" }>[],
+  module: SubsetModule,
+): UnionType | undefined {
+  return module.unions.find((u) => {
+    if (u.members.length !== members.length) return false;
+    return u.members.every((m) => {
+      const rec = module.records.find((r) => r.name === m.record);
+      if (!rec) return false;
+      return members.some(
+        (sm) =>
+          sm.fields.length === rec.fields.length &&
+          sm.fields.every((f) => rec.fields.some((rf) => rf.name === f.name)) &&
+          sm.fields.some(
+            (f) => f.name === u.tag && f.type.kind === "literal" && f.type.value === m.tag,
+          ),
+      );
+    });
+  });
+}
+
+/**
+ * What a binder's subset type says that its sort does not: a member record
+ * is its own constructor, a union's members carry their tags, and so on
+ * into fields and under an option. Undefined when the sort says it all.
+ */
+export function wellFormed(
+  target: string,
+  t: SubsetType,
+  module: SubsetModule,
+): string | undefined {
+  switch (t.kind) {
+    case "int":
+    case "bool":
+    case "string":
+    case "null":
+      return undefined;
+    case "nullable": {
+      const base = sortName(t.inner, module);
+      const inner = wellFormed(`(${ident.val(base)} ${target})`, t.inner, module);
+      return inner === undefined
+        ? undefined
+        : `(or (${tester(ident.none(base))} ${target}) ${inner})`;
+    }
+    case "record": {
+      const rec = module.records.find((r) => r.name === t.name);
+      if (!rec) return undefined;
+      const parts: string[] = [];
+      if (rec.union !== undefined) parts.push(`(${tester(ident.constructor(rec.name))} ${target})`);
+      for (const f of rec.fields) {
+        const read = `(${ident.field(rec.name, f.name)} ${target})`;
+        if (f.literal !== undefined)
+          parts.push(
+            typeof f.literal === "string"
+              ? `(= ${read} ${stringTerm(f.literal)})`
+              : `(= ${read} ${f.literal ? "true" : "false"})`,
+          );
+        const inner = wellFormed(read, f.type, module);
+        if (inner !== undefined) parts.push(inner);
+      }
+      return parts.length === 0
+        ? undefined
+        : parts.length === 1
+          ? parts[0]
+          : `(and ${parts.join(" ")})`;
+    }
+    case "union": {
+      const u = module.unions.find((x) => x.name === t.name);
+      if (!u) return undefined;
+      const cases = u.members.map((m) => {
+        const inner = wellFormed(target, { kind: "record", name: m.record }, module);
+        return inner ?? `(${tester(ident.constructor(m.record))} ${target})`;
+      });
+      return `(or ${cases.join(" ")})`;
+    }
+  }
+}
+
 /**
  * What a binder's TypeScript type says beyond its sort: a literal, or a
- * union of literals, admits only those values, which the solver must be
- * told, since the sort alone would let it pick any string or number.
+ * union of literals (with or without null), admits only those values,
+ * which the solver must be told, since the sort alone would let it pick
+ * any string or number.
  */
-export function domainConstraint(symbolName: string, t: SpecType): string | undefined {
-  const literal = (v: string | number | boolean): string =>
+export function domainConstraint(
+  symbolName: string,
+  t: SpecType,
+  subset: SubsetType,
+  module: SubsetModule,
+): string | undefined {
+  const literal = (target: string, v: string | number | boolean): string =>
     typeof v === "string"
-      ? `(= ${symbolName} ${stringTerm(v)})`
+      ? `(= ${target} ${stringTerm(v)})`
       : typeof v === "number"
-        ? `(fp.eq ${symbolName} ${numberTerm(v)})`
-        : `(= ${symbolName} ${v ? "true" : "false"})`;
-  if (t.kind === "literal") return literal(t.value);
-  if (t.kind === "union" && t.members.every((m) => m.kind === "literal")) {
-    const alternatives = t.members.map((m) =>
-      literal((m as { value: string | number | boolean }).value),
-    );
-    return alternatives.length === 1 ? alternatives[0] : `(or ${alternatives.join(" ")})`;
+        ? `(fp.eq ${target} ${numberTerm(v)})`
+        : `(= ${target} ${v ? "true" : "false"})`;
+  const literals: (string | number | boolean)[] = [];
+  let withNull = false;
+  if (t.kind === "literal") literals.push(t.value);
+  else if (t.kind === "union") {
+    for (const m of t.members) {
+      if (m.kind === "literal") literals.push(m.value);
+      else if (m.kind === "null") withNull = true;
+      else return undefined;
+    }
+  } else return undefined;
+  if (literals.length === 0) return undefined;
+  const over = (target: string) => {
+    const alternatives = literals.map((v) => literal(target, v));
+    return alternatives.length === 1
+      ? (alternatives[0] as string)
+      : `(or ${alternatives.join(" ")})`;
+  };
+  if (subset.kind === "nullable") {
+    const base = sortName(subset.inner, module);
+    const some = `(and (${tester(ident.some(base))} ${symbolName}) ${over(`(${ident.val(base)} ${symbolName})`)})`;
+    return withNull ? `(or (${tester(ident.none(base))} ${symbolName}) ${some})` : some;
   }
-  return undefined;
+  return over(symbolName);
 }
 
 /** An arrow of the spec file as a Bool term over the binders, its own parameter names renamed to theirs. */
@@ -319,10 +639,11 @@ function arrowTerm(
 
 /** The definitions every script of the module starts with: datatypes, then functions, callees first. */
 export function prelude(module: SubsetModule): string {
+  const datatypes = emitDatatypes(module);
   return [
     ";; Generated by Eutaxy's first-party SMT engine from the module and its spec file.",
     "(set-option :produce-models true)",
-    ...module.records.map(emitRecord),
+    ...(datatypes === "" ? [] : [datatypes]),
     ...module.functions.map((f) => emitFunction(f, module)),
   ].join("\n");
 }
@@ -353,9 +674,19 @@ export function propertyScript(property: Property, module: SubsetModule): Proper
   }));
   const lines = [
     prelude(module),
-    ...binders.map((b) => `(declare-const ${b.symbol} ${sort(b.type)})`),
+    ...binders.map((b) => `(declare-const ${b.symbol} ${sort(b.type, module)})`),
+    // What a binder's subset type says that its sort does not: which member of a union, which tags.
+    ...binders.flatMap((b) => {
+      const c = wellFormed(b.symbol, b.type, module);
+      return c === undefined ? [] : [`(assert ${c})`];
+    }),
     ...property.binders.flatMap((b, i) => {
-      const c = domainConstraint((binders[i] as (typeof binders)[number]).symbol, b.type);
+      const c = domainConstraint(
+        (binders[i] as (typeof binders)[number]).symbol,
+        b.type,
+        types[i] as SubsetType,
+        module,
+      );
       return c === undefined ? [] : [`(assert ${c})`];
     }),
     ...(property.when ? [`(assert ${arrowTerm(property.when, "when", property, types, e)})`] : []),
@@ -379,6 +710,18 @@ export function value(v: unknown, t: SubsetType, module: SubsetModule): string {
     case "string":
       if (typeof v !== "string") fail(`${String(v)} is not a string`);
       return stringTerm(v);
+    case "nullable": {
+      const base = sortName(t.inner, module);
+      return v === null ? ident.none(base) : `(${ident.some(base)} ${value(v, t.inner, module)})`;
+    }
+    case "union": {
+      const u = module.unions.find((x) => x.name === t.name) ?? fail(`no union ${t.name}`);
+      if (typeof v !== "object" || v === null) fail(`${String(v)} is not a ${t.name}`);
+      const tag = (v as Record<string, unknown>)[u.tag];
+      const member =
+        u.members.find((m) => m.tag === tag) ?? fail(`${t.name} value with tag ${String(tag)}`);
+      return value(v, { kind: "record", name: member.record }, module);
+    }
     case "record": {
       const rec = module.records.find((r) => r.name === t.name) ?? fail(`no record ${t.name}`);
       if (typeof v !== "object" || v === null) fail(`${String(v)} is not a record`);
@@ -390,6 +733,8 @@ export function value(v: unknown, t: SubsetType, module: SubsetModule): string {
         rec.fields.map((f) => value(o[f.name], f.type, module)),
       );
     }
+    case "null":
+      return fail("a value of type null");
   }
 }
 
@@ -401,6 +746,18 @@ export function equal(a: string, b: string, t: SubsetType, module: SubsetModule)
     case "bool":
     case "string":
       return `(= ${a} ${b})`;
+    case "nullable": {
+      const base = sortName(t.inner, module);
+      return `(ite (and (${tester(ident.some(base))} ${a}) (${tester(ident.some(base))} ${b})) ${equal(`(${ident.val(base)} ${a})`, `(${ident.val(base)} ${b})`, t.inner, module)} (and (${tester(ident.none(base))} ${a}) (${tester(ident.none(base))} ${b})))`;
+    }
+    case "union": {
+      const u = module.unions.find((x) => x.name === t.name) ?? fail(`no union ${t.name}`);
+      const cases = u.members.map(
+        (m) =>
+          `(and (${tester(ident.constructor(m.record))} ${a}) (${tester(ident.constructor(m.record))} ${b}) ${equal(a, b, { kind: "record", name: m.record }, module)})`,
+      );
+      return `(or ${cases.join(" ")})`;
+    }
     case "record": {
       const rec = module.records.find((r) => r.name === t.name) ?? fail(`no record ${t.name}`);
       const fields = rec.fields.map((f) =>
@@ -414,6 +771,8 @@ export function equal(a: string, b: string, t: SubsetType, module: SubsetModule)
       if (fields.length === 0) return "true";
       return fields.length === 1 ? (fields[0] as string) : `(and ${fields.join(" ")})`;
     }
+    case "null":
+      return fail("equality at type null");
   }
 }
 
@@ -519,6 +878,21 @@ export function decode(x: SExpr, t: SubsetType, module: SubsetModule): unknown {
     }
     case "string":
       return decodeString(x);
+    case "nullable": {
+      const base = sortName(t.inner, module);
+      if (x === ident.none(base)) return null;
+      if (Array.isArray(x) && x[0] === ident.some(base) && x.length === 2)
+        return decode(x[1] as SExpr, t.inner, module);
+      throw new UnreadableModel(`not a ${describeSubset(t)}: ${show(x)}`);
+    }
+    case "union": {
+      const u = module.unions.find((y) => y.name === t.name);
+      if (!u) throw new UnreadableModel(`no union ${t.name}`);
+      const head = Array.isArray(x) ? x[0] : x;
+      const member = u.members.find((m) => ident.constructor(m.record) === head);
+      if (!member) throw new UnreadableModel(`not a ${t.name}: ${show(x)}`);
+      return decode(x, { kind: "record", name: member.record }, module);
+    }
     case "record": {
       const rec = module.records.find((r) => r.name === t.name);
       if (!rec) throw new UnreadableModel(`no record ${t.name}`);
@@ -535,7 +909,17 @@ export function decode(x: SExpr, t: SubsetType, module: SubsetModule): unknown {
       });
       return out;
     }
+    case "null":
+      throw new UnreadableModel("a value of type null");
   }
+}
+
+function describeSubset(t: SubsetType): string {
+  return t.kind === "nullable"
+    ? `${describeSubset(t.inner)} | null`
+    : t.kind === "record" || t.kind === "union"
+      ? t.name
+      : t.kind;
 }
 
 function decodeString(x: SExpr): string {

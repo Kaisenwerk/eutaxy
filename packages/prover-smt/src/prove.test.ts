@@ -183,3 +183,31 @@ describe("review findings, with the pinned Z3", () => {
     },
   );
 });
+
+describe("nullable types and tagged unions, with the pinned Z3", () => {
+  test.skipIf("unavailable" in z3 && !required)(
+    "a union's tags are known to the solver, so a claim about them is proved",
+    async () => {
+      const source =
+        'export interface A { readonly t: "a"; readonly n: number }\nexport interface B { readonly t: "b"; readonly n: number }\nexport type U = A | B;\nexport function tagOf(u: U): string { return u.t; }\nexport function pick(b: boolean): number | null { return b ? 1 : null; }';
+      writeFileSync(join(dir, "u.ts"), source);
+      const specPath = join(dir, "u.props.ts");
+      writeFileSync(
+        specPath,
+        'import { forall } from "@eutaxy/spec";\nimport { pick, tagOf } from "./u.ts";\nexport const tags = forall(tagOf, { ensures: (u) => tagOf(u) === "a" || tagOf(u) === "b" });\nexport const picked = forall(pick, { ensures: (b) => (pick(b) === null) === !b });',
+      );
+      const specs = readSpecs({
+        module: source,
+        spec: readFileSync(specPath, "utf8"),
+        moduleSpecifiers: ["./u.ts"],
+      });
+      expect(specs.errors).toEqual([]);
+      const r = await proveModule({ source, specs, specPath });
+      expect(Object.fromEntries(r.results.map((x) => [x.property, x.outcome.kind]))).toEqual({
+        tags: "PROVEN",
+        picked: "PROVEN",
+      });
+    },
+    120_000,
+  );
+});

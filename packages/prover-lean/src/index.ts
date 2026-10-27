@@ -27,6 +27,7 @@ export {
   engineName,
   type LeanModuleProofs,
   leanProver,
+  leanTakes,
   type ModuleProofs,
   type ProofOutcome,
   type PropertyProof,

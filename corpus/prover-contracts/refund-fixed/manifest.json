@@ -1,6 +1,14 @@
 {
   "description": "The refund core, fixed: all three properties and termination are proved.",
   "expect": {
+    "tested": {
+      "decideRefund": {
+        "withinCaptured": "REFUTED",
+        "addsTheAmount": "REFUTED",
+        "fullRefundAllowed": "TESTED",
+        "decideRefundTotal": "unsupported"
+      }
+    },
     "lean": {
       "decideRefund": {
         "withinCaptured": "PROVEN",
