@@ -15,10 +15,11 @@ runs in workerd.
 
 Specs on a Worker's pure core functions are checked on the inputs the
 simulator actually passed them, then on generated inputs, and proved in
-Lean 4 when `--prover lean` is given; `refines` checks that the Worker
-carries out the core's decisions on state that was still current.
+Lean 4 (`--prover lean`) or with Z3 (`--prover smt`) when an engine is
+named; `refines` checks that the Worker carries out the core's decisions
+on state that was still current.
 
-**Status: 0.6, early.** The design is in
+**Status: 0.7, early.** The design is in
 [docs/design.md](docs/design.md); the phases and their gates are in
 [docs/roadmap.md](docs/roadmap.md).
 
@@ -29,8 +30,10 @@ A scenario gets `VIOLATED`, `BOUNDED` or `UNSUPPORTED`. A spec gets
 those and on inputs generated from the property's domains), `REFUTED`
 (with the input that breaks it, shrunk), `PROVEN` (for every input, by a
 named engine; `eutaxy check --prover lean` runs Eutaxy's own
-TypeScript-to-Lean 4 engine, which proves properties of a pure subset over
-integers, booleans, strings and records today), `CONFLICT` (engines disagree) or
+TypeScript-to-Lean 4 engine and `--prover smt` its TypeScript-to-SMT-LIB
+engine over Z3, which between them prove properties of a pure subset over
+integers, booleans, strings and records today, and over doubles, nullable
+types and tagged unions with the SMT engine only), `CONFLICT` (engines disagree) or
 `UNKNOWN`. Every verdict carries what it rests on:
 seed and bounds, or the inputs it was checked on, and the assumptions.
 Nothing is ever reported as verified when it was only explored or sampled:
@@ -40,7 +43,8 @@ Nothing is ever reported as verified when it was only explored or sampled:
 
 ```
 packages/   spec, core, engine, cloudflare, aws, prover, prover-lean,
-            prover-thales, prover-lemmascript, report, cli, eutaxy
+            prover-smt, prover-thales, prover-lemmascript, report, cli,
+            eutaxy
 docs/       design and roadmap
 ```
 
@@ -54,7 +58,11 @@ declares exactly that, and pnpm links nothing else.
 pnpm add -D eutaxy vitest @cloudflare/vitest-plugin
 ```
 
-Requires Node 24. Published as `eutaxy` on npm.
+Requires Node 24. Published as `eutaxy` on npm. A `--prover` engine also
+needs its pinned toolchain on the machine: Lean through
+[elan](https://elan.lean-lang.org) for `lean`, Z3 5.3.2 on the PATH for
+`smt`. Without it that engine's properties are `UNKNOWN` (unavailable),
+with how to install it.
 
 ## Checking a Worker
 
