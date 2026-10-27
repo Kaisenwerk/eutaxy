@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.7.0](https://github.com/Kaisenwerk/eutaxy/compare/v0.6.0...v0.7.0) (2026-10-27)
+
+
+### ⚠ BREAKING CHANGES
+
+* **spec:** Lemma annotations in JSDoc are no longer read. Move each module's `@ensures{name} forall (x: int) { … }` into a spec file beside it, `<module>.props.ts`, as `export const name = forall(f, { when, ensures })`: the binders are `f`'s parameters, a root implication becomes `when`, a `nat` or interval guard becomes a comparison in `when` (with `Number.isInteger(n)` where the claim is about integers, since `number` is the double type), a regex guard becomes `/re/.test(s)` in `when`, `∧ ∨ ¬ ↔ ≡` become `&& || ! ===`, and `@total` becomes `export const fTotal = total(f)`. `@throws` has no replacement. The property's name is its export name, so `eutaxy check` reports `withinCaptured` where it reported `within-captured`. `eutaxy` no longer exports `parseProperty`, `printProperty`, `extractSpecs`, `LemmaSyntaxError` or the `Formula`, `Domain` and `Guard` types; `eutaxy/spec` exports `forall`, `total` and `isSpec`. A `Prover` now takes the module's `specs` beside its source.
+
+### Features
+
+* **prover-smt:** the SMT engine over Z3, doubles and code-unit strings, models replayed ([fb7e5a0](https://github.com/Kaisenwerk/eutaxy/commit/fb7e5a0514379bd243ead01d3a85b74df10c397c))
+* **prover:** nullable types and tagged unions in the subset, proved by the SMT engine ([0ba068f](https://github.com/Kaisenwerk/eutaxy/commit/0ba068f5a0d8aea6c03f153e488a00494d0573e0))
+* **spec:** specs in TypeScript, in a spec file beside the module ([ec8553a](https://github.com/Kaisenwerk/eutaxy/commit/ec8553af4e78f98c340061dc696782e26414ed41))
+
 ## [0.6.0](https://github.com/Kaisenwerk/eutaxy/compare/v0.5.1...v0.6.0) (2026-10-26)
 
 
