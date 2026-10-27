@@ -14,7 +14,10 @@ const platformWith = (h: typeof handler) =>
   createCloudflarePlatform({ env, handler: h, schemas: { DB: schema } });
 
 test(`reaches ${manifest.expect.verdict} on ${manifest.expect.invariant}`, async () => {
-  const verdict = await check(scenario, platformWith(handler), { seed: "corpus" });
+  const verdict = await check(scenario, platformWith(handler), {
+    seed: "corpus",
+    budgetMs: 30_000,
+  });
   expect(verdict.kind, renderText(verdict)).toBe(manifest.expect.verdict);
   if (verdict.kind !== "VIOLATED") return;
   expect(verdict.violation.invariant).toBe(manifest.expect.invariant);
@@ -34,7 +37,10 @@ test(`reaches ${manifest.expect.verdict} on ${manifest.expect.invariant}`, async
 });
 
 test("a lease shorter than the resend window holds with the caller's real delays", async () => {
-  const verdict = await check(scenario, platformWith(chatWebhook(60_000)), { seed: "corpus" });
+  const verdict = await check(scenario, platformWith(chatWebhook(60_000)), {
+    seed: "corpus",
+    budgetMs: 30_000,
+  });
   expect(verdict.kind, renderText(verdict)).toBe("BOUNDED");
 });
 
@@ -45,6 +51,7 @@ test("the same short lease is lost again when resends come without delays", asyn
     platformWith(chatWebhook(60_000)),
     {
       seed: "corpus",
+      budgetMs: 30_000,
     },
   );
   expect(verdict.kind, renderText(verdict)).toBe("VIOLATED");

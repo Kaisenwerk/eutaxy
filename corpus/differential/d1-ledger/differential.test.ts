@@ -22,6 +22,7 @@ test("the end-of-run snapshot feeds state invariants", async () => {
     seed: "fault-free",
     maxRuns: 1,
     faultProbability: 0,
+    budgetMs: 30_000,
   });
   expect(verdict.kind).toBe("BOUNDED");
   const snapshot = verdict.kind === "BOUNDED" ? null : verdict;

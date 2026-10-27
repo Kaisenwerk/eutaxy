@@ -14,8 +14,12 @@ test("proxied and raw runs agree on every attempt", async () => {
 
 test("charged once and every order charged, with faults at the fetch and the ack", async () => {
   const platform = createCloudflarePlatform({ env, handler, schemas: {} });
-  await expectHolds(scenario, platform, { seed: "faults", maxRuns: 40 });
-  const verdict = await check(scenario, platform, { seed: "faults", maxRuns: 40 });
+  await expectHolds(scenario, platform, { seed: "faults", maxRuns: 40, budgetMs: 30_000 });
+  const verdict = await check(scenario, platform, {
+    seed: "faults",
+    maxRuns: 40,
+    budgetMs: 30_000,
+  });
   expect(verdict.kind).toBe("BOUNDED");
   expect(verdict.assumptions.join("\n")).toContain("dedupeBy");
 });

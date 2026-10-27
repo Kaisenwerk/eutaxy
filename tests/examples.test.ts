@@ -10,8 +10,13 @@ const bin = join(root, "packages", "eutaxy", "bin", "eutaxy.mjs");
 const example = join(root, "examples", "payments-queue");
 
 function eutaxy(args: readonly string[]): { status: number; stdout: string; stderr: string } {
+  // The run cap, not the runner's clock, decides a check here (see tests/cli.test.ts).
+  const withBudget =
+    args[0] === "check" && args.length > 1 && !args.includes("--budget-ms")
+      ? [...args, "--budget-ms", "30000"]
+      : args;
   try {
-    const stdout = execFileSync(process.execPath, [bin, ...args], {
+    const stdout = execFileSync(process.execPath, [bin, ...withBudget], {
       cwd: example,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],

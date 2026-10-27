@@ -20,7 +20,7 @@ async function checkObserved(
   const observer = observeCore(domain, ["decideRefund"]);
   try {
     const platform = createCloudflarePlatform({ env, handler: worker, schemas: { DB: schema } });
-    const verdict = await check(spec, platform, { seed: "corpus" });
+    const verdict = await check(spec, platform, { seed: "corpus", budgetMs: 30_000 });
     return { verdict, inputs: observer.calls.map((c) => [...c.args]) };
   } finally {
     observer.restore();
@@ -65,7 +65,7 @@ test("one refund at a time, the shell follows the core, and the core sees what i
 
 test("without the core observed, refines says no decision was recorded rather than passing", async () => {
   const platform = createCloudflarePlatform({ env, handler, schemas: { DB: schema } });
-  const verdict = await check(scenario, platform, { seed: "corpus" });
+  const verdict = await check(scenario, platform, { seed: "corpus", budgetMs: 30_000 });
   expect(verdict.kind).toBe("VIOLATED");
   if (verdict.kind === "VIOLATED") expect(verdict.violation.keys).toEqual(["no_decision"]);
 });

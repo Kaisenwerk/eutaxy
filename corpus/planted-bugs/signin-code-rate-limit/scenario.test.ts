@@ -12,7 +12,7 @@ import handler from "./worker.ts";
 
 test(`reaches ${manifest.expect.verdict} on ${manifest.expect.invariant}`, async () => {
   const platform = createCloudflarePlatform({ env, handler, schemas: { DB: schema } });
-  const verdict = await check(scenario, platform, { seed: "corpus" });
+  const verdict = await check(scenario, platform, { seed: "corpus", budgetMs: 30_000 });
   expect(verdict.kind, renderText(verdict)).toBe(manifest.expect.verdict);
   if (verdict.kind !== "VIOLATED") return;
   expect(verdict.violation.invariant).toBe(manifest.expect.invariant);
@@ -41,6 +41,6 @@ test("one request at a time, the limit holds", async () => {
     ...scenario,
     bounds: { ...scenario.bounds, maxConcurrentInvocations: 1 },
   };
-  const verdict = await check(sequential, platform, { seed: "corpus" });
+  const verdict = await check(sequential, platform, { seed: "corpus", budgetMs: 30_000 });
   expect(verdict.kind, renderText(verdict)).toBe("BOUNDED");
 });

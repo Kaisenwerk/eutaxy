@@ -14,7 +14,7 @@ const platformFor = (bindings: object) =>
   createCloudflarePlatform({ env: bindings, handler, schemas: {}, durableObjects: cloudflareTest });
 
 test(`reaches ${manifest.expect.verdict} on ${manifest.expect.invariant}`, async () => {
-  const verdict = await check(scenario, platformFor(env), { seed: "corpus" });
+  const verdict = await check(scenario, platformFor(env), { seed: "corpus", budgetMs: 30_000 });
   expect(verdict.kind, renderText(verdict)).toBe(manifest.expect.verdict);
   if (verdict.kind !== "VIOLATED") return;
   expect(verdict.violation.invariant).toBe(manifest.expect.invariant);
@@ -39,27 +39,41 @@ test(`reaches ${manifest.expect.verdict} on ${manifest.expect.invariant}`, async
 
 test("one withdrawal at a time, the balance holds", async () => {
   const sequential = { ...scenario, bounds: { ...scenario.bounds, maxConcurrentInvocations: 1 } };
-  const verdict = await check(sequential, platformFor(env), { seed: "corpus" });
+  const verdict = await check(sequential, platformFor(env), { seed: "corpus", budgetMs: 30_000 });
   expect(verdict.kind, renderText(verdict)).toBe("BOUNDED");
 });
 
 test("the fixed wallet reserves before paying out and holds with two in flight", async () => {
   const bindings = { WALLET: (env as unknown as { FIXED_WALLET: unknown }).FIXED_WALLET };
-  const verdict = await check(scenario, platformFor(bindings), { seed: "corpus" });
+  const verdict = await check(scenario, platformFor(bindings), {
+    seed: "corpus",
+    budgetMs: 30_000,
+  });
   expect(verdict.kind, renderText(verdict)).toBe("BOUNDED");
 });
 
 test("a wallet that holds the input gate with blockConcurrencyWhile holds too", async () => {
   const bindings = { WALLET: (env as unknown as { GATED_WALLET: unknown }).GATED_WALLET };
-  const verdict = await check(scenario, platformFor(bindings), { seed: "corpus" });
+  const verdict = await check(scenario, platformFor(bindings), {
+    seed: "corpus",
+    budgetMs: 30_000,
+  });
   expect(verdict.kind, renderText(verdict)).toBe("BOUNDED");
 });
 
 test("exhaustive exploration finds the race, and every schedule of the fixed wallet holds", async () => {
-  const buggy = await check(scenario, platformFor(env), { seed: "corpus", exhaustive: true });
+  const buggy = await check(scenario, platformFor(env), {
+    seed: "corpus",
+    budgetMs: 30_000,
+    exhaustive: true,
+  });
   expect(buggy.kind, renderText(buggy)).toBe("VIOLATED");
   const bindings = { WALLET: (env as unknown as { FIXED_WALLET: unknown }).FIXED_WALLET };
-  const fixed = await check(scenario, platformFor(bindings), { seed: "corpus", exhaustive: true });
+  const fixed = await check(scenario, platformFor(bindings), {
+    seed: "corpus",
+    budgetMs: 30_000,
+    exhaustive: true,
+  });
   expect(fixed.kind, renderText(fixed)).toBe("BOUNDED");
   expect(fixed.reached.exhaustive?.complete).toBe(true);
 });

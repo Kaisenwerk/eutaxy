@@ -14,7 +14,7 @@ const platformFor = (bindings: object) =>
   createCloudflarePlatform({ env: bindings, handler, schemas: {}, durableObjects: cloudflareTest });
 
 test(`reaches ${manifest.expect.verdict} on ${manifest.expect.invariant}`, async () => {
-  const verdict = await check(scenario, platformFor(env), { seed: "corpus" });
+  const verdict = await check(scenario, platformFor(env), { seed: "corpus", budgetMs: 30_000 });
   expect(verdict.kind, renderText(verdict)).toBe(manifest.expect.verdict);
   if (verdict.kind !== "VIOLATED") return;
   expect(verdict.violation.invariant).toBe(manifest.expect.invariant);
@@ -34,6 +34,9 @@ test(`reaches ${manifest.expect.verdict} on ${manifest.expect.invariant}`, async
 test("the fixed pool returns the existing lease to the retry and holds", async () => {
   // The same Worker and scenario, with POOL bound to the fixed class.
   const bindings = { POOL: (env as unknown as { FIXED_POOL: unknown }).FIXED_POOL };
-  const verdict = await check(scenario, platformFor(bindings), { seed: "corpus" });
+  const verdict = await check(scenario, platformFor(bindings), {
+    seed: "corpus",
+    budgetMs: 30_000,
+  });
   expect(verdict.kind, renderText(verdict)).toBe("BOUNDED");
 });

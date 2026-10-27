@@ -10,8 +10,14 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const bin = join(root, "packages", "eutaxy", "bin", "eutaxy.mjs");
 
 function eutaxy(args: readonly string[]): { status: number; stdout: string; stderr: string } {
+  // A check's time budget is wall-clock: on a slow runner the default would end exploration before the
+  // violating run and turn a VIOLATED into a BOUNDED, so the run cap, not the clock, decides here.
+  const withBudget =
+    args[0] === "check" && args.length > 1 && !args.includes("--budget-ms")
+      ? [...args, "--budget-ms", "30000"]
+      : args;
   try {
-    const stdout = execFileSync(process.execPath, [bin, ...args], {
+    const stdout = execFileSync(process.execPath, [bin, ...withBudget], {
       cwd: root,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
