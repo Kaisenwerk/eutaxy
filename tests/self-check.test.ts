@@ -19,6 +19,7 @@ interface Report {
 
 function report(dir: string): { status: number; report: Report } {
   let stdout: string;
+  let stderr = "";
   let status = 0;
   try {
     stdout = execFileSync(process.execPath, [bin, "report", dir, "--json"], {
@@ -27,11 +28,16 @@ function report(dir: string): { status: number; report: Report } {
       stdio: ["ignore", "pipe", "pipe"],
     });
   } catch (err) {
-    const e = err as { status?: number; stdout?: string };
+    const e = err as { status?: number; stdout?: string; stderr?: string };
     status = e.status ?? 1;
     stdout = e.stdout ?? "";
+    stderr = e.stderr ?? "";
   }
-  return { status, report: JSON.parse(stdout) as Report };
+  try {
+    return { status, report: JSON.parse(stdout) as Report };
+  } catch {
+    throw new Error(`eutaxy report ${dir} printed no report (exit ${status}):\n${stderr}`);
+  }
 }
 
 const atLeastChecked = new Set(["CHECKED", "TESTED", "PROVEN"]);
@@ -49,12 +55,14 @@ describe("the self-check", () => {
       "referencesOrphans",
       "refinesOnState",
       "refinesViolation",
+      "rowMatchesEach",
       "uniqueShared",
     ]);
     for (const s of checkers) expect(atLeastChecked.has(s.kind), s.property).toBe(true);
   }, 120_000);
 
   // Under packages/core so the copy resolves @eutaxy/spec; .probe-* is gitignored.
+  // Each bug is one line, found by its text (after `after`, when the line occurs more than once).
   test.each([
     {
       bug: "the selector ignores the effect kind",
@@ -64,17 +72,31 @@ describe("the self-check", () => {
       refuted: ["atMostOnceMatchesReference", "atLeastOnceMatchesReference"],
     },
     {
-      bug: "a repeated key is forgotten after its second occurrence",
+      bug: "the selector's lower bound is inverted",
+      file: "selectors.ts",
+      from: 'if (typeof v !== "number" || v < min) return false;',
+      to: 'if (typeof v !== "number" || v > min) return false;',
+      refuted: ["atMostOnceMatchesReference", "atLeastOnceMatchesReference"],
+    },
+    {
+      bug: "atMostOncePerKey compares raw values, so the string 1 and the number 1 collide",
       file: "invariants.ts",
-      from: "        seen.set(k, e.seq);\n      }\n      return null;",
-      to: "        if (seen.size > 1) seen.set(k, e.seq);\n      }\n      return null;",
+      from: "const k = keyOf(e, inv.key);",
+      to: "const k = String(getPath(e.payload, inv.key));",
       refuted: ["atMostOnceMatchesReference"],
     },
     {
-      bug: "repeated expected keys are reported once",
+      bug: "atLeastOnce reports repeated expected keys once",
       file: "invariants.ts",
       from: ".filter((k) => !present.has(k));",
       to: ".filter((k, i, all) => !present.has(k) && all.indexOf(k) === i);",
+      refuted: ["atLeastOnceMatchesReference"],
+    },
+    {
+      bug: "atLeastOnce gives no evidence",
+      file: "invariants.ts",
+      from: "evidence: selected.map((e) => e.seq),",
+      to: "evidence: [],",
       refuted: ["atLeastOnceMatchesReference"],
     },
     {
@@ -89,13 +111,22 @@ describe("the self-check", () => {
       file: "state.ts",
       from: "return v === undefined || !jsonEqual(v, condition.value);",
       to: "return v !== undefined && !jsonEqual(v, condition.value);",
-      refuted: ["everyRowMatchesReference"],
+      refuted: ["rowMatchesMatchesReference"],
     },
     {
       bug: "unique counts null values",
       file: "state.ts",
-      from: "    if (v === undefined || v === null) continue;\n    const k = canonicalJson(v);\n    counts.set",
-      to: "    if (v === undefined) continue;\n    const k = canonicalJson(v);\n    counts.set",
+      after: "export function checkUnique",
+      from: "if (v === undefined || v === null) continue;",
+      to: "if (v === undefined) continue;",
+      refuted: ["uniqueMatchesReference"],
+    },
+    {
+      bug: "unique reads its path as a column, not a dot path",
+      file: "state.ts",
+      after: "export function checkUnique",
+      from: "const v = getPath(r as JsonValue, inv.path);",
+      to: "const v = r[inv.path];",
       refuted: ["uniqueMatchesReference"],
     },
     {
@@ -103,6 +134,13 @@ describe("the self-check", () => {
       file: "state.ts",
       from: "if (!missing.includes(k)) missing.push(k);",
       to: "missing.push(k);",
+      refuted: ["impliesMatchesReference"],
+    },
+    {
+      bug: "implies ignores its state query's filter",
+      file: "state.ts",
+      from: "const rows = queryRows(log, inv.state);",
+      to: "const rows = queryRows(log, { ...inv.state, where: [] });",
       refuted: ["impliesMatchesReference"],
     },
     {
@@ -120,6 +158,13 @@ describe("the self-check", () => {
       refuted: ["refinesMatchesReference"],
     },
     {
+      bug: "refines carries out the earliest decision and rests on the earliest read",
+      file: "refines.ts",
+      from: "if (e.invocation === invocation && pick(e)) found = e;",
+      to: "if (e.invocation === invocation && pick(e)) found ??= e;",
+      refuted: ["refinesMatchesReference", "refinesOnStateMatchesReference"],
+    },
+    {
       bug: "refines counts the invocation's own write as stale",
       file: "refines.ts",
       from: "e.invocation !== effect.invocation &&",
@@ -135,14 +180,27 @@ describe("the self-check", () => {
     },
   ])(
     "a planted bug is refuted: $bug",
-    ({ file, from, to, refuted }) => {
+    ({
+      file,
+      after,
+      from,
+      to,
+      refuted,
+    }: {
+      file: string;
+      after?: string;
+      from: string;
+      to: string;
+      refuted: string[];
+    }) => {
       const probe = join(root, "packages/core", `.probe-self-check-${process.pid}`);
       cpSync(join(root, "packages/core/src"), probe, { recursive: true });
       try {
         const path = join(probe, file);
         const source = readFileSync(path, "utf8");
-        expect(source, "the planted bug's anchor").toContain(from);
-        writeFileSync(path, source.replace(from, to));
+        const at = source.indexOf(from, after === undefined ? 0 : source.indexOf(after));
+        expect(at, "the planted bug's line").toBeGreaterThanOrEqual(0);
+        writeFileSync(path, source.slice(0, at) + to + source.slice(at + from.length));
         const r = report(probe);
         expect(r.status).toBe(1);
         const kinds = Object.fromEntries(r.report.specs.map((s) => [s.property, s.kind]));

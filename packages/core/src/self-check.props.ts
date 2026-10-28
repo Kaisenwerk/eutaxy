@@ -1,12 +1,14 @@
 /**
  * Eutaxy's own invariant checkers against naive reference implementations,
  * written here as directly as the invariants read in the design, with no
- * code shared with the checkers. `eutaxy report packages/core/src` runs
- * them; v0.8's gate needs each at CHECKED or better.
+ * code shared with the checkers: each reference computes the keys and the
+ * evidence (sequence numbers) a checker must report. `eutaxy report
+ * packages/core/src` runs them; v0.8's gate needs each at CHECKED or better.
  */
 
 import { forall } from "@eutaxy/spec";
 import {
+  allConditions,
   anchored,
   atLeastOnceMissing,
   atMostOnceDuplicate,
@@ -18,32 +20,49 @@ import {
   type DrawnStep,
   everyRowFailing,
   impliesMissing,
+  type Key,
   type Pick,
+  type RowPath,
   readerOf,
   referencesOrphans,
   refinesOnState,
   refinesViolation,
+  rowMatchesEach,
   rowOf,
   stepsOf,
   targetOf,
   uniqueShared,
 } from "./self-check.ts";
 
+type Found = { keys: string[]; evidence: number[] } | null;
+
+const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+
+/** JSON with every object's keys sorted, at any depth. */
+function canonical(v: unknown): string {
+  if (v === null || typeof v !== "object") return JSON.stringify(v);
+  if (Array.isArray(v)) return `[${v.map(canonical).join(",")}]`;
+  const entries = Object.entries(v).sort(([a], [b]) => (a < b ? -1 : 1));
+  return `{${entries.map(([k, x]) => `${JSON.stringify(k)}:${canonical(x)}`).join(",")}}`;
+}
+
+// Delivery invariants.
+
 const selected = (e: DrawnEffect, s: DrawnSelector): boolean =>
   e.target === s.target &&
   (s.op === null || e.op === s.op) &&
   (s.kind === null || e.kind === s.kind) &&
-  (s.status === null || e.status === s.status);
+  (s.status === null || e.status === s.status) &&
+  (s.minSize === null || e.size >= s.minSize);
 
 /** The first effect, in order, whose key an earlier selected effect already had; with that earlier one. */
-function referenceDuplicate(effects: readonly DrawnEffect[], s: DrawnSelector) {
+function referenceDuplicate(effects: readonly DrawnEffect[], s: DrawnSelector): Found {
   for (let j = 0; j < effects.length; j++) {
     const b = effects[j] as DrawnEffect;
     if (!selected(b, s) || b.key === null) continue;
     for (let i = 0; i < j; i++) {
       const a = effects[i] as DrawnEffect;
-      if (selected(a, s) && a.key !== null && a.key === b.key)
-        return { key: JSON.stringify(b.key), first: i, second: j };
+      if (selected(a, s) && a.key === b.key) return { keys: [canonical(b.key)], evidence: [i, j] };
     }
   }
   return null;
@@ -53,46 +72,49 @@ export const atMostOnceMatchesReference = forall(atMostOnceDuplicate, {
   // The anchor is any effect's index; past the end it cycles.
   when: (_effects, at) => Number.isInteger(at) && at >= 0,
   ensures: (effects, at, mask) =>
-    JSON.stringify(atMostOnceDuplicate(effects, at, mask)) ===
-    JSON.stringify(referenceDuplicate(effects, anchored(effects, at, mask))),
+    same(
+      atMostOnceDuplicate(effects, at, mask),
+      referenceDuplicate(effects, anchored(effects, at, mask)),
+    ),
 });
 
-/** Every expected key, in order and with repeats, that no selected effect carries. */
+/** Every expected key, in order and with repeats, that no selected effect carries; every selected effect as evidence. */
 function referenceMissing(
   effects: readonly DrawnEffect[],
   s: DrawnSelector,
-  expected: readonly ("1" | 1 | "b")[],
-): string[] {
-  return expected
-    .filter((k) => !effects.some((e) => selected(e, s) && e.key === k))
-    .map((k) => JSON.stringify(k));
+  expected: readonly Key[],
+): Found {
+  const missing = expected.filter((k) => !effects.some((e) => selected(e, s) && e.key === k));
+  if (missing.length === 0) return null;
+  const evidence = effects.flatMap((e, i) => (selected(e, s) ? [i] : []));
+  return { keys: missing.map(canonical), evidence };
 }
 
 export const atLeastOnceMatchesReference = forall(atLeastOnceMissing, {
-  // The anchor is any effect's index; past the end it cycles.
   when: (_effects, at) => Number.isInteger(at) && at >= 0,
   ensures: (effects, at, mask, expected) =>
-    JSON.stringify(atLeastOnceMissing(effects, at, mask, expected)) ===
-    JSON.stringify(referenceMissing(effects, anchored(effects, at, mask), expected)),
+    same(
+      atLeastOnceMissing(effects, at, mask, expected),
+      referenceMissing(effects, anchored(effects, at, mask), expected),
+    ),
 });
 
-// State invariants. A row's key is its JSON with the columns sorted; the values here are strings,
-// numbers and null, so === is JSON equality.
+// State invariants. Values are strings, numbers, null and the `meta` record: === compares the
+// scalars, `canonical` the rows.
 
-type Value = string | number | null;
-type Row = { readonly [column: string]: Value };
+type Row = { readonly [column: string]: unknown };
 
-function canonical(v: Value | Row): string {
-  if (v === null || typeof v !== "object") return JSON.stringify(v);
-  return JSON.stringify(Object.fromEntries(Object.entries(v).sort(([a], [b]) => (a < b ? -1 : 1))));
-}
-
-/** The rows of a table in the last snapshot of the target; undefined when it has none. */
-function lastRows(snapshots: readonly DrawnSnapshot[], pick: Pick, table: "t" | "u") {
+/** The last snapshot of the target: its rows of the table and its sequence number (after `offset` effects). */
+function lastSnapshot(
+  snapshots: readonly DrawnSnapshot[],
+  pick: Pick,
+  table: "t" | "u",
+  offset = 0,
+): { rows: Row[]; seq: number } | undefined {
   const target = targetOf(snapshots, pick);
   for (let i = snapshots.length - 1; i >= 0; i--) {
     const s = snapshots[i] as DrawnSnapshot;
-    if (s.target === target) return s[table].map((r) => rowOf(r) as Row);
+    if (s.target === target) return { rows: s[table].map((r) => rowOf(r) as Row), seq: offset + i };
   }
   return undefined;
 }
@@ -121,18 +143,32 @@ function holds(row: Row, drawn: DrawnCondition): boolean {
   }
 }
 
-const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
-const filtered = (where: DrawnCondition | null) => (r: Row) => where === null || holds(r, where);
+export const rowMatchesMatchesReference = forall(rowMatchesEach, {
+  ensures: (row) =>
+    same(
+      rowMatchesEach(row),
+      allConditions.map((c) => holds(rowOf(row) as Row, c)),
+    ),
+});
+
+const kept = (where: DrawnCondition | null) => (r: Row) => where === null || holds(r, where);
+
+/** The value at a row path: a column, or the tag under meta. */
+function valueAt(row: Row, path: RowPath): unknown {
+  return path === "meta.tag" ? (row["meta"] as { tag: unknown }).tag : row[path];
+}
+
+const noSnapshot: Found = { keys: [], evidence: [] };
 
 export const everyRowMatchesReference = forall(everyRowFailing, {
   ensures: (snapshots, target, where, conditions) => {
-    const rows = lastRows(snapshots, target, "t");
-    let expected: string[] | null = [];
-    if (rows !== undefined) {
-      const failing = rows
-        .filter(filtered(where))
+    const s = lastSnapshot(snapshots, target, "t");
+    let expected: Found = noSnapshot;
+    if (s !== undefined) {
+      const failing = s.rows
+        .filter(kept(where))
         .filter((r) => !conditions.every((c) => holds(r, c)));
-      expected = failing.length === 0 ? null : failing.map(canonical);
+      expected = failing.length === 0 ? null : { keys: failing.map(canonical), evidence: [s.seq] };
     }
     return same(everyRowFailing(snapshots, target, where, conditions), expected);
   },
@@ -140,17 +176,18 @@ export const everyRowMatchesReference = forall(everyRowFailing, {
 
 export const uniqueMatchesReference = forall(uniqueShared, {
   ensures: (snapshots, target, where, path) => {
-    const rows = lastRows(snapshots, target, "t");
-    let expected: string[] | null = [];
-    if (rows !== undefined) {
-      const values = rows
-        .filter(filtered(where))
-        .filter((r) => path in r && r[path] !== null)
-        .map((r) => canonical(r[path] as Value));
+    const s = lastSnapshot(snapshots, target, "t");
+    let expected: Found = noSnapshot;
+    if (s !== undefined) {
+      const values = s.rows
+        .filter(kept(where))
+        .map((r) => valueAt(r, path))
+        .filter((v) => v !== undefined && v !== null)
+        .map(canonical);
       const shared = values.filter(
         (v, i) => values.indexOf(v) === i && values.lastIndexOf(v) !== i,
       );
-      expected = shared.length === 0 ? null : shared;
+      expected = shared.length === 0 ? null : { keys: shared, evidence: [s.seq] };
     }
     return same(uniqueShared(snapshots, target, where, path), expected);
   },
@@ -158,48 +195,55 @@ export const uniqueMatchesReference = forall(uniqueShared, {
 
 export const impliesMatchesReference = forall(impliesMissing, {
   when: (_effects, at) => Number.isInteger(at) && at >= 0,
-  ensures: (effects, at, mask, snapshots, target, column) => {
-    const rows = lastRows(snapshots, target, "t");
-    let expected: string[] | null = [];
-    if (rows !== undefined) {
-      const present = rows.filter((r) => column in r).map((r) => canonical(r[column] as Value));
-      const s = anchored(effects, at, mask);
+  ensures: (effects, at, mask, snapshots, target, where, column) => {
+    const s = lastSnapshot(snapshots, target, "t", effects.length);
+    let expected: Found = noSnapshot;
+    if (s !== undefined) {
+      const present = s.rows
+        .filter(kept(where))
+        .filter((r) => column in r)
+        .map((r) => canonical(r[column]));
+      const sel = anchored(effects, at, mask);
       const missing: string[] = [];
-      for (const e of effects) {
-        if (!selected(e, s) || e.key === null) continue;
+      const evidence: number[] = [];
+      effects.forEach((e, i) => {
+        if (!selected(e, sel) || e.key === null) return;
         const k = canonical(e.key);
-        if (!present.includes(k) && !missing.includes(k)) missing.push(k);
-      }
-      expected = missing.length === 0 ? null : missing;
+        if (present.includes(k)) return;
+        if (!missing.includes(k)) missing.push(k);
+        evidence.push(i);
+      });
+      expected = missing.length === 0 ? null : { keys: missing, evidence };
     }
-    return same(impliesMissing(effects, at, mask, snapshots, target, column), expected);
+    return same(impliesMissing(effects, at, mask, snapshots, target, where, column), expected);
   },
 });
 
 export const referencesMatchesReference = forall(referencesOrphans, {
   ensures: (snapshots, target, where, path, inTarget, column) => {
-    const rows = lastRows(snapshots, target, "t");
-    const named = lastRows(snapshots, inTarget, "u");
-    let expected: string[] | null = [];
-    if (rows !== undefined && named !== undefined) {
-      const pointedAt = named
+    const s = lastSnapshot(snapshots, target, "t");
+    const named = lastSnapshot(snapshots, inTarget, "u");
+    let expected: Found = noSnapshot;
+    if (s !== undefined && named !== undefined) {
+      const pointedAt = named.rows
         .filter((r) => column in r && r[column] !== null)
-        .map((r) => canonical(r[column] as Value));
+        .map((r) => canonical(r[column]));
       const orphans: string[] = [];
-      for (const r of rows.filter(filtered(where))) {
-        if (!(path in r) || r[path] === null) continue;
-        const k = canonical(r[path] as Value);
+      for (const r of s.rows.filter(kept(where))) {
+        const v = valueAt(r, path);
+        if (v === undefined || v === null) continue;
+        const k = canonical(v);
         if (!pointedAt.includes(k) && !orphans.includes(k)) orphans.push(k);
       }
-      expected = orphans.length === 0 ? null : orphans;
+      expected = orphans.length === 0 ? null : { keys: orphans, evidence: [s.seq, named.seq] };
     }
     return same(referencesOrphans(snapshots, target, where, path, inTarget, column), expected);
   },
 });
 
 // refines, step by step: for each action in order, its invocation's latest decision that did not
-// throw, the latest read before that decision, and any other invocation's write between the read
-// and the action.
+// throw, the latest read before that decision, and the first other invocation's write between the
+// read and the action.
 
 function latest(steps: readonly DrawnStep[], before: number, pick: (s: DrawnStep) => boolean) {
   for (let i = before - 1; i >= 0; i--) if (pick(steps[i] as DrawnStep)) return i;
@@ -211,20 +255,21 @@ function referenceRefines(
   follows: boolean,
   state: boolean,
   keyed: boolean,
-): string[] | null {
+): Found {
   for (let j = 0; j < steps.length; j++) {
     const act = steps[j] as DrawnStep;
     if (act.what !== "act") continue;
     const own = (s: DrawnStep) => s.invocation === act.invocation;
     // A decision that threw decided nothing; the latest one that did not is carried out.
     const d = latest(steps, j, (s) => own(s) && s.what === "decide");
-    if (d < 0) return ["no_decision"];
-    if (follows && (steps[d] as DrawnStep).value !== act.value) return ["not_followed", "value"];
+    if (d < 0) return { keys: ["no_decision"], evidence: [j] };
+    if (follows && (steps[d] as DrawnStep).value !== act.value)
+      return { keys: ["not_followed", "value"], evidence: [d, j] };
     if (!state) continue;
     const r = latest(steps, d, (s) => own(s) && s.what === "read");
-    if (r < 0) return ["no_read"];
+    if (r < 0) return { keys: ["no_read"], evidence: [d, j] };
     const read = steps[r] as DrawnStep;
-    const stale = steps.some(
+    const w = steps.findIndex(
       (s, k) =>
         k > r &&
         k < j &&
@@ -232,7 +277,11 @@ function referenceRefines(
         s.what === "write" &&
         (!keyed || s.value === read.value),
     );
-    if (stale) return ["stale_read", ...(keyed ? [JSON.stringify(read.value)] : [])];
+    if (w >= 0)
+      return {
+        keys: ["stale_read", ...(keyed ? [canonical(read.value)] : [])],
+        evidence: [r, d, w, j],
+      };
   }
   return null;
 }
