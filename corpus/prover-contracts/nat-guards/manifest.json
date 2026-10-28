@@ -4,8 +4,8 @@
     "tested": {
       "withdraw": {
         "neverNegative": "TESTED",
-        "atMostBalance": "TESTED",
-        "exactWhenAffordable": "TESTED"
+        "atMostBalance": "REFUTED",
+        "exactWhenAffordable": "REFUTED"
       },
       "twice": {
         "smallDouble": "TESTED"

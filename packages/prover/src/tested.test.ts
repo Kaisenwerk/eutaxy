@@ -112,8 +112,14 @@ describe("the TESTED rung", () => {
   });
 
   test("the number of inputs is configurable and must be positive", () => {
-    const v = testedRung({ ...input(withinCaptured), inputs: 5 });
-    expect(v).toMatchObject({ kind: "TESTED", inputs: 5 });
+    expect(testedRung({ ...input(withinCaptured), inputs: 150 })).toMatchObject({
+      kind: "TESTED",
+      inputs: 150,
+    });
+    // Every edge inside the claim is tried whatever the budget, so a small one is exceeded.
+    const small = testedRung({ ...input(withinCaptured), inputs: 5 });
+    expect(small).toMatchObject({ kind: "TESTED" });
+    if (small.kind === "TESTED") expect(small.inputs).toBeGreaterThan(5);
     expect(() => testedRung({ ...input(withinCaptured), inputs: 0 })).toThrow(RangeError);
   });
 
@@ -187,6 +193,113 @@ describe("the TESTED rung", () => {
       inputs: 3,
     });
     expect(seen).toEqual(new Set(["invited", "active", null]));
+  });
+});
+
+describe("edge values first", () => {
+  test("binder j starts j places into its edges: false and -0 meet, two numbers differ", () => {
+    const flag: Binder = { name: "flag", type: { kind: "boolean" } };
+    const x: Binder = { name: "x", type: { kind: "number" } };
+    const g = (flag: boolean, x: number) => flag || 1 / x !== Number.NEGATIVE_INFINITY;
+    const claim = forall(g, { ensures: (flag, x) => g(flag, x) });
+    const two: FunctionSpec = {
+      name: "g",
+      params: [
+        { name: "flag", type: flag.type },
+        { name: "x", type: x.type },
+      ],
+      properties: [],
+      line: 1,
+      offset: 0,
+    };
+    for (const seed of ["a", "b", "c", "d", "e", "f"]) {
+      const property: Property = { ...prop("claim", [flag, x]), name: "claim" };
+      expect(testedRung({ module: "m", fn: two, property, spec: claim, seed }), seed).toMatchObject(
+        {
+          kind: "REFUTED",
+        },
+      );
+    }
+  });
+
+  test("however many edges there are, half the input budget still goes to random draws", () => {
+    const members: SpecType[] = Array.from({ length: 200 }, (_, i) => ({
+      kind: "literal",
+      value: `m${i}`,
+    }));
+    const s: Binder = { name: "s", type: { kind: "union", members } };
+    const n: Binder = { name: "n", type: { kind: "number" }, hint: { integer: true } };
+    const h = (_s: string, n: number) => n;
+    // False only at n = 2, which is no edge: the random draws must reach it.
+    const notTwo = forall(h, { ensures: (s, n) => h(s, n) !== 2 });
+    const two: FunctionSpec = {
+      name: "h",
+      params: [
+        { name: "s", type: s.type },
+        { name: "n", type: n.type },
+      ],
+      properties: [],
+      line: 1,
+      offset: 0,
+    };
+    const property: Property = { ...prop("notTwo", [s, n]), name: "notTwo" };
+    const always = forall(h, { ensures: (s, n) => h(s, n) === n });
+    const held = testedRung({ module: "m", fn: two, property, spec: always, seed: "a" });
+    // 400 edge assignments (the union in step and rotated), then 50 random ones.
+    expect(held).toMatchObject({ kind: "TESTED" });
+    if (held.kind === "TESTED") expect(held.inputs).toBeGreaterThanOrEqual(400 + 50);
+    const verdicts = ["a", "b", "c", "d", "e", "f", "g", "h"].map(
+      (seed) => testedRung({ module: "m", fn: two, property, spec: notTwo, seed }).kind,
+    );
+    expect(verdicts).toContain("REFUTED");
+  });
+
+  test("every edge is tried even when there are more of them than the input budget", () => {
+    const members: SpecType[] = Array.from({ length: 101 }, (_, i) => ({
+      kind: "literal",
+      value: i,
+    }));
+    const b: Binder = { name: "x", type: { kind: "union", members } };
+    const pick = (x: number) => x;
+    const notLast = forall(pick, { ensures: (x) => pick(x) !== 100 });
+    const one: FunctionSpec = {
+      name: "pick",
+      params: [{ name: "x", type: b.type }],
+      properties: [],
+      line: 1,
+      offset: 0,
+    };
+    for (const seed of ["a", "b", "c", "d"]) {
+      const property: Property = { ...prop("notLast", [b]), name: "notLast" };
+      const v = testedRung({ module: "m", fn: one, property, spec: notLast, seed });
+      expect(v, seed).toMatchObject({ kind: "REFUTED" });
+    }
+  });
+
+  const n: Binder = { name: "x", type: { kind: "number" } };
+  const onlyX = (name: string): Property => ({ ...prop(name, [n]), name });
+  const one: FunctionSpec = {
+    name: "same",
+    params: [{ name: "x", type: { kind: "number" } }],
+    properties: [],
+    line: 1,
+    offset: 0,
+  };
+  const same = (x: number) => x;
+
+  test("a claim false only on NaN, or only on -0, is refuted under every seed", () => {
+    const reflexive = forall(same, { ensures: (x) => same(x) === x });
+    const signOfZero = forall(same, { ensures: (x) => 1 / same(x) !== Number.NEGATIVE_INFINITY });
+    for (const seed of ["a", "b", "c", "d", "e", "f", "g", "h"]) {
+      for (const [property, spec, witness] of [
+        [onlyX("reflexive"), reflexive, "NaN"],
+        [onlyX("signOfZero"), signOfZero, "-0"],
+      ] as const) {
+        const v = testedRung({ module: "m", fn: one, property, spec, seed });
+        expect(v, `${property.name} with seed ${seed}`).toMatchObject({ kind: "REFUTED" });
+        if (v.kind === "REFUTED") expect(v.counterexample.binders[0]?.value).toBe(witness);
+      }
+    }
   });
 });
 

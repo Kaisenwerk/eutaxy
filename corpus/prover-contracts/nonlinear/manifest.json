@@ -3,7 +3,7 @@
   "expect": {
     "tested": {
       "square": {
-        "squareNonNegative": "TESTED"
+        "squareNonNegative": "REFUTED"
       },
       "triple": {
         "byConstant": "TESTED"

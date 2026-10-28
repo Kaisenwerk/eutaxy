@@ -11,7 +11,13 @@
 import { type Counterexample, type PrngState, type SpecVerdict, seedPrng } from "@eutaxy/core";
 import type { Fn, Forall, FunctionSpec, Property } from "@eutaxy/spec";
 import { evaluate, malformedReason, render } from "./checked.ts";
-import { CannotGenerate, generateAssignment } from "./generate.ts";
+import {
+  CannotGenerate,
+  edgeAssignment,
+  edgeAssignmentCount,
+  edgeLists,
+  generateAssignment,
+} from "./generate.ts";
 import { shrinkRefutation } from "./shrink.ts";
 
 export interface TestedOptions {
@@ -58,10 +64,25 @@ export function testedRung(input: TestedInput): SpecVerdict {
     binders: binders.map((b, i) => ({ name: b.name, value: render(values[i]) })),
     ...(error === undefined ? {} : { error }),
   });
-  for (let draws = 0; held < wanted && draws < wanted * 20; draws++) {
+  // Every edge assignment is tried, however many there are (a union of a hundred literals has a
+  // hundred); then random draws until the budget is met, and at least half of it random, so many
+  // edges never crowd out the values between them.
+  const edges = edgeLists(binders);
+  const edgeTotal = edgeAssignmentCount(edges);
+  const randomWanted = Math.ceil(wanted / 2);
+  let randomHeld = 0;
+  for (
+    let draws = 0;
+    draws < edgeTotal ||
+    ((held < wanted || randomHeld < randomWanted) && draws < edgeTotal + wanted * 20);
+    draws++
+  ) {
     let values: unknown[];
     try {
-      [values, state] = generateAssignment(binders, state);
+      // The edges first, every one of them, then random draws.
+      [values, state] =
+        (draws < edgeTotal ? edgeAssignment(binders, edges, draws, state) : undefined) ??
+        generateAssignment(binders, state);
     } catch (err) {
       if (err instanceof CannotGenerate) return unknown(err.why, err.message);
       throw err;
@@ -86,6 +107,7 @@ export function testedRung(input: TestedInput): SpecVerdict {
       };
     }
     held++;
+    if (draws >= edgeTotal) randomHeld++;
   }
   if (held === 0)
     return unknown(

@@ -11,6 +11,10 @@ export {
 export {
   CannotGenerate,
   conforms,
+  edgeAssignment,
+  edgeAssignmentCount,
+  edgeLists,
+  edgesOf,
   endpointBigInt,
   endpointNumber,
   generate,

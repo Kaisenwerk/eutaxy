@@ -13,7 +13,9 @@ the ladder at `TESTED` when no scenario ran, as in `eutaxy report`). The `CHECKE
 `checkedRung` (one property on the calls the simulator made: the binders
 are the function's parameters, the precondition discarding). The `TESTED`
 rung: `testedRung` (one property on assignments drawn from the parameter
-types with a seed, a refuting one shrunk), `generate`, `generateOf` and
+types with a seed, every edge first (`edgesOf`, `edgeLists`,
+`edgeAssignment`, `edgeAssignmentCount`), then random draws, at least half
+the budget; a refuting one shrunk), `generate`, `generateOf` and
 `shrinkCandidates` (values of a type within its hint: integers, doubles,
 bigints, strings with regex hints walked by `regex-gen.ts`, literals,
 unions, records), `conforms`, `inDomain`. Shared: `evaluate` (one

@@ -218,8 +218,21 @@ passes fewer inputs than one that ends `BOUNDED`.
 parameter types, after the exploration and with its seed, so the same seed
 draws the same assignments on every machine and a verdict carries the seed
 it rests on. Each property derives its own stream from the seed and its
-name, so adding a property does not change what the others see. Draws are
-biased the way bugs are distributed: most numbers are small integers, some
+name, so adding a property does not change what the others see. The first
+assignments are the edges, before any random draw: each binder's edge
+values (the range's ends, zero and one, `NaN`, the infinities and `-0` for
+doubles, `-0` among the integers too, the empty string, both booleans,
+every member of a union, records built from their fields' edges, distinct
+and at most 64 so that nesting does not multiply them), walked side by
+side once in step, so equal edges meet (`Infinity - Infinity`), and once
+rotated, binder `j` starting `j` places in, so binders of one type also
+differ. Every edge of every binder is tried, however many there are (a
+union of a hundred literals tries each); the input budget below then
+applies, at least half of it to random draws, so many edges never crowd
+out the values between them. A claim false on one edge value is thus
+refuted under every seed, while one false only on a combination of edges
+the two walks do not pair rests on the random draws. Random draws then
+follow, biased the way bugs are distributed: most numbers are small integers, some
 are medium or large, a few are the range's ends, and doubles include the
 fractions, the magnitudes and the special values (`NaN`, the infinities,
 `-0`), since `number` is the JavaScript type; integers stay within what a

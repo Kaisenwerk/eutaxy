@@ -5,6 +5,9 @@ import { render } from "./checked.ts";
 import {
   CannotGenerate,
   conforms,
+  edgeAssignment,
+  edgeLists,
+  edgesOf,
   generate,
   inDomain,
   integerBound,
@@ -186,7 +189,145 @@ describe("generate", () => {
   });
 });
 
+describe("edgesOf and edgeAssignment", () => {
+  test("doubles: the specials, within the hint; integers: the bounds and the small ones", () => {
+    const doubles = edgesOf({ kind: "number" }, undefined);
+    for (const v of [Number.NaN, 0, -0, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY])
+      expect(
+        doubles.some((d) => Object.is(d, v)),
+        String(v),
+      ).toBe(true);
+    const nonNegative = edgesOf({ kind: "number" }, { lower: at("0", true) });
+    expect(nonNegative.some((d) => Number.isNaN(d as number))).toBe(false);
+    expect(nonNegative.every((d) => (d as number) >= 0)).toBe(true);
+    expect(
+      edgesOf({ kind: "number" }, { integer: true, lower: at("3", true), upper: at("9", false) }),
+    ).toEqual([3, 8, 4, 7]);
+    expect(edgesOf({ kind: "bigint" }, { lower: at("0", true), upper: at("2", true) })).toEqual([
+      0n,
+      2n,
+      1n,
+    ]);
+    // Number.isInteger(-0) holds, so an integer number binder has -0 among its edges too.
+    expect(edgesOf({ kind: "number" }, { integer: true }).some((v) => Object.is(v, -0))).toBe(true);
+  });
+
+  test("strings within the regex, booleans, null, every member of a union, records field by field", () => {
+    expect(edgesOf({ kind: "string" }, undefined)).toContain("");
+    expect(edgesOf({ kind: "string" }, { regex: { pattern: "^[0-9]+$", flags: "" } })).toEqual([
+      "0",
+    ]);
+    // A regex is tried only on edges as short as its random draws: the 100-character edge would
+    // send a backtracking pattern like this one into exponential time, and this call would not return.
+    expect(edgesOf({ kind: "string" }, { regex: { pattern: "^(a+)+b$", flags: "" } })).toEqual([]);
+    expect(edgesOf({ kind: "boolean" }, undefined)).toEqual([false, true]);
+    const status: SpecType = {
+      kind: "union",
+      members: [
+        { kind: "literal", value: "invited" },
+        { kind: "literal", value: "active" },
+        { kind: "null" },
+      ],
+    };
+    expect(edgesOf(status, undefined)).toEqual(["invited", "active", null]);
+    const rec: SpecType = {
+      kind: "record",
+      fields: [
+        { name: "ok", type: { kind: "boolean" } },
+        { name: "n", type: { kind: "bigint" } },
+      ],
+    };
+    const recs = edgesOf(rec, undefined);
+    // The fields in step, then rotated (field k starting k places in), repeats dropped.
+    const big = edgesOf({ kind: "bigint" }, undefined);
+    expect(recs.length).toBeGreaterThan(big.length);
+    expect(new Set(recs.map((r) => render(r))).size).toBe(recs.length);
+    expect(recs.slice(0, 2)).toEqual([
+      { ok: false, n: big[0] },
+      { ok: true, n: big[1] },
+    ]);
+    expect(recs[big.length]).toEqual({ ok: false, n: big[1] });
+    const span = edgesOf(
+      {
+        kind: "record",
+        fields: [
+          { name: "lo", type: { kind: "number" } },
+          { name: "hi", type: { kind: "number" } },
+        ],
+      },
+      undefined,
+    ) as { lo: number; hi: number }[];
+    // Equal edges meet (Infinity - Infinity), and so do different ones.
+    expect(span.some((r) => r.lo === Number.POSITIVE_INFINITY && r.hi === r.lo)).toBe(true);
+    expect(span.some((r) => Object.is(r.lo, 0) && Object.is(r.hi, -0))).toBe(true);
+    expect(edgesOf({ kind: "unknown", text: "Map<string, number>" }, undefined)).toEqual([]);
+  });
+
+  test("nested records stay bounded: distinct edges only, at most 64 per record", () => {
+    let wrapped: SpecType = { kind: "number" };
+    for (let i = 0; i < 20; i++)
+      wrapped = {
+        kind: "record",
+        fields: [
+          { name: "tag", type: { kind: "literal", value: "x" } },
+          { name: "child", type: wrapped },
+        ],
+      };
+    const edges = edgesOf(wrapped, undefined);
+    expect(edges.length).toBe(edgesOf({ kind: "number" }, undefined).length);
+    let flags: SpecType = { kind: "number" };
+    for (let i = 0; i < 4; i++)
+      flags = {
+        kind: "record",
+        fields: [
+          { name: "flag", type: { kind: "boolean" } },
+          { name: "child", type: flags },
+        ],
+      };
+    expect(edgesOf(flags, undefined).length).toBeLessThanOrEqual(64);
+  });
+
+  test("assignment i gives every binder its i-th edge, cycling; a binder without edges draws", () => {
+    const binders: Binder[] = [
+      { name: "b", type: { kind: "boolean" } },
+      { name: "n", type: { kind: "number" } },
+    ];
+    const count = 2 * edgesOf({ kind: "number" }, undefined).length;
+    const all: unknown[][] = [];
+    let state: PrngState = seedPrng("e");
+    for (let i = 0; i < count; i++) {
+      const next = edgeAssignment(binders, edgeLists(binders), i, state);
+      if (!next) throw new Error(`no edge assignment ${i}`);
+      [all[i], state] = next;
+    }
+    expect(edgeAssignment(binders, edgeLists(binders), count, state)).toBeUndefined();
+    expect(new Set(all.map((a) => a[0]))).toEqual(new Set([false, true]));
+    expect(all.some((a) => Number.isNaN(a[1] as number))).toBe(true);
+    const addressed: Binder = {
+      name: "a",
+      type: { kind: "string" },
+      hint: { regex: { pattern: "^0x[0-9a-f]{4}$", flags: "" } },
+    };
+    const withAddress = [...binders, addressed];
+    const [[, , a]] = edgeAssignment(withAddress, edgeLists(withAddress), 0, state) ?? [[]];
+    expect(a).toMatch(/^0x[0-9a-f]{4}$/);
+    const withUnknown: Binder[] = [
+      ...binders,
+      { name: "u", type: { kind: "unknown", text: "Date" } },
+    ];
+    expect(() => edgeAssignment(withUnknown, edgeLists(withUnknown), 0, state)).toThrow(
+      CannotGenerate,
+    );
+  });
+});
+
 describe("shrinkCandidates", () => {
+  test("-0 shrinks to 0, which === cannot tell apart from it", () => {
+    for (const b of [number(), int()])
+      expect(shrinkCandidates(b, -0).some((c) => Object.is(c, 0))).toBe(true);
+    expect(shrinkCandidates(number(), 0).some((c) => Object.is(c, -0))).toBe(false);
+  });
+
   test("numbers move toward zero, or the hint's end nearest it, never past the hint", () => {
     expect(shrinkCandidates(int(), 100)).toEqual([0, 50, 75, 88, 94, 97, 99]);
     expect(shrinkCandidates(int(), -3)).toEqual([0, -2]);

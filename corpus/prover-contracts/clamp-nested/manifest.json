@@ -3,13 +3,13 @@
   "expect": {
     "tested": {
       "clamp": {
-        "within": "TESTED",
+        "within": "REFUTED",
         "identity": "TESTED",
         "clampTotal": "unsupported"
       },
       "percent": {
         "bounded": "REFUTED",
-        "idempotent": "TESTED"
+        "idempotent": "REFUTED"
       },
       "sign": {
         "signCases": "REFUTED"

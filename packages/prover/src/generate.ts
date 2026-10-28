@@ -10,7 +10,7 @@
 import { nextFloat, nextInt, nextU32, type PrngState } from "@eutaxy/core";
 import { type Binder, describeType, type Endpoint, type Hint, type SpecType } from "@eutaxy/spec";
 import { drawRegex, parseRegex, UnsupportedRegex } from "./regex-gen.ts";
-import { same } from "./render.ts";
+import { render, same } from "./render.ts";
 
 /** A value and the state that follows drawing it. */
 export type Draw<T> = readonly [T, PrngState];
@@ -116,6 +116,11 @@ function pick<T>(items: readonly T[], state: PrngState): Draw<T> {
  * properties fail at boundaries and small cases far more often than deep in
  * the range, some are medium or large, and a few are the range's edges.
  */
+/** An integer range's edges, as the random draws pick from them (repeats kept, so draws stay as they were). */
+function integerEdgeCandidates(lo: bigint, hi: bigint): bigint[] {
+  return [lo, hi, 0n, 1n, -1n, lo + 1n, hi - 1n].filter((v) => v >= lo && v <= hi);
+}
+
 function drawInteger(
   name: string,
   kind: "number" | "bigint",
@@ -137,10 +142,7 @@ function drawInteger(
     const h = min(hi, z);
     return l <= h ? [l, h] : undefined;
   };
-  if (cls < 5) {
-    const edges = [lo, hi, 0n, 1n, -1n, lo + 1n, hi - 1n].filter((v) => v >= lo && v <= hi);
-    return pick(edges, s);
-  }
+  if (cls < 5) return pick(integerEdgeCandidates(lo, hi), s);
   const bound =
     cls < 55
       ? within(-16n, 16n)
@@ -181,24 +183,30 @@ function withinNumberHint(hint: Hint | undefined, v: number): boolean {
   return true;
 }
 
-function drawNumber(hint: Hint | undefined, state: PrngState): Draw<number> {
+/** A double hint's edges, as the random draws pick from them. */
+function doubleEdgeCandidates(hint: Hint | undefined): number[] {
   const { lo, hi, guarded } = numberRange(hint);
+  return [
+    0,
+    -0,
+    1,
+    -1,
+    0.5,
+    Number.MIN_VALUE,
+    Number.EPSILON,
+    Number.MAX_VALUE,
+    -Number.MAX_VALUE,
+    Number.POSITIVE_INFINITY,
+    Number.NEGATIVE_INFINITY,
+    ...(guarded ? [lo, hi] : [Number.NaN]),
+  ].filter((v) => withinNumberHint(hint, v));
+}
+
+function drawNumber(hint: Hint | undefined, state: PrngState): Draw<number> {
+  const { lo, hi } = numberRange(hint);
   const [cls, s0] = nextInt(state, 100);
   if (cls < 8) {
-    const edges = [
-      0,
-      -0,
-      1,
-      -1,
-      0.5,
-      Number.MIN_VALUE,
-      Number.EPSILON,
-      Number.MAX_VALUE,
-      -Number.MAX_VALUE,
-      Number.POSITIVE_INFINITY,
-      Number.NEGATIVE_INFINITY,
-      ...(guarded ? [lo, hi] : [Number.NaN]),
-    ].filter((v) => withinNumberHint(hint, v));
+    const edges = doubleEdgeCandidates(hint);
     if (edges.length > 0) return pick(edges, s0);
   }
   if (cls < 35) {
@@ -225,6 +233,8 @@ const letters = "abcdefghijklmnopqrstuvwxyz";
 const digits = "0123456789";
 const plainAlphabet = [...`${letters}${letters.toUpperCase()}${digits} _-.,:/\n'"üß日😀`];
 const stringEdges = ["", " ", "a", "0", "-1", "\n", "\u0000", "ü", "😀", "a".repeat(100)];
+/** The longest string sampled over a regex's own characters, and the longest edge a regex is tried on. */
+const regexSampleLength = 12;
 
 /**
  * The characters a regex names: literals, the ranges and escapes of its
@@ -308,7 +318,7 @@ function drawString(hint: Hint | undefined, state: PrngState): Draw<string> {
   const fromPattern = regexAlphabet(g.pattern);
   const alphabet = fromPattern.length > 0 ? fromPattern : plainAlphabet;
   for (let attempt = 0; attempt < 64; attempt++) {
-    const [length, s1] = nextInt(s, 13);
+    const [length, s1] = nextInt(s, regexSampleLength + 1);
     const [candidate, s2] = drawChars(alphabet, length, s1);
     s = s2;
     if (matchesRegex(hint, candidate)) return [candidate, s];
@@ -317,6 +327,145 @@ function drawString(hint: Hint | undefined, state: PrngState): Draw<string> {
     "gave_up",
     `no string matching /${g.pattern}/${g.flags} was found in 64 draws over its characters`,
   );
+}
+
+const negativeZero = Symbol("-0");
+
+/** The most edges a record type has; random draws cover its other combinations. */
+const recordEdgeLimit = 64;
+
+/** Without repeats, in one pass; 0 and -0 both stay, as `Object.is` has them. */
+function distinct<T>(values: readonly T[]): T[] {
+  const seen = new Set<unknown>();
+  return values.filter((v) => {
+    const key = Object.is(v, -0) ? negativeZero : v;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function integerEdges(kind: "number" | "bigint", hint: Hint | undefined): bigint[] {
+  const range = integerRange(kind, hint);
+  return range ? distinct(integerEdgeCandidates(range.lo, range.hi)) : [];
+}
+
+/**
+ * How many combinations of these edge lists to take side by side: the
+ * longest list's length, twice over when there are two or more lists,
+ * since `combined` walks them once in step (equal edges meet, as
+ * `Infinity - Infinity` needs) and once rotated (list `k` starting `k`
+ * places in, so lists of one type also differ).
+ */
+function combinations(lists: readonly (readonly unknown[])[]): number {
+  const longest = Math.max(0, ...lists.map((l) => l.length));
+  return lists.length > 1 ? 2 * longest : longest;
+}
+
+/** List `k`'s value in the `i`-th combination. */
+function combined<T>(lists: readonly (readonly T[])[], k: number, i: number): T {
+  const longest = Math.max(...lists.map((l) => l.length));
+  const own = lists[k] as readonly T[];
+  const offset = i < longest ? 0 : k;
+  return own[((i % longest) + offset) % own.length] as T;
+}
+
+/**
+ * The values of a type, within the hint, that properties fail on far more
+ * often than elsewhere: the bounds, zero and one, the double specials (NaN,
+ * the infinities, -0), the empty string, both booleans, every member of a
+ * union, and records built field by field from those. The `TESTED` rung
+ * tries every one before any random draw, so a claim false on one value
+ * is found under every seed; a claim false only on a combination of edges
+ * across binders or fields is found where the rotation below pairs them,
+ * and otherwise rests on the random draws. A type with none (a string
+ * whose regex no edge matches) gives none.
+ */
+export function edgesOf(type: SpecType, hint: Hint | undefined): unknown[] {
+  switch (type.kind) {
+    case "boolean":
+      return [false, true];
+    case "number": {
+      // Number.isInteger(-0) holds, so -0 is an integer edge wherever 0 is one.
+      if (hint?.integer)
+        return integerEdges("number", hint).flatMap((v) => (v === 0n ? [0, -0] : [Number(v)]));
+      return distinct(doubleEdgeCandidates(hint));
+    }
+    case "bigint":
+      return integerEdges("bigint", hint);
+    case "string":
+      // A regex is tried only on edges as short as the strings sampled over its characters: a
+      // backtracking pattern on the 100-character edge could run for longer than the check.
+      return stringEdges.filter(
+        (v) =>
+          hint?.regex === undefined || (v.length <= regexSampleLength && matchesRegex(hint, v)),
+      );
+    case "literal":
+      return [type.value];
+    case "null":
+      return [null];
+    case "undefined":
+      return [undefined];
+    case "union":
+      return distinct(type.members.flatMap((m) => edgesOf(m, undefined)));
+    case "record": {
+      // Distinct records only, and at most recordEdgeLimit of them: nested records multiply their
+      // fields' edges, and a record's edges must not grow with its depth.
+      const lists = type.fields.map((f) => edgesOf(f.type, undefined));
+      if (lists.some((l) => l.length === 0)) return [];
+      const out: Record<string, unknown>[] = [];
+      const seen = new Set<string>();
+      for (let i = 0; i < Math.max(1, combinations(lists)) && out.length < recordEdgeLimit; i++) {
+        const r = Object.fromEntries(type.fields.map((f, k) => [f.name, combined(lists, k, i)]));
+        const key = render(r);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push(r);
+      }
+      return out;
+    }
+    case "unknown":
+      return [];
+  }
+}
+
+/** Each binder's edges, computed once for a property's whole edge phase. */
+export function edgeLists(binders: readonly Binder[]): unknown[][] {
+  return binders.map((b) => edgesOf(b.type, b.hint));
+}
+
+/** How many edge assignments the binders' `edgeLists` give. */
+export function edgeAssignmentCount(edges: readonly (readonly unknown[])[]): number {
+  return combinations(edges);
+}
+
+/**
+ * The `i`-th edge assignment from the binders' `edgeLists`: the lists
+ * walked once in step and once rotated (binder `j` starting `j` places
+ * in), cycling, so each edge of each binder appears, equal edges meet and
+ * binders of one type also differ; a binder with no edges is drawn at
+ * random. Undefined from `edgeAssignmentCount` on.
+ */
+export function edgeAssignment(
+  binders: readonly Binder[],
+  edges: readonly (readonly unknown[])[],
+  i: number,
+  state: PrngState,
+): Draw<unknown[]> | undefined {
+  if (i >= combinations(edges)) return undefined;
+  const values: unknown[] = [];
+  let s = state;
+  binders.forEach((b, j) => {
+    const own = edges[j] as readonly unknown[];
+    if (own.length > 0) {
+      values.push(combined(edges, j, i));
+      return;
+    }
+    const [v, next] = generate(b, s);
+    s = next;
+    values.push(v);
+  });
+  return [values, s];
 }
 
 /** A value of the type, within the hint (which applies to a top-level binder only). */
@@ -518,6 +667,8 @@ function candidatesOf(type: SpecType, hint: Hint | undefined, v: unknown): unkno
       return [false];
     case "number": {
       if (typeof v !== "number") return [];
+      // -0 is as small as 0 to every comparison, so only the sign is left to shrink.
+      if (Object.is(v, -0)) return [0];
       if (hint?.integer || Number.isInteger(v)) {
         const range = integerRange("number", hint);
         if (!Number.isInteger(v) || !range) return [];

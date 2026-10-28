@@ -145,8 +145,8 @@ describe("eutaxy check", () => {
           ["withinCaptured", "TESTED"],
           ["addsTheAmount", "TESTED"],
           ["fullRefundAllowed", "REFUTED"],
-          // Sampling with this seed reaches its 100 held inputs before it draws the NaN amount.
-          ["totalNonNegative", "TESTED"],
+          // False on a NaN amount, which TESTED tries before any random draw.
+          ["totalNonNegative", "REFUTED"],
         ]);
         const refuted = report.specs[2] as SpecJson & { rung: string };
         expect(refuted.rung).toBe("TESTED");
@@ -210,8 +210,8 @@ describe("eutaxy check", () => {
         ["withinCaptured", "PROVEN"],
         ["addsTheAmount", "PROVEN"],
         ["fullRefundAllowed", "REFUTED"],
-        // Under the integer model the claim holds, and sampling missed the NaN amount: PROVEN, misleadingly.
-        ["totalNonNegative", "PROVEN"],
+        // Lean proves it under the integer model; TESTED's NaN amount refutes it: neither wins.
+        ["totalNonNegative", "CONFLICT"],
       ]);
       expect(report.specs[0]?.engine).toEqual({ name: "lean", version: "4.35.0" });
       const text = eutaxy([
@@ -259,13 +259,18 @@ describe("eutaxy check", () => {
           ["fullRefundAllowed", "REFUTED"],
           ["totalNonNegative", "CONFLICT"],
         ]);
-        // The SMT engine's replayed NaN counterexample against the Lean engine's integer-model proof.
+        // The NaN counterexample, found by TESTED before either engine ran, against Lean's
+        // integer-model proof (the SMT engine refutes it too).
         const conflict = two.specs[3] as SpecJson & {
           proven: { name: string };
-          refuted: { name: string; counterexample?: { binders: { value: string }[] } };
+          refuted: {
+            name: string;
+            version: string;
+            counterexample?: { binders: { value: string }[] };
+          };
         };
         expect(conflict.proven.name).toBe("lean");
-        expect(conflict.refuted.name).toBe("smt");
+        expect(conflict.refuted).toMatchObject({ name: "simulator", version: "TESTED" });
         expect(conflict.refuted.counterexample?.binders.map((b) => b.value)).toContain("NaN");
       }
       const unknown = eutaxy([
