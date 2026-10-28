@@ -44,6 +44,10 @@ describe("the self-check", () => {
     expect(checkers.map((s) => s.function).sort()).toEqual([
       "atLeastOnceMissing",
       "atMostOnceDuplicate",
+      "everyRowFailing",
+      "impliesMissing",
+      "referencesOrphans",
+      "uniqueShared",
     ]);
     for (const s of checkers) expect(atLeastChecked.has(s.kind), s.property).toBe(true);
   }, 120_000);
@@ -71,10 +75,45 @@ describe("the self-check", () => {
       to: ".filter((k, i, all) => !present.has(k) && all.indexOf(k) === i);",
       refuted: ["atLeastOnceMatchesReference"],
     },
+    {
+      bug: "everyRow fails a row only when it breaks every condition",
+      file: "state.ts",
+      from: "const failing = rows.filter((r) => !inv.holds.every((c) => rowMatches(r, c)));",
+      to: "const failing = rows.filter((r) => !inv.holds.some((c) => rowMatches(r, c)));",
+      refuted: ["everyRowMatchesReference"],
+    },
+    {
+      bug: "neq fails on a row without the column",
+      file: "state.ts",
+      from: "return v === undefined || !jsonEqual(v, condition.value);",
+      to: "return v !== undefined && !jsonEqual(v, condition.value);",
+      refuted: ["everyRowMatchesReference"],
+    },
+    {
+      bug: "unique counts null values",
+      file: "state.ts",
+      from: "    if (v === undefined || v === null) continue;\n    const k = canonicalJson(v);\n    counts.set",
+      to: "    if (v === undefined) continue;\n    const k = canonicalJson(v);\n    counts.set",
+      refuted: ["uniqueMatchesReference"],
+    },
+    {
+      bug: "implies reports a missing key once per effect",
+      file: "state.ts",
+      from: "if (!missing.includes(k)) missing.push(k);",
+      to: "missing.push(k);",
+      refuted: ["impliesMatchesReference"],
+    },
+    {
+      bug: "references reads the referring rows' target for both",
+      file: "state.ts",
+      from: "const targets = queryRows(log, inv.in);",
+      to: "const targets = queryRows(log, { ...inv.in, target: inv.query.target });",
+      refuted: ["referencesMatchesReference"],
+    },
   ])(
     "a planted bug is refuted: $bug",
     ({ file, from, to, refuted }) => {
-      const probe = join(root, "packages/core", `.probe-self-check-${process.pid}-${file}`);
+      const probe = join(root, "packages/core", `.probe-self-check-${process.pid}`);
       cpSync(join(root, "packages/core/src"), probe, { recursive: true });
       try {
         const path = join(probe, file);
