@@ -8,7 +8,14 @@ import {
 } from "@eutaxy/core";
 import { describe, expect, test } from "vitest";
 import { emitRegressionTest } from "./regression.ts";
-import { renderJson, renderSpecs, renderText, renderTrace } from "./render.ts";
+import {
+  renderJson,
+  renderSpecReport,
+  renderSpecReportJson,
+  renderSpecs,
+  renderText,
+  renderTrace,
+} from "./render.ts";
 
 let trace = appendEffect(emptyLog, {
   kind: "call",
@@ -365,5 +372,46 @@ describe("spec verdicts", () => {
       "CONFLICT",
       "UNKNOWN",
     ]);
+  });
+
+  test("report text: verdicts grouped by module, and a count by verdict", () => {
+    const other: SpecVerdict = {
+      ...base,
+      module: "./billing/domain.ts",
+      function: "charge",
+      property: "p",
+      text: "p",
+      kind: "TESTED",
+      inputs: 100,
+      discarded: 0,
+      seed: "report",
+    };
+    const lines = renderSpecReport([...specs, other]).split("\n");
+    // No scenario ran, so the header explains only the rungs a report reaches.
+    expect(lines[0]).toBe(
+      "Specs (TESTED means held on inputs generated from the parameter types, which is not a proof; PROVEN is one, by the named engine)",
+    );
+    expect(lines.slice(1, 4)).toEqual([
+      "",
+      "./domain.ts",
+      "  CHECKED  decideRefund a: held on 3 input(s), 1 outside the claim",
+    ]);
+    const billing = lines.indexOf("./billing/domain.ts");
+    expect(lines.slice(billing - 1, billing + 2)).toEqual([
+      "",
+      "./billing/domain.ts",
+      "  TESTED   charge p: held on 100 generated input(s)",
+    ]);
+    expect(lines.at(-1)).toBe(
+      "9 properties in 2 modules: 1 PROVEN, 3 TESTED, 1 CHECKED, 2 REFUTED, 1 CONFLICT, 1 UNKNOWN",
+    );
+    expect(renderSpecReport([])).toBe("No specs found.");
+  });
+
+  test("report JSON: canonical, versioned, the spec verdicts only", () => {
+    const report = JSON.parse(renderSpecReportJson(specs)) as Record<string, unknown>;
+    expect(Object.keys(report)).toEqual(["generator", "schemaVersion", "specs"]);
+    expect(report["schemaVersion"]).toBe(1);
+    expect((report["specs"] as unknown[]).length).toBe(specs.length);
   });
 });

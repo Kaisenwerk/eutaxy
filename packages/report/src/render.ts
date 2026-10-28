@@ -26,68 +26,108 @@ export function renderJson(verdict: ScenarioVerdict, specs: readonly SpecVerdict
   });
 }
 
+const specsHeader =
+  "Specs (CHECKED means held on the inputs the simulator passed, TESTED on generated ones too; neither is a proof. PROVEN is one, by the named engine)";
+
 /** Spec verdicts as text: one line each, a counterexample under a refutation. */
 export function renderSpecs(specs: readonly SpecVerdict[]): string {
   if (specs.length === 0) return "";
+  return [specsHeader, ...specs.flatMap(specLines)].join("\n");
+}
+
+/** The order a report counts verdicts in: strongest evidence first, then what needs attention. */
+const verdictOrder = ["PROVEN", "TESTED", "CHECKED", "REFUTED", "CONFLICT", "UNKNOWN"] as const;
+
+/**
+ * `eutaxy report` as text: the spec verdicts grouped by module, in the
+ * order given, and one closing line counting them by verdict.
+ */
+export function renderSpecReport(specs: readonly SpecVerdict[]): string {
+  if (specs.length === 0) return "No specs found.";
+  const modules = [...new Set(specs.map((v) => v.module))];
   const out = [
-    "Specs (CHECKED means held on the inputs the simulator passed, TESTED on generated ones too; neither is a proof. PROVEN is one, by the named engine)",
+    "Specs (TESTED means held on inputs generated from the parameter types, which is not a proof; PROVEN is one, by the named engine)",
   ];
-  for (const v of specs) {
-    const what = `${v.function} ${v.property}`;
-    switch (v.kind) {
-      case "CHECKED":
-        out.push(
-          `  CHECKED  ${what}: held on ${v.inputs} input(s)${v.discarded > 0 ? `, ${v.discarded} outside the claim` : ""}`,
-        );
-        break;
-      case "TESTED":
-        out.push(
-          `  TESTED   ${what}: held on ${v.inputs} generated input(s)${v.checked === undefined ? "" : ` and ${v.checked} the simulator passed`}${v.discarded > 0 ? `, ${v.discarded} outside the claim` : ""}`,
-        );
-        break;
-      case "PROVEN": {
-        const beside = [
-          ...(v.tested === undefined ? [] : [`${v.tested} generated input(s)`]),
-          ...(v.checked === undefined ? [] : [`${v.checked} the simulator passed`]),
-        ];
-        out.push(
-          `  PROVEN   ${what}: by ${v.engine.name} ${v.engine.version}${beside.length > 0 ? `; also held on ${beside.join(" and ")}` : ""}`,
-        );
-        break;
-      }
-      case "CONFLICT":
-        out.push(
-          `  CONFLICT ${what}: ${v.proven.name} ${v.proven.version} proves it, ${v.refuted.name} ${v.refuted.version} refutes it; not resolved automatically`,
-        );
-        if (v.refuted.counterexample)
-          out.push(
-            `           ${v.refuted.counterexample.binders.map((b) => `${b.name} = ${b.value}`).join(", ")}`,
-          );
-        break;
-      case "REFUTED": {
-        const c = v.counterexample;
-        const where =
-          v.rung === "PROVEN"
-            ? `by ${v.engine?.name ?? "an engine"}`
-            : c.call === undefined
-              ? "on a generated input"
-              : `at ${c.call}`;
-        out.push(`  REFUTED  ${what}: false ${where}${c.error ? `, which threw ${c.error}` : ""}`);
-        if (c.binders.length > 0)
-          out.push(`           ${c.binders.map((b) => `${b.name} = ${b.value}`).join(", ")}`);
-        out.push(`           ${v.text.replace(/\s+/g, " ")}`);
-        break;
-      }
-      case "UNKNOWN":
-        out.push(`  UNKNOWN  ${what}: ${v.cause}: ${v.reason}`);
-        break;
-    }
-    // A proof rests on its engine's model of the language: every assumption is shown. Elsewhere, an
-    // engine that was asked and fell short says so under the verdict that stands.
-    for (const a of v.assumptions)
-      if (v.kind === "PROVEN" || a.startsWith("not PROVEN by ")) out.push(`           ${a}`);
+  for (const m of modules) {
+    out.push("", m);
+    for (const v of specs) if (v.module === m) out.push(...specLines(v));
   }
+  const counts = verdictOrder
+    .map((k) => [k, specs.filter((v) => v.kind === k).length] as const)
+    .filter(([, n]) => n > 0)
+    .map(([k, n]) => `${n} ${k}`);
+  out.push(
+    "",
+    `${specs.length} propert${specs.length === 1 ? "y" : "ies"} in ${modules.length} module${modules.length === 1 ? "" : "s"}: ${counts.join(", ")}`,
+  );
   return out.join("\n");
+}
+
+/** `eutaxy report --json`: canonical, with the schema version, the spec verdicts and nothing else. */
+export function renderSpecReportJson(specs: readonly SpecVerdict[]): string {
+  return canonicalJson({
+    schemaVersion: reportSchemaVersion,
+    generator: "eutaxy",
+    specs: specs as unknown as JsonValue,
+  });
+}
+
+function specLines(v: SpecVerdict): string[] {
+  const out: string[] = [];
+  const what = `${v.function} ${v.property}`;
+  switch (v.kind) {
+    case "CHECKED":
+      out.push(
+        `  CHECKED  ${what}: held on ${v.inputs} input(s)${v.discarded > 0 ? `, ${v.discarded} outside the claim` : ""}`,
+      );
+      break;
+    case "TESTED":
+      out.push(
+        `  TESTED   ${what}: held on ${v.inputs} generated input(s)${v.checked === undefined ? "" : ` and ${v.checked} the simulator passed`}${v.discarded > 0 ? `, ${v.discarded} outside the claim` : ""}`,
+      );
+      break;
+    case "PROVEN": {
+      const beside = [
+        ...(v.tested === undefined ? [] : [`${v.tested} generated input(s)`]),
+        ...(v.checked === undefined ? [] : [`${v.checked} the simulator passed`]),
+      ];
+      out.push(
+        `  PROVEN   ${what}: by ${v.engine.name} ${v.engine.version}${beside.length > 0 ? `; also held on ${beside.join(" and ")}` : ""}`,
+      );
+      break;
+    }
+    case "CONFLICT":
+      out.push(
+        `  CONFLICT ${what}: ${v.proven.name} ${v.proven.version} proves it, ${v.refuted.name} ${v.refuted.version} refutes it; not resolved automatically`,
+      );
+      if (v.refuted.counterexample)
+        out.push(
+          `           ${v.refuted.counterexample.binders.map((b) => `${b.name} = ${b.value}`).join(", ")}`,
+        );
+      break;
+    case "REFUTED": {
+      const c = v.counterexample;
+      const where =
+        v.rung === "PROVEN"
+          ? `by ${v.engine?.name ?? "an engine"}`
+          : c.call === undefined
+            ? "on a generated input"
+            : `at ${c.call}`;
+      out.push(`  REFUTED  ${what}: false ${where}${c.error ? `, which threw ${c.error}` : ""}`);
+      if (c.binders.length > 0)
+        out.push(`           ${c.binders.map((b) => `${b.name} = ${b.value}`).join(", ")}`);
+      out.push(`           ${v.text.replace(/\s+/g, " ")}`);
+      break;
+    }
+    case "UNKNOWN":
+      out.push(`  UNKNOWN  ${what}: ${v.cause}: ${v.reason}`);
+      break;
+  }
+  // A proof rests on its engine's model of the language: every assumption is shown. Elsewhere, an
+  // engine that was asked and fell short says so under the verdict that stands.
+  for (const a of v.assumptions)
+    if (v.kind === "PROVEN" || a.startsWith("not PROVEN by ")) out.push(`           ${a}`);
+  return out;
 }
 
 function clip(s: string, max: number): string {
