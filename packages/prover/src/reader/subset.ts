@@ -302,6 +302,8 @@ function alternative(r: Reader, declared: Declared, bad: BadRecords): Alternativ
     return { kind: "type", type: { kind: "record", name: t.text }, token: t };
   const alias = declared.aliases.get(t.text);
   if (alias) return { kind: "type", type: alias, token: t };
+  if (t.text === "readonly" || t.text === "Array" || t.text === "ReadonlyArray")
+    r.fail("an array type (arrays are outside the subset)", t);
   r.fail(
     `type ${t.text} (the subset has number, boolean, string, null, and the module's own record types, unions and aliases)`,
     t,

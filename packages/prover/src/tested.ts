@@ -90,7 +90,7 @@ export function testedRung(input: TestedInput): SpecVerdict {
     const key = values.map(render).join(", ");
     if (seen.has(key)) continue;
     seen.add(key);
-    const result = evaluate(spec, values);
+    const result = evaluate(spec, values, true);
     if ("malformed" in result) return unknown("unsupported", malformedReason(result.malformed));
     if (result.outcome === "discarded") {
       discarded++;

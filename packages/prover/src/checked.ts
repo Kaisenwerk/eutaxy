@@ -10,7 +10,7 @@
 import type { Counterexample, SpecVerdict } from "@eutaxy/core";
 import type { Fn, Forall, FunctionSpec, Property } from "@eutaxy/spec";
 import { conforms } from "./generate.ts";
-import { render } from "./render.ts";
+import { copy, render } from "./render.ts";
 
 export { render } from "./render.ts";
 
@@ -31,12 +31,17 @@ export type Evaluation =
  * function's own included, means the claim is not true there. A claim
  * that returns something other than a boolean is malformed.
  */
-export function evaluate(spec: Forall<Fn>, values: readonly unknown[]): Evaluation {
-  const args = values as never[];
+export function evaluate(
+  spec: Forall<Fn>,
+  values: readonly unknown[],
+  /** For generated inputs: each arrow gets its own copy of their plain data (`copy`). */
+  copied = false,
+): Evaluation {
+  const fresh = (): never[] => (copied ? copy(values) : values) as never[];
   if (spec.when) {
     let inside: unknown;
     try {
-      inside = spec.when(...args);
+      inside = spec.when(...fresh());
     } catch (err) {
       return { malformed: `the precondition threw ${String(err)}` };
     }
@@ -46,7 +51,7 @@ export function evaluate(spec: Forall<Fn>, values: readonly unknown[]): Evaluati
   }
   let claim: unknown;
   try {
-    claim = spec.ensures(...args);
+    claim = spec.ensures(...fresh());
   } catch (err) {
     return { outcome: "refuted", error: String(err) };
   }

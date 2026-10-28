@@ -244,7 +244,17 @@ anchors), with sampling over the pattern's characters as the fallback for
 syntax the walker refuses (lookaround, backreferences, property escapes);
 the real `RegExp` has the last word on every draw. A union of literals
 draws each literal, a nullable type draws `null` among the values, a
-record is drawn field by field, and a tagged union draws every tag. Where
+record is drawn field by field, a tagged union draws every tag, and an
+array (`T[]`, `readonly T[]`, `Array<T>`, `ReadonlyArray<T>`) is mostly
+short, up to sixteen elements, with an element repeating an earlier one a
+quarter of the time, since claims keyed on distinct elements break on a
+repeat; its edges are the empty array, one of each element edge, and one
+element twice, and it shrinks by dropping elements before shrinking them,
+every copy of a value at once. Neither engine translates arrays yet. Each
+evaluation of a property gets its own copy of the input's plain data
+(arrays and records), so code under test that mutates what it is given
+(`xs.sort()`) changes neither the counterexample printed nor the
+candidates shrunk from it. Where
 `when` compares a parameter with a constant (`0 <= n`, `n < 5`), the draws
 are steered into that range, as an interval guard would, so a precondition
 is met rather than missed; and since preconditions relate binders
@@ -1001,7 +1011,10 @@ Every command takes `--json`, printing one object in a versioned schema
 (`schemaVersion` 1, canonical JSON) for CI and coding agents; within a
 version, new verdict kinds and optional fields may appear, so a consumer
 switches on `kind` with a default, and a removed or re-typed field bumps the
-version. A failing check
+version. The exported TypeScript unions keyed by `kind` (`SpecType`, the
+verdict types) follow the same rule: a release may add a kind (a type the
+reader reads, a verdict), so code switching over one keeps a default
+branch; removing or reshaping a kind is a breaking change. A failing check
 writes a Vitest file that replays the shrunk schedule on the restricted
 scenario inside workerd and expects the invariants to hold, so it fails
 while the bug exists and passes once fixed; `expectHolds` and `check` from

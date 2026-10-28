@@ -226,6 +226,9 @@ export function binderType(name: string, t: SpecType, module: SubsetModule): Sub
     case "undefined":
       fail(`binder ${name} over ${t.kind}`);
       break;
+    case "array":
+      fail(`binder ${name} over ${describeType(t)}: arrays are not in the engine's subset yet`);
+      break;
     case "unknown":
       fail(`binder ${name} over ${t.text}, which the reader could not read`);
   }

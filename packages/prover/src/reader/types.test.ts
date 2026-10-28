@@ -109,9 +109,122 @@ type Status = "on" | "off";
     expect(t.members.map((m) => m.kind)).toEqual(["record", "record"]);
   });
 
+  test("arrays: T[], readonly T[], Array<T>, ReadonlyArray<T>, nested and of unions", () => {
+    const num = { kind: "array", element: { kind: "number" } };
+    expect(typeOf("", "number[]")).toEqual(num);
+    expect(typeOf("", "readonly number[]")).toEqual(num);
+    expect(typeOf("", "Array<number>")).toEqual(num);
+    expect(typeOf("", "ReadonlyArray<number>")).toEqual(num);
+    expect(typeOf("", "readonly (readonly number[])[]")).toEqual({ kind: "array", element: num });
+    expect(typeOf("", "(string | null)[]")).toEqual({
+      kind: "array",
+      element: { kind: "union", members: [{ kind: "string" }, { kind: "null" }] },
+    });
+    expect(typeOf("interface E { readonly key: string }", "readonly E[]")).toEqual({
+      kind: "array",
+      element: { kind: "record", name: "E", fields: [{ name: "key", type: { kind: "string" } }] },
+    });
+    // `>>` closes two lists at once: the inner one keeps its own `>`.
+    expect(typeOf("", "Array<Array<number>>")).toEqual({ kind: "array", element: num });
+    expect(typeOf("", "ReadonlyArray<ReadonlyArray<number>>")).toEqual({
+      kind: "array",
+      element: num,
+    });
+    expect(typeOf("type Box<T> = { readonly v: T }", "Array<Box<Array<number>>>")).toEqual({
+      kind: "array",
+      element: { kind: "record", name: "Box<Array<number>>", fields: [{ name: "v", type: num }] },
+    });
+    // A type imported under the name is that module's, which the reader does not see.
+    expect(typeOf('import type { Array } from "./box.ts";', "Array<number>")).toEqual({
+      kind: "unknown",
+      text: "Array<number>",
+    });
+    expect(
+      typeOf('import { type Thing as ReadonlyArray } from "./t.ts";', "ReadonlyArray<number>"),
+    ).toEqual({ kind: "unknown", text: "ReadonlyArray<number>" });
+    // A record field may be a read-only array, with or without separators between the fields.
+    expect(
+      typeOf("interface Input { xs: readonly string[]\n readonly n: number }", "Input"),
+    ).toEqual({
+      kind: "record",
+      name: "Input",
+      fields: [
+        { name: "xs", type: { kind: "array", element: { kind: "string" } } },
+        { name: "n", type: { kind: "number" } },
+      ],
+    });
+    // A class after a statement without a semicolon still declares; an object key named import
+    // imports nothing.
+    expect(typeOf("const n = 1\nclass Array<T> { value!: T }", "Array<number>")).toMatchObject({
+      kind: "unknown",
+    });
+    expect(typeOf("const handlers = { import: Array };", "Array<number>")).toEqual(num);
+    expect(
+      typeOf("const flags = { import: true }\ninterface Keep { n: number }", "Keep"),
+    ).toMatchObject({ kind: "record" });
+    // Wherever the module declares or imports the name, however its statements end, it is not
+    // the built-in: a wrong guess must give unknown, never arrays where a class is meant.
+    for (const shadow of [
+      "const marker = 1!\nclass Array<T> { value!: T }",
+      "const marker = 1!\nimport { Array } from './box.ts'",
+      "const f = () =>\nclass ReadonlyArray<T> {}",
+    ])
+      expect(
+        typeOf(shadow, shadow.includes("Readonly") ? "ReadonlyArray<number>" : "Array<number>"),
+        shadow,
+      ).toMatchObject({ kind: "unknown" });
+    expect(typeOf('import { Array as Box } from "./box.ts";', "Array<number>")).toEqual(num);
+    expect(typeOf('import { type Array as Box } from "./box.ts";', "Array<number>")).toEqual(num);
+    // A line break after an operator continues the expression: still a class expression.
+    for (const continued of [
+      "const Impl =\nclass Input {};",
+      "const Impl = new\nclass Input {}();",
+    ])
+      expect(
+        typeOf(`interface Input { value: number }\n${continued}`, "Input"),
+        continued,
+      ).toMatchObject({
+        kind: "record",
+      });
+    // An interface merged with a class keeps the interface's fields, whichever comes first.
+    for (const merged of [
+      "interface Point { x: number }\nclass Point {}",
+      "class Point {}\ninterface Point { x: number }",
+    ])
+      expect(typeOf(merged, "Point"), merged).toMatchObject({ kind: "record", name: "Point" });
+    // A class expression's name is its own, not the module's.
+    expect(
+      typeOf("interface Input { value: number }\nconst Impl = class Input {};", "Input"),
+    ).toMatchObject({
+      kind: "record",
+    });
+    // So is a class or an enum of the name; an import that binds nothing changes nothing.
+    expect(typeOf("class Array<T> { value!: T }", "Array<number>")).toMatchObject({
+      kind: "unknown",
+    });
+    for (const noBinding of [
+      'import "./setup.ts"',
+      "const u = import.meta.url;",
+      'const m = import("./lazy.ts");',
+    ])
+      expect(typeOf(noBinding, "Array<number>"), noBinding).toEqual(num);
+    expect(typeOf('import fs = require("node:fs");', "Array<number>")).toEqual(num);
+    // A module's own declaration named Array is its own, not the built-in.
+    expect(typeOf("type Array<T> = { readonly first: T }", "Array<number>")).toMatchObject({
+      kind: "record",
+    });
+  });
+
   test("what the reader does not read is unknown with its text", () => {
-    expect(typeOf("", "number[]")).toEqual({ kind: "unknown", text: "number[]" });
-    expect(typeOf("", "readonly string[]")).toEqual({ kind: "unknown", text: "readonly string[]" });
+    expect(typeOf("", "T[number]")).toEqual({ kind: "unknown", text: "T[number]" });
+    expect(typeOf("", "Array<number, string>")).toEqual({
+      kind: "unknown",
+      text: "Array<number, string>",
+    });
+    expect(typeOf("", "readonly [number, string]")).toEqual({
+      kind: "unknown",
+      text: "readonly [number, string]",
+    });
     expect(typeOf("", "A & B")).toEqual({ kind: "unknown", text: "A & B" });
     expect(typeOf("", "Map<string, number>")).toEqual({
       kind: "unknown",

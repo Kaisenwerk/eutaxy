@@ -161,6 +161,28 @@ describe("evaluate", () => {
     expect(evaluate(spec, [10, 20, 5])).toEqual({ outcome: "discarded" });
     expect(evaluate(withinCaptured(buggy), [10, 8, 5])).toEqual({ outcome: "refuted" });
   });
+
+  test("observed inputs are evaluated as they are: aliases, cycles and hidden fields kept", () => {
+    const pair = (a: object, b: object) => [a, b];
+    const distinct = forall(pair, { ensures: (a, b) => a !== b });
+    const shared = { n: 1 };
+    expect(evaluate(distinct, [shared, shared])).toEqual({ outcome: "refuted" });
+    const cyclic: { self?: unknown } = {};
+    cyclic.self = cyclic;
+    const hidden = Object.defineProperty({}, "value", { value: 1 });
+    const fine = forall(pair, { ensures: (a) => a !== null });
+    expect(evaluate(fine, [cyclic, hidden])).toEqual({ outcome: "held" });
+    // Generated inputs are copied for each arrow instead: what the code under test mutates stays
+    // its own.
+    const mutates = forall(pair, {
+      when: (a) => {
+        (a as { n: number }).n = 2;
+        return true;
+      },
+      ensures: (a) => (a as { n: number }).n === 1,
+    });
+    expect(evaluate(mutates, [{ n: 1 }, {}], true)).toEqual({ outcome: "held" });
+  });
 });
 
 describe("checkSpecModule", () => {

@@ -196,6 +196,88 @@ describe("the TESTED rung", () => {
   });
 });
 
+describe("arrays", () => {
+  test("a claim false on any repeated key is refuted and shrinks to two equal empty strings", () => {
+    const keys: Binder = {
+      name: "keys",
+      type: { kind: "array", element: { kind: "string" } },
+    };
+    const count = (keys: readonly string[]) => new Set(keys).size;
+    const distinct = forall(count, { ensures: (keys) => count(keys) === keys.length });
+    const one: FunctionSpec = {
+      name: "count",
+      params: [{ name: "keys", type: keys.type }],
+      properties: [],
+      line: 1,
+      offset: 0,
+    };
+    const property: Property = { ...prop("distinct", [keys]), name: "distinct" };
+    const v = testedRung({ module: "m", fn: one, property, spec: distinct, seed: "s" });
+    expect(v).toMatchObject({ kind: "REFUTED" });
+    if (v.kind === "REFUTED") expect(v.counterexample.binders[0]?.value).toBe('["", ""]');
+    const sound = forall(count, { ensures: (keys) => count(keys) <= keys.length });
+    expect(testedRung({ module: "m", fn: one, property, spec: sound, seed: "s" })).toMatchObject({
+      kind: "TESTED",
+      inputs: 100,
+    });
+  });
+});
+
+describe("code under test that mutates its input", () => {
+  test("cannot change the counterexample: each evaluation gets its own copy", () => {
+    const xs: Binder = { name: "xs", type: { kind: "array", element: { kind: "number" } } };
+    const sortsInPlace = (xs: number[]) => xs.sort((a, b) => a - b)[0];
+    // False whenever the first element is not the smallest: sorting in place moves it.
+    const firstStays = forall(sortsInPlace, {
+      when: (xs) => xs.length > 0 && xs.every((x) => Number.isInteger(x)),
+      ensures: (xs) => {
+        const before = xs[0];
+        return sortsInPlace(xs) === before;
+      },
+    });
+    const one: FunctionSpec = {
+      name: "sortsInPlace",
+      params: [{ name: "xs", type: xs.type }],
+      properties: [],
+      line: 1,
+      offset: 0,
+    };
+    const property: Property = { ...prop("firstStays", [xs]), name: "firstStays" };
+    const v = testedRung({ module: "m", fn: one, property, spec: firstStays, seed: "s" });
+    expect(v).toMatchObject({ kind: "REFUTED" });
+    if (v.kind !== "REFUTED") return;
+    // The printed counterexample, replayed, still refutes.
+    const replay = JSON.parse(v.counterexample.binders[0]?.value ?? "null") as number[];
+    expect(replay.length).toBeGreaterThan(1);
+    expect(firstStays.ensures(replay)).toBe(false);
+  });
+});
+
+describe("repeated elements are copies, as the counterexample prints them", () => {
+  test("a claim on distinct objects holds: two equal records are two objects", () => {
+    const key: SpecType = {
+      kind: "record",
+      fields: [{ name: "key", type: { kind: "string" } }],
+    };
+    const xs: Binder = { name: "xs", type: { kind: "array", element: key } };
+    const size = (xs: readonly { key: string }[]) => new Set(xs).size;
+    const byReference = forall(size, { ensures: (xs) => size(xs) === xs.length });
+    const one: FunctionSpec = {
+      name: "size",
+      params: [{ name: "xs", type: xs.type }],
+      properties: [],
+      line: 1,
+      offset: 0,
+    };
+    const property: Property = { ...prop("byReference", [xs]), name: "byReference" };
+    for (const seed of ["a", "b", "c"])
+      expect(
+        testedRung({ module: "m", fn: one, property, spec: byReference, seed }),
+        seed,
+      ).toMatchObject({ kind: "TESTED" });
+  });
+});
+
 describe("edge values first", () => {
   test("binder j starts j places into its edges: false and -0 meet, two numbers differ", () => {
     const flag: Binder = { name: "flag", type: { kind: "boolean" } };

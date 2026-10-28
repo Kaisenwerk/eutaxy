@@ -24,6 +24,8 @@ export type SpecType =
       readonly fields: readonly Field[];
     }
   | { readonly kind: "union"; readonly members: readonly SpecType[] }
+  /** `T[]`, `readonly T[]`, `Array<T>` or `ReadonlyArray<T>`: a JavaScript array, read-only or not. */
+  | { readonly kind: "array"; readonly element: SpecType }
   | { readonly kind: "unknown"; readonly text: string };
 
 export interface Field {
@@ -140,6 +142,10 @@ export function describeType(t: SpecType): string {
       );
     case "union":
       return t.members.map(describeType).join(" | ");
+    case "array":
+      return t.element.kind === "union"
+        ? `(${describeType(t.element)})[]`
+        : `${describeType(t.element)}[]`;
     case "unknown":
       return t.text;
   }

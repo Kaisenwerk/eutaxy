@@ -189,6 +189,72 @@ describe("generate", () => {
   });
 });
 
+describe("arrays", () => {
+  const strings: SpecType = { kind: "array", element: { kind: "string" } };
+  test("draws: short arrays of the element type, the empty one among them", () => {
+    const out = draws(binder(strings), 300) as string[][];
+    expect(out.every((a) => Array.isArray(a) && a.every((s) => typeof s === "string"))).toBe(true);
+    expect(out.some((a) => a.length === 0)).toBe(true);
+    expect(out.some((a) => a.length >= 3)).toBe(true);
+    expect(Math.max(...out.map((a) => a.length))).toBeLessThanOrEqual(16);
+    expect(out.some((a) => new Set(a).size < a.length)).toBe(true);
+  });
+
+  test("edges: empty, one of each element edge, one element twice", () => {
+    const edges = edgesOf(strings, undefined) as string[][];
+    expect(edges[0]).toEqual([]);
+    expect(edges).toContainEqual([""]);
+    expect(edges).toContainEqual(["", ""]);
+    const nested = edgesOf({ kind: "array", element: strings }, undefined);
+    expect(nested).toContainEqual([[]]);
+  });
+
+  test("an array of a type the rung cannot draw is refused at once, empty or not", () => {
+    const opaque = binder({ kind: "array", element: { kind: "unknown", text: "Foo" } });
+    expect(edgesOf(opaque.type, undefined)).toEqual([]);
+    expect(() => draws(opaque, 20)).toThrow(CannotGenerate);
+  });
+
+  test("a union of array types has one empty array among its edges", () => {
+    const either: SpecType = {
+      kind: "union",
+      members: [
+        { kind: "array", element: { kind: "number" } },
+        { kind: "array", element: { kind: "string" } },
+      ],
+    };
+    expect(
+      edgesOf(either, undefined).filter((e) => Array.isArray(e) && e.length === 0),
+    ).toHaveLength(1);
+  });
+
+  test("conforms and shrinks: shorter first, then each element smaller", () => {
+    expect(conforms(strings, ["a", "b"])).toBe(true);
+    expect(conforms(strings, ["a", 1])).toBe(false);
+    expect(conforms(strings, "ab")).toBe(false);
+    const c = shrinkCandidates(binder(strings), ["xy", "z", "w"]) as string[][];
+    expect(c[0]).toEqual([]);
+    expect(c).toContainEqual(["z", "w"]);
+    expect(c).toContainEqual(["xy", "z"]);
+    expect(c.some((a) => a.length === 3 && a[0] !== "xy")).toBe(true);
+    // Nested arrays: candidates are many, and found without comparing every pair of them.
+    const matrix = Array.from({ length: 8 }, (_, i) =>
+      Array.from({ length: 8 }, (_, j) => i * 8 + j),
+    );
+    const grid = binder({ kind: "array", element: { kind: "array", element: { kind: "number" } } });
+    const mc = shrinkCandidates(grid, matrix);
+    expect(mc.length).toBeLessThanOrEqual(256);
+    const deep = binder({
+      kind: "array",
+      element: { kind: "array", element: { kind: "array", element: { kind: "number" } } },
+    });
+    const cube = Array.from({ length: 6 }, () => matrix.slice(0, 6).map((r) => r.slice(0, 6)));
+    expect(shrinkCandidates(deep, cube).length).toBeLessThanOrEqual(256);
+    expect(mc[0]).toEqual([]);
+    expect(new Set(mc.map((m) => render(m))).size).toBe(mc.length);
+  });
+});
+
 describe("edgesOf and edgeAssignment", () => {
   test("doubles: the specials, within the hint; integers: the bounds and the small ones", () => {
     const doubles = edgesOf({ kind: "number" }, undefined);

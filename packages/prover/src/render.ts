@@ -58,3 +58,21 @@ function renderAt(value: unknown, seen: Set<object>): string {
 export function same(a: unknown, b: unknown): boolean {
   return typeof a === typeof b && render(a) === render(b);
 }
+
+/**
+ * A deep copy of plain data: arrays and records (plain objects); anything
+ * else (a Date the simulator passed, a class instance) is kept as it is.
+ * Each evaluation of a property gets its own, so code under test that
+ * mutates an input (`xs.sort()`) changes neither the printed counterexample
+ * nor the candidates built from it, and no two places in an input share an
+ * object, as their printed literals do not.
+ */
+export function copy<T>(v: T): T {
+  if (Array.isArray(v)) return v.map(copy) as T;
+  if (v !== null && typeof v === "object") {
+    const proto = Object.getPrototypeOf(v);
+    if (proto !== Object.prototype && proto !== null) return v;
+    return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, copy(x)])) as T;
+  }
+  return v;
+}

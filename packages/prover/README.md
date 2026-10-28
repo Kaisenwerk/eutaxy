@@ -18,7 +18,7 @@ types with a seed, every edge first (`edgesOf`, `edgeLists`,
 the budget; a refuting one shrunk), `generate`, `generateOf` and
 `shrinkCandidates` (values of a type within its hint: integers, doubles,
 bigints, strings with regex hints walked by `regex-gen.ts`, literals,
-unions, records), `conforms`, `inDomain`. Shared: `evaluate` (one
+unions, records, arrays), `conforms`, `inDomain`. Shared: `evaluate` (one
 assignment through a spec's `when` and `ensures`: held, discarded,
 refuted, or a malformed property), `render`. The `PROVEN` rung: the
 `Prover` interface every engine implements (`available`, `prove` over a
@@ -34,7 +34,9 @@ it). `readSpecs` reads a module and its spec file: the exported functions
 and their parameter types (`function` declarations and `const` arrows,
 through `readType`, which reads primitives, literals, `null`, type
 literals, the module's `interface` and `type` declarations with type
-parameters substituted, and unions of them, and marks the rest `unknown`),
+parameters substituted, unions of them, and arrays of any of them (`T[]`,
+`readonly T[]`, `Array<T>`, `ReadonlyArray<T>`), and marks the rest
+`unknown`),
 every `export const name = forall(f, { when, ensures })` and `total(f)`
 with the combinators imported from `eutaxy/spec` and `f` from the module,
 the arrows kept as text, and the precondition's conjuncts about one

@@ -1,0 +1,17 @@
+{
+  "description": "Arrays: readonly T[] of records and of strings, iterated with for...of. Drawn, shrunk and checked at TESTED; outside both engines' subsets for now.",
+  "expect": {
+    "tested": {
+      "countOp": { "atMostAll": "TESTED", "splitsOverConcat": "TESTED" },
+      "firstRepeat": { "neverRepeats": "REFUTED", "repeatIsAKey": "TESTED" }
+    },
+    "lean": {
+      "countOp": { "atMostAll": "unsupported", "splitsOverConcat": "unsupported" },
+      "firstRepeat": { "neverRepeats": "unsupported", "repeatIsAKey": "unsupported" }
+    },
+    "smt": {
+      "countOp": { "atMostAll": "unsupported", "splitsOverConcat": "unsupported" },
+      "firstRepeat": { "neverRepeats": "unsupported", "repeatIsAKey": "unsupported" }
+    }
+  }
+}

@@ -32,7 +32,7 @@ export function shrinkRefutation(
           if (spent >= shrinkBudget) break;
           spent++;
           const trial = values.with(i, candidate);
-          const still = refutes(evaluate(spec, trial));
+          const still = refutes(evaluate(spec, trial, true));
           if (still === undefined) continue;
           values = trial;
           error = still;

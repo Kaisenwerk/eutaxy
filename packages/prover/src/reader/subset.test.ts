@@ -179,6 +179,8 @@ export function fine(n: number): number { return n; }
     ["export function f(x: number): number { return x; return x; }", "statements after a return"],
     ["export function f(x: number): number { return 'a' + 1; }", "+ on a string and a int"],
     ["export function f(x: number[]): number { return 1; }", "arrays, generics"],
+    ["export function f(x: readonly number[]): number { return 1; }", "an array type"],
+    ["export function f(x: ReadonlyArray<number>): number { return 1; }", "an array type"],
     ["export function f(x?: number): number { return 1; }", "optional parameter x"],
     ["export async function f(x: number): number { return x; }", "async function"],
     ["export function f(this: number, x: number): number { return x; }", "a this parameter"],
@@ -195,6 +197,12 @@ export function fine(n: number): number { return n; }
     expect(m.functions).toEqual([]);
     expect(m.outside).toHaveLength(1);
     expect(m.outside[0]?.message).toContain(reason);
+  });
+
+  test("a module's own type named Array is its own, not the built-in", () => {
+    const m = readSubset("type Array = number;\nexport function f(x: Array): number { return x; }");
+    expect(m.outside).toEqual([]);
+    expect(m.functions.map((f) => f.name)).toEqual(["f"]);
   });
 
   test.each([

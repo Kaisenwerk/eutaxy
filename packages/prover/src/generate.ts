@@ -10,7 +10,7 @@
 import { nextFloat, nextInt, nextU32, type PrngState } from "@eutaxy/core";
 import { type Binder, describeType, type Endpoint, type Hint, type SpecType } from "@eutaxy/spec";
 import { drawRegex, parseRegex, UnsupportedRegex } from "./regex-gen.ts";
-import { render, same } from "./render.ts";
+import { copy, render, same } from "./render.ts";
 
 /** A value and the state that follows drawing it. */
 export type Draw<T> = readonly [T, PrngState];
@@ -329,16 +329,17 @@ function drawString(hint: Hint | undefined, state: PrngState): Draw<string> {
   );
 }
 
-const negativeZero = Symbol("-0");
+/** The most shrink candidates one array offers at a step; the shrinker evaluates 500 in all. */
+const shrinkCandidateLimit = 256;
 
 /** The most edges a record type has; random draws cover its other combinations. */
 const recordEdgeLimit = 64;
 
-/** Without repeats, in one pass; 0 and -0 both stay, as `Object.is` has them. */
+/** Without repeats, in one pass, as `same` compares: 0 and -0 stay apart, two empty arrays do not. */
 function distinct<T>(values: readonly T[]): T[] {
-  const seen = new Set<unknown>();
+  const seen = new Set<string>();
   return values.filter((v) => {
-    const key = Object.is(v, -0) ? negativeZero : v;
+    const key = `${typeof v}:${render(v)}`;
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
@@ -424,6 +425,17 @@ export function edgesOf(type: SpecType, hint: Hint | undefined): unknown[] {
       }
       return out;
     }
+    case "array": {
+      // Empty, one of each element edge, and one element twice: claims about arrays break on the
+      // empty one and on repeats far more often than elsewhere.
+      if (!drawable(type.element)) return [];
+      const element = edgesOf(type.element, undefined);
+      return [
+        [],
+        ...element.map((e) => [e]),
+        ...(element.length > 0 ? [[element[0], element[0]]] : []),
+      ];
+    }
     case "unknown":
       return [];
   }
@@ -458,7 +470,7 @@ export function edgeAssignment(
   binders.forEach((b, j) => {
     const own = edges[j] as readonly unknown[];
     if (own.length > 0) {
-      values.push(combined(edges, j, i));
+      values.push(copy(combined(edges, j, i)));
       return;
     }
     const [v, next] = generate(b, s);
@@ -466,6 +478,22 @@ export function edgeAssignment(
     values.push(v);
   });
   return [values, s];
+}
+
+/** Whether every part of the type is one the rung draws (no `unknown` anywhere in it). */
+function drawable(type: SpecType): boolean {
+  switch (type.kind) {
+    case "unknown":
+      return false;
+    case "array":
+      return drawable(type.element);
+    case "union":
+      return type.members.every(drawable);
+    case "record":
+      return type.fields.every((f) => drawable(f.type));
+    default:
+      return true;
+  }
 }
 
 /** A value of the type, within the hint (which applies to a top-level binder only). */
@@ -517,6 +545,37 @@ export function generateOf(
         const [v, next] = generateOf(`${name}.${f.name}`, f.type, undefined, s);
         s = next;
         out[f.name] = v;
+      }
+      return [out, s];
+    }
+    case "array": {
+      // Refused whatever length is drawn, as an unreadable parameter type is: an empty draw must
+      // not make an array of something unreadable look testable.
+      if (!drawable(type.element))
+        throw new CannotGenerate(
+          "unsupported",
+          `${name} has a type the rung cannot draw from: ${describeType(type)}`,
+        );
+      // Mostly short (up to 4), sometimes up to 16; an element repeats an earlier one a quarter of
+      // the time, since a claim keyed on distinct elements breaks on a repeat.
+      const [cls, s0] = nextInt(state, 100);
+      const [length, s1] = nextInt(s0, cls < 70 ? 5 : 17);
+      let s = s1;
+      const out: unknown[] = [];
+      for (let i = 0; i < length; i++) {
+        if (out.length > 0) {
+          const [repeat, s2] = nextInt(s, 4);
+          s = s2;
+          if (repeat === 0) {
+            const [v, s3] = pick(out, s);
+            s = s3;
+            out.push(copy(v));
+            continue;
+          }
+        }
+        const [v, next] = generateOf(`${name}[${i}]`, type.element, undefined, s);
+        s = next;
+        out.push(v);
       }
       return [out, s];
     }
@@ -605,6 +664,8 @@ export function conforms(type: SpecType, v: unknown): boolean {
         v !== null &&
         type.fields.every((f) => conforms(f.type, (v as Record<string, unknown>)[f.name]))
       );
+    case "array":
+      return Array.isArray(v) && v.every((x) => conforms(type.element, x));
     case "unknown":
       return true;
   }
@@ -657,10 +718,15 @@ export function shrinkCandidates(b: Binder, v: unknown): unknown[] {
 }
 
 function candidatesOf(type: SpecType, hint: Hint | undefined, v: unknown): unknown[] {
+  // Keyed as `same` compares, in one pass: nested arrays give thousands of candidates.
   const dedupe = (xs: unknown[]) => {
-    const out: unknown[] = [];
-    for (const x of xs) if (!out.some((y) => same(x, y))) out.push(x);
-    return out;
+    const keys = new Set<string>();
+    return xs.filter((x) => {
+      const key = `${typeof x}:${render(x)}`;
+      if (keys.has(key)) return false;
+      keys.add(key);
+      return true;
+    });
   };
   switch (type.kind) {
     case "boolean":
@@ -700,6 +766,27 @@ function candidatesOf(type: SpecType, hint: Hint | undefined, v: unknown): unkno
       const first = chars.findIndex((c) => c !== "a");
       if (first >= 0) out.push([...chars.slice(0, first), "a", ...chars.slice(first + 1)].join(""));
       return dedupe(out);
+    }
+    case "array": {
+      // Shorter first (empty, then one element dropped), then elements smaller: one at a time, and
+      // every copy of a value at once, so a repeat that breaks the claim survives the shrink.
+      // At most shrinkCandidateLimit, in that order: nested arrays have more candidates than the
+      // shrinker will ever evaluate, and building them all costs seconds.
+      if (!Array.isArray(v)) return [];
+      const out: unknown[] = v.length > 0 ? [[]] : [];
+      for (let i = 0; i < v.length; i++) out.push(v.filter((_, j) => j !== i));
+      const keys = v.map((x) => `${typeof x}:${render(x)}`);
+      for (let i = 0; i < v.length && out.length < shrinkCandidateLimit; i++) {
+        const own = keys[i];
+        const repeated = keys.some((k, j) => j !== i && k === own);
+        for (const c of candidatesOf(type.element, undefined, v[i])) {
+          if (out.length >= shrinkCandidateLimit) break;
+          if (`${typeof c}:${render(c)}` === own) continue;
+          out.push(v.map((x, j) => (j === i ? c : x)));
+          if (repeated) out.push(v.map((x, j) => (keys[j] === own ? copy(c) : x)));
+        }
+      }
+      return dedupe(out).slice(0, shrinkCandidateLimit);
     }
     case "literal":
     case "null":
