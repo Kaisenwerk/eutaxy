@@ -53,6 +53,20 @@ export const exitCodes = { BOUNDED: 0, VIOLATED: 1, UNSUPPORTED: 2, error: 3 } a
 /** The engines `--prover` can name. */
 export const provers: Readonly<Record<string, Prover>> = { lean: leanProver, smt: smtProver };
 
+/** The engines named, or the error naming the first unknown one. */
+export function enginesNamed(
+  names: readonly string[],
+): { readonly engines: Prover[] } | { readonly error: string } {
+  const engines: Prover[] = [];
+  for (const name of names) {
+    const engine = provers[name];
+    if (!engine)
+      return { error: `unknown prover ${name}; known: ${Object.keys(provers).join(", ")}` };
+    engines.push(engine);
+  }
+  return { engines };
+}
+
 /**
  * The PROVEN rung, on the Node side: each engine on each observed spec
  * module's source, the outcomes folded into the simulator's verdicts.
@@ -200,16 +214,12 @@ export async function runCheck(o: CheckOptions): Promise<number> {
     const verdict = report.verdict;
     let specs = report.specs ?? [];
     if (o.provers && o.provers.length > 0) {
-      const engines: Prover[] = [];
-      for (const name of o.provers) {
-        const engine = provers[name];
-        if (!engine) {
-          o.stderr(`unknown prover ${name}; known: ${Object.keys(provers).join(", ")}\n`);
-          return exitCodes.error;
-        }
-        engines.push(engine);
+      const named = enginesNamed(o.provers);
+      if ("error" in named) {
+        o.stderr(`${named.error}\n`);
+        return exitCodes.error;
       }
-      specs = await proveSpecs(dir, transport.observed ?? [], specs, engines, specModules);
+      specs = await proveSpecs(dir, transport.observed ?? [], specs, named.engines, specModules);
     }
     const printed =
       o.provers && o.provers.length > 0

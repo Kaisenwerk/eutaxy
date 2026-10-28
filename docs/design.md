@@ -973,9 +973,16 @@ Adapter rules:
 | Command                        | Does                                                                            |
 | ------------------------------ | ------------------------------------------------------------------------------- |
 | `eutaxy check <spec>`          | Run a scenario; print the verdict and the shrunk trace, write a regression test |
-| `eutaxy prove <file>`          | Run the spec ladder on pure functions                                           |
-| `eutaxy report`                | Combined view: spec verdicts per function, simulation verdicts per handler      |
+| `eutaxy report [dir]`          | Run the spec ladder on every spec file under a directory, without a scenario    |
 | `eutaxy prover install <name>` | Download a pinned prover toolchain                                              |
+
+`report` covers the pure core and needs only Node: it imports each module
+and its spec file, runs `TESTED` and, with `--prover`, `PROVEN`, and prints
+the verdicts by module. Scenario verdicts stay with `check`, since a
+scenario runs inside workerd under a budget and running all of them is the
+job of the project's test suite, which the regression tests already join.
+A spec file run by itself needs no separate command: `report` on its
+directory is that.
 
 Every command takes `--json`, printing one object in a versioned schema
 (`schemaVersion` 1, canonical JSON) for CI and coding agents; within a

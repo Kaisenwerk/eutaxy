@@ -112,6 +112,20 @@ violation writes `payments.regression.test.ts`, which fails while the bug
 exists and passes once it is fixed. It exits 0 for `BOUNDED`, 1 for
 `VIOLATED` or a `REFUTED` spec, 2 for `UNSUPPORTED`, and 3 on an error.
 
+To see every spec in a project at once, without a scenario:
+
+```sh
+eutaxy report ./src --prover smt
+```
+
+It finds every spec file under the directory, runs each property through
+`TESTED` and, with `--prover`, `PROVEN`, and prints the verdicts by module
+with a count (or `--json`). No scenario runs, so nothing is `CHECKED`, and
+the modules are loaded in Node, so one that only loads inside workerd stays
+`UNKNOWN` until an engine reads it; so does a module whose properties do
+not finish within 60 seconds. It exits 1 for a `REFUTED` or `CONFLICT`
+spec and 0 otherwise.
+
 ## Developing
 
 Requires Node 24 and pnpm.

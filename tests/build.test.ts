@@ -44,6 +44,20 @@ describe("published package", () => {
       true,
     );
     expect(run(process.execPath, [join(dist, "bin.mjs"), "help"], root)).toContain("Usage:");
+    // report runs each module in a worker started on the bundled chunk that holds it; the bin must
+    // not be that chunk, or the worker would run the command again.
+    let out = "";
+    try {
+      run(
+        process.execPath,
+        [join(dist, "bin.mjs"), "report", "corpus/prover-contracts/strings", "--json"],
+        root,
+      );
+    } catch (err) {
+      out = (err as { stdout?: string }).stdout ?? ""; // exits 1: the entry plants refutations
+    }
+    const report = JSON.parse(out) as { specs: { kind: string }[] };
+    expect(report.specs.filter((s) => s.kind === "TESTED")).toHaveLength(5);
   }, 180_000);
 
   test("packs with publishConfig applied: dist entries, bin, no internal dependencies", () => {
