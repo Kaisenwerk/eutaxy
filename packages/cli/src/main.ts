@@ -51,6 +51,13 @@ export async function main(argv: readonly string[], io: Io): Promise<number> {
     io.stdout(usage);
     return command ? exitCodes.BOUNDED : exitCodes.error;
   }
+  // A value flag given without one would otherwise read as absent: `--prover` alone must not quietly
+  // skip the PROVEN rung.
+  for (const k of ["wrangler", "seed", "max-runs", "budget-ms", "prover", "out"])
+    if (flags[k] === true) {
+      io.stderr(`--${k} needs a value\n`);
+      return exitCodes.error;
+    }
   const str = (k: string): string | undefined =>
     typeof flags[k] === "string" ? (flags[k] as string) : undefined;
   const provers = (str("prover") ?? "")

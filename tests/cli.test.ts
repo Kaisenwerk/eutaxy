@@ -103,6 +103,9 @@ describe("eutaxy check", () => {
       eutaxy(["check", "corpus/differential/d1-ledger/scenario.sim.ts", "--max-runs", "0"]).status,
     ).toBe(3);
     expect(eutaxy(["check", "nope.sim.ts"]).status).toBe(3);
+    const bare = eutaxy(["check", "corpus/differential/d1-ledger/scenario.sim.ts", "--seed"]);
+    expect(bare.status).toBe(3);
+    expect(bare.stderr).toContain("--seed needs a value");
     expect(eutaxy(["nope"]).status).toBe(3);
     expect(eutaxy(["help"]).stdout).toContain("Usage:");
   });
@@ -303,7 +306,10 @@ describe("eutaxy report", () => {
     expect(r.stdout).toContain("TESTED   decideRefund fullRefundAllowed: held on");
     expect(r.stdout).toContain("4 properties in 1 module:");
     expect(eutaxy(["report", "corpus/prover-contracts/strings", "extra"]).status).toBe(3);
-    // A check-only flag is not ignored.
+    // A forgotten value must not quietly drop the PROVEN rung; a check-only flag is not ignored.
+    const bare = eutaxy(["report", "corpus/prover-contracts/strings", "--prover"]);
+    expect(bare.status).toBe(3);
+    expect(bare.stderr).toContain("--prover needs a value");
     const checkOnly = eutaxy(["report", "corpus/prover-contracts/strings", "--max-runs", "5"]);
     expect(checkOnly.status).toBe(3);
     expect(checkOnly.stderr).toContain("report does not take --max-runs");
