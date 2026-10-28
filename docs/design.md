@@ -1057,6 +1057,16 @@ Self-verification targets, by cost of a bug:
 | Verdict logic         | `VIOLATED` only after a successful replay                                                                       | False alarms                       |
 | Shrinker              | Output still violates and is no longer than input                                                               | Unhelpful traces only              |
 
+The invariant checkers are held to their references by Eutaxy's own spec
+file beside them in `core`: each checker gets a form over plain data
+(drawn effects in small domains, so targets, ops and keys collide as in
+real logs; a selector anchored on a drawn effect, so it selects
+something), and each property states that the real checker, run on the
+log those effects make, reports what a naive reference written in the
+spec file reports. `eutaxy report packages/core/src` runs them at
+`TESTED`, and a test plants bugs in a copy of the core and requires each
+refuted, so the self-check is shown to fail when a checker is wrong.
+
 Not self-verifiable: binding proxies, globals patching and the workerd/Vitest
 glue (covered by differential testing), and the spec reader (a common-mode
 failure, covered by a corpus of modules with known `SpecIR` and, once the
