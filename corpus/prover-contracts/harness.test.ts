@@ -13,7 +13,7 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { type PrngState, seedPrng } from "@eutaxy/core";
+import { nextInt, type PrngState, seedPrng } from "@eutaxy/core";
 import { generate, type ProofOutcome, testedRung } from "@eutaxy/prover";
 import { readSpecs, readSubset, type SubsetType } from "@eutaxy/prover/reader";
 import {
@@ -57,28 +57,44 @@ test("the pinned toolchains are installed where they are required", () => {
 
 const outcomeName = (o: ProofOutcome): string => (o.kind === "UNKNOWN" ? o.cause : o.kind);
 
-/** Inputs drawn from a parameter's type: small integers, both booleans, short strings. */
+/** A value of a subset type: small integers, both booleans, short strings, lists of up to three of them. */
+function drawValue(t: SubsetType, state: PrngState): [unknown, PrngState] {
+  if (t.kind === "list") {
+    const [length, s0] = nextInt(state, 4);
+    let s = s0;
+    const out: unknown[] = [];
+    for (let i = 0; i < length; i++) {
+      const [v, next] = drawValue(t.element, s);
+      s = next;
+      out.push(v);
+    }
+    return [out, s];
+  }
+  const binder: Binder =
+    t.kind === "bool"
+      ? { name: "b", type: { kind: "boolean" } }
+      : t.kind === "string"
+        ? { name: "s", type: { kind: "string" } }
+        : {
+            name: "n",
+            type: { kind: "number" },
+            hint: {
+              integer: true,
+              lower: { value: "-50", inclusive: true },
+              upper: { value: "50", inclusive: true },
+            },
+          };
+  return generate(binder, state) as [unknown, PrngState];
+}
+
+/** Inputs drawn from the parameters' types. */
 function drawArgs(types: readonly SubsetType[], count: number): unknown[][] {
   let state: PrngState = seedPrng("contracts");
   const out: unknown[][] = [];
   for (let i = 0; i < count; i++) {
     const args: unknown[] = [];
     for (const t of types) {
-      const binder: Binder =
-        t.kind === "bool"
-          ? { name: "b", type: { kind: "boolean" } }
-          : t.kind === "string"
-            ? { name: "s", type: { kind: "string" } }
-            : {
-                name: "n",
-                type: { kind: "number" },
-                hint: {
-                  integer: true,
-                  lower: { value: "-50", inclusive: true },
-                  upper: { value: "50", inclusive: true },
-                },
-              };
-      const [v, next] = generate(binder, state);
+      const [v, next] = drawValue(t, state);
       state = next;
       args.push(v);
     }
@@ -87,21 +103,33 @@ function drawArgs(types: readonly SubsetType[], count: number): unknown[][] {
   return out;
 }
 
-/** Parameter types the translation checks draw from; records, nullable types and unions are not drawn yet. */
-const drawable = new Set(["int", "bool", "string"]);
+/**
+ * Types the translation checks draw from, per engine: records, nullable
+ * types and unions are not drawn yet; lists only for the Lean engine (the
+ * SMT engine does not take them).
+ */
+const drawable = (t: SubsetType, engine: "lean" | "smt"): boolean =>
+  t.kind === "int" ||
+  t.kind === "bool" ||
+  t.kind === "string" ||
+  (engine === "lean" && t.kind === "list" && drawable(t.element, engine));
 
 /** The functions the translation can be validated on: in the subset, exported, every parameter drawable. */
-async function drawn(dir: string, source: string) {
+async function drawn(dir: string, source: string, engine: "lean" | "smt") {
   const subset = readSubset(source);
   const module = (await import(join(dir, "domain.ts"))) as Record<
     string,
     (...a: unknown[]) => unknown
   >;
+  // Any result is compared, as before lists; a list result only where the engine takes lists.
+  const checked = (f: (typeof subset.functions)[number]) =>
+    f.params.every((p) => drawable(p.type, engine)) &&
+    (engine === "lean" || f.returns.kind !== "list");
   const checks: { fn: (typeof subset.functions)[number]; args: unknown[]; result: unknown }[] = [];
   let functions = 0;
   for (const fn of subset.functions) {
     if (typeof module[fn.name] !== "function") continue;
-    if (fn.params.some((p) => !drawable.has(p.type.kind))) continue;
+    if (!checked(fn)) continue;
     functions++;
     for (const args of drawArgs(
       fn.params.map((p) => p.type),
@@ -112,11 +140,8 @@ async function drawn(dir: string, source: string) {
   // Every entry with a function in the subset validates the translation; none may silently skip it.
   expect(checks.length).toBe(functions * 12);
   expect(functions).toBe(
-    subset.functions.filter(
-      (f) =>
-        f.params.every((p) => drawable.has(p.type.kind)) &&
-        source.includes(`export function ${f.name}(`),
-    ).length,
+    subset.functions.filter((f) => checked(f) && source.includes(`export function ${f.name}(`))
+      .length,
   );
   expect(source.match(/^export function (\w+)/gm)?.length ?? 0).toBeGreaterThan(0);
   return { subset, checks };
@@ -180,7 +205,7 @@ for (const entry of entries) {
       "lean",
       async () => {
         const specs = readSpecs({ module: source, spec, moduleSpecifiers: ["./domain.ts"] });
-        const { subset, checks } = await drawn(dir, source);
+        const { subset, checks } = await drawn(dir, source, "lean");
         const extra = checks.map(
           ({ fn, args, result }) =>
             `example : ${leanIdent.fn(fn.name)}${args.map((a, i) => ` ${leanValue(a, (fn.params[i] as (typeof fn.params)[number]).type, subset)}`).join("")} = ${leanValue(result, fn.returns, subset)} := by decide`,
@@ -195,7 +220,7 @@ for (const entry of entries) {
       "smt",
       async () => {
         const specs = readSpecs({ module: source, spec, moduleSpecifiers: ["./domain.ts"] });
-        const { subset, checks } = await drawn(dir, source);
+        const { subset, checks } = await drawn(dir, source, "smt");
         const extra = checks.map(({ fn, args, result }) => {
           const call =
             args.length === 0

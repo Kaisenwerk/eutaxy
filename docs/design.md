@@ -857,9 +857,24 @@ guards, so a field read on a nullable is in the subset only there),
 lone surrogate has no Lean character and is refused), record literals
 (a union member's by its tag), field reads (on a union, a field every
 member has: its tag), `Number.isInteger`, and calls to the module's own
-functions. Of these the Lean engine takes everything but the nullable
-types and the unions, which the SMT engine takes first; a function using
-them is `unsupported` for Lean, as is a caller of one. Ordering strings is refused: JavaScript compares UTF-16 code
+functions. Arrays are in it as lists (`readonly T[]` or `T[]`, Lean's
+`List`): literals with a trailing spread (`[i, ...s]`), `length`,
+`xs[0] ?? fallback` (the only index, since any other may be past the
+end, and not on a list of a nullable type, where `??` replaces a `null`
+element too), `slice(1)`, `map` and `flatMap` (the callback may take the index),
+`every`, `some` and `reduce`, with callbacks whose body is one
+expression. Recursion is in it as structural recursion on a list: a
+function whose body first tests a list parameter's length against 0 and
+calls itself, in the other branch, only on that list's `slice(1)`; Lean
+takes it as a match on the empty list and `head :: tail`, which needs no
+termination proof and gives induction its equations; a proof that
+unfolds one says it assumes the JavaScript returns, since a long enough
+list exhausts its call stack, and a proof over arrays says it assumes
+them dense, since JavaScript's array methods skip a sparse array's holes.
+Other recursion, mutual recursion included, is outside. Of these the Lean engine takes
+everything but the nullable types and the unions, which the SMT engine
+takes first; the SMT engine does not take lists. A function using what
+an engine does not take is `unsupported` there, as is a caller of one. Ordering strings is refused: JavaScript compares UTF-16 code
 units, Lean characters, and the two disagree beyond the basic plane. A function outside the subset, or one calling such a function,
 is `UNKNOWN` (`unsupported`) with the construct and the line, and the rest
 of the module still goes through; a record type outside it makes the

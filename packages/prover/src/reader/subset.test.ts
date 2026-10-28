@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { readExpression, readSubset, restrictModule } from "./subset.ts";
+import { listKinds, readExpression, readSubset, restrictModule } from "./subset.ts";
 
 const refund = `
 export interface RefundDecision {
@@ -178,9 +178,33 @@ export function fine(n: number): number { return n; }
     ["export function f(x: number): number { if (x > 0) return 1; }", "does not return"],
     ["export function f(x: number): number { return x; return x; }", "statements after a return"],
     ["export function f(x: number): number { return 'a' + 1; }", "+ on a string and a int"],
-    ["export function f(x: number[]): number { return 1; }", "arrays, generics"],
-    ["export function f(x: readonly number[]): number { return 1; }", "an array type"],
-    ["export function f(x: ReadonlyArray<number>): number { return 1; }", "an array type"],
+    ["export function f(x: ReadonlyArray<number>): number { return 1; }", "ReadonlyArray<…>"],
+    ["export function f(x: readonly number): number { return 1; }", "readonly before a type"],
+    ["export function f(xs: readonly number[]): number { return xs[1] ?? 0; }", "other than xs[0]"],
+    [
+      "export function f(xs: readonly number[]): readonly number[] { return xs.slice(2); }",
+      "slice with",
+    ],
+    [
+      "export function f(xs: readonly number[]): number { return xs.indexOf(1); }",
+      "the method indexOf",
+    ],
+    [
+      "export function f(xs: readonly number[]): readonly number[] { return xs.map((x) => { return x; }); }",
+      "a block body",
+    ],
+    [
+      "export function f(xs: readonly number[]): readonly number[] { return [...xs, 1]; }",
+      "a spread that is not last",
+    ],
+    [
+      "export function f(n: number): number { return n <= 0 ? 0 : f(n - 1); }",
+      "recursive in a way the subset does not take",
+    ],
+    [
+      "export function f(xs: readonly number[]): number { if (xs.length === 0) return 0; return f(xs); }",
+      "recursive in a way the subset does not take",
+    ],
     ["export function f(x?: number): number { return 1; }", "optional parameter x"],
     ["export async function f(x: number): number { return x; }", "async function"],
     ["export function f(this: number, x: number): number { return x; }", "a this parameter"],
@@ -191,12 +215,150 @@ export function fine(n: number): number { return n; }
       "export interface P { a?: number }\nexport function f(x: number): P { return {}; }",
       "type P is outside the subset: optional field a",
     ],
-    ["export function f(x: number): number { return [x][0]; }", "an array literal"],
+    ["export function f(x: number): number { return [x][0]; }", "without ?? fallback"],
   ])("outside the subset: %s", (source, reason) => {
     const m = readSubset(source);
     expect(m.functions).toEqual([]);
     expect(m.outside).toHaveLength(1);
     expect(m.outside[0]?.message).toContain(reason);
+  });
+
+  test("lists: types, literals, the methods the subset has, and structural recursion", () => {
+    const m = readSubset(`
+export function schedules(levels: readonly (readonly string[])[]): readonly (readonly number[])[] {
+  if (levels.length === 0) return [[]];
+  const rest = schedules(levels.slice(1));
+  return (levels[0] ?? []).flatMap((_, i) => rest.map((s) => [i, ...s]));
+}
+export function count(levels: readonly (readonly string[])[]): number {
+  return levels.reduce((n, options) => n * options.length, 1);
+}
+export function allSmall(xs: number[]): boolean {
+  return xs.every((x) => x < 10) && !xs.some((x, i) => x === i);
+}
+`);
+    expect(m.outside).toEqual([]);
+    const [schedules, count, allSmall] = m.functions;
+    expect(schedules).toMatchObject({ name: "schedules", structural: 0 });
+    expect(schedules?.returns).toEqual({
+      kind: "list",
+      element: { kind: "list", element: { kind: "int" } },
+    });
+    expect(count).toMatchObject({ name: "count", returns: { kind: "int" } });
+    expect(count?.structural).toBeUndefined();
+    expect(allSmall?.params[0]?.type).toEqual({ kind: "list", element: { kind: "int" } });
+  });
+
+  test("?? binds looser than every other operator: only xs[0] alone may be its left operand", () => {
+    const outside = (body: string) =>
+      readSubset(`export function f(xs: readonly boolean[]): boolean { return ${body}; }`)
+        .outside[0]?.message;
+    expect(outside("false === xs[0] ?? false")).toContain("?? after anything but xs[0]");
+    expect(outside("!xs[0] ?? false")).toContain("?? after anything but xs[0]");
+    expect(outside("(xs[0] ?? false) ?? true")).toContain("?? after anything but xs[0]");
+    const m = readSubset(
+      "export function f(xs: readonly number[]): number { return xs[0] ?? 1 + 1; }\nexport function g(xs: readonly number[]): boolean { return false === (xs[0] ?? 0) > 0; }",
+    );
+    expect(m.outside).toEqual([]);
+    // `xs[0] ?? 1 + 1` is `xs[0] ?? (1 + 1)`, as in JavaScript.
+    expect(m.functions[0]?.body).toMatchObject({
+      kind: "headOr",
+      fallback: { kind: "binary", op: "+" },
+    });
+  });
+
+  test("an engine that does not take lists drops their functions and keeps the rest; record rejection follows list elements", () => {
+    const m = readSubset(`
+export interface R { readonly x: number | null; readonly y: number }
+export function lists(xs: readonly number[]): number { return xs.length; }
+export function inside(n: number): number { return [n].length; }
+export function plain(b: boolean): boolean { return b; }
+export function ofRecords(rs: readonly R[]): boolean { return rs.every((r) => r.y > 0); }
+`);
+    const noLists = restrictModule(
+      m,
+      (t) => t.kind !== "list" && t.kind !== "nothing",
+      "no lists",
+      listKinds,
+    );
+    expect(noLists.functions.map((f) => f.name)).toEqual(["plain"]);
+    const noNullable = restrictModule(m, (t) => t.kind !== "nullable", "no nullable");
+    expect(noNullable.functions.map((f) => f.name)).not.toContain("ofRecords");
+    // A union with a member the engine drops is dropped, and so is what uses it.
+    const u = readSubset(`
+export type Shape = { readonly kind: "dot" } | { readonly kind: "path"; readonly points: number[] };
+export function kindOf(s: Shape): string { return s.kind; }
+export function plain(b: boolean): boolean { return b; }
+`);
+    const noListsU = restrictModule(
+      u,
+      (t) => t.kind !== "list" && t.kind !== "nothing",
+      "no lists",
+      listKinds,
+    );
+    expect(noListsU.unions).toEqual([]);
+    expect(noListsU.functions.map((f) => f.name)).toEqual(["plain"]);
+    // Its other members go with it, and what takes them: their sort was the union's.
+    const v = readSubset(`
+export type V = { readonly kind: "a"; readonly n: number } | { readonly kind: "b"; readonly ps: number[] };
+export interface A { readonly kind: "a"; readonly n: number }
+export function nOf(a: A): number { return a.n; }
+export function plain(b: boolean): boolean { return b; }
+`);
+    const noListsV = restrictModule(
+      v,
+      (t) => t.kind !== "list" && t.kind !== "nothing",
+      "no lists",
+      listKinds,
+    );
+    expect(noListsV.records.filter((r) => r.union === "V")).toEqual([]);
+    // A local annotation of a type the engine does not take puts its function outside too.
+    const local = readSubset(
+      "export function f(): number { const xs: (number | null)[] = []; return xs.length; }\nexport function g(b: boolean): boolean { return b; }",
+    );
+    expect(
+      restrictModule(local, (t) => t.kind !== "nullable", "no nullable").functions.map(
+        (f) => f.name,
+      ),
+    ).toEqual(["g"]);
+    // An unannotated const holding an empty array of no type is refused at once.
+    expect(
+      readSubset("export function h(): number { const unused = []; return 1; }").outside[0]
+        ?.message,
+    ).toContain("annotate it");
+  });
+
+  test("xs[0] ?? d on a list of a nullable type is outside: ?? replaces a null head too", () => {
+    const m = readSubset(
+      "export function g(xs: readonly (number | null)[]): number | null { return xs[0] ?? 5; }",
+    );
+    expect(m.outside[0]?.message).toContain("list of a nullable type");
+  });
+
+  test("an engine that takes no unions keeps their members as records of their own", () => {
+    const m = readSubset(`
+export type S = { readonly kind: "a"; readonly n: number } | { readonly kind: "b" };
+export function h(n: number): number { const v = { kind: "b" }; return n; }
+`);
+    const lean = restrictModule(m, (t) => t.kind !== "union", "no unions");
+    expect(lean.records.map((r) => r.name).sort()).toEqual(["S.a", "S.b"]);
+    expect(lean.functions.map((f) => f.name)).toEqual(["h"]);
+  });
+
+  test("a reduce callback's null check narrows, as in map", () => {
+    const m = readSubset(
+      "export function f(xs: readonly (number | null)[]): number { return xs.reduce((acc, x) => acc + (x === null ? 0 : x), 0); }",
+    );
+    expect(m.outside).toEqual([]);
+  });
+
+  test("mutual recursion stays outside, structural or not", () => {
+    const m = readSubset(`
+export function a(xs: readonly number[]): number { if (xs.length === 0) return 0; return b(xs.slice(1)); }
+export function b(xs: readonly number[]): number { if (xs.length === 0) return 0; return a(xs.slice(1)); }
+`);
+    expect(m.functions).toEqual([]);
+    expect(m.outside.map((o) => o.message).join("\n")).toContain("recursive in a way");
   });
 
   test("a module's own type named Array is its own, not the built-in", () => {

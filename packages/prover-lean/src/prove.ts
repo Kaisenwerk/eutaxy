@@ -16,13 +16,17 @@ import type {
   ProveInput as ProverInput,
 } from "@eutaxy/prover";
 import {
+  children,
+  type Expr,
+  listKinds,
   OutsideSubset,
   readSubset,
   restrictModule,
+  type SubsetFunction,
   type SubsetModule,
   type SubsetType,
 } from "@eutaxy/prover/reader";
-import type { FunctionSpec, Property, SpecError } from "@eutaxy/spec";
+import type { FunctionSpec, Property, SpecError, SpecType } from "@eutaxy/spec";
 import { type Emitted, emitModule } from "./emit.ts";
 import { checkLean, findLean, type LeanDiagnostic, leanVersion } from "./lean.ts";
 
@@ -30,7 +34,11 @@ export const engineName = "lean";
 
 /** The types this engine translates: the integers, Bool, String and records of those. */
 export const leanTakes = (t: SubsetType): boolean =>
-  t.kind === "int" || t.kind === "bool" || t.kind === "string" || t.kind === "record";
+  t.kind === "int" ||
+  t.kind === "bool" ||
+  t.kind === "string" ||
+  t.kind === "record" ||
+  (t.kind === "list" && leanTakes(t.element));
 
 export type { ModuleProofs, ProofOutcome, PropertyProof } from "@eutaxy/prover";
 
@@ -52,6 +60,14 @@ export const engineAssumptions: readonly string[] = [
   "the function and its callees are the module's own, pure and total; nothing outside the module is modelled",
   `the proof was checked by the Lean ${leanVersion} kernel on the emitted statement, not by Eutaxy`,
 ];
+
+/** What a PROVEN over arrays rests on besides: the list model. */
+export const listAssumption =
+  "an array is modelled as a Lean List, dense: a sparse array, whose holes JavaScript's array methods skip, is outside every array binder's domain";
+
+/** What a PROVEN that unfolds a recursive function rests on besides: that the JavaScript returns. */
+export const recursionAssumption =
+  "a recursive function is modelled as returning on every input: JavaScript's call stack is bounded, so on a long enough list the code throws (RangeError) where the model returns";
 
 const proven: Extract<ProofOutcome, { kind: "PROVEN" }> = {
   kind: "PROVEN",
@@ -148,7 +164,7 @@ export function prepare(input: ProveInput): Prepared {
 
 /** Prove a module's properties with the pinned Lean. */
 export async function proveModule(input: ProveInput): Promise<LeanModuleProofs> {
-  const { emitted, fns, outside, specErrors } = prepare(input);
+  const { module, emitted, fns, outside, specErrors } = prepare(input);
   const inSubset = fns.filter((f) => !outside.has(f.name));
   const unsupported = fns
     .filter((f) => outside.has(f.name))
@@ -199,6 +215,7 @@ export async function proveModule(input: ProveInput): Promise<LeanModuleProofs> 
             ...proven,
             assumptions: [
               ...engineAssumptions,
+              ...modelAssumptions(property, fn.name, module),
               "Lean accepted the definition, so it terminates on every input",
             ],
           },
@@ -227,7 +244,10 @@ export async function proveModule(input: ProveInput): Promise<LeanModuleProofs> 
         property: property.name,
         outcome:
           failed.length === 0
-            ? proven
+            ? {
+                ...proven,
+                assumptions: [...engineAssumptions, ...modelAssumptions(property, fn.name, module)],
+              }
             : unknown(
                 "gave_up",
                 `Lean could not close the proof: ${(failed[0] as LeanDiagnostic).message.split("\n")[0]}`,
@@ -247,3 +267,79 @@ export const leanProver: Prover = {
   },
   prove: (input) => proveModule(input),
 };
+
+/** The list and recursion models a proof rests on, where its claim may meet them. */
+function modelAssumptions(property: Property, fn: string, module: SubsetModule): string[] {
+  // The module functions this claim's own arrows name, by the spec file's names for them: named at
+  // all, called or not, so `(sum)(xs)` counts; a disclosure may err only toward saying more.
+  const arrows = [property.when?.body ?? "", property.ensures?.body ?? ""].join("\n");
+  const called = property.imports.filter((i) =>
+    new RegExp(`(^|[^\\w$])${i.local.replace(/\$/g, "\\$")}($|[^\\w$])`).test(arrows),
+  );
+  const roots = [fn, ...called.map((i) => i.fn)];
+  return [
+    ...(usesLists(property, roots, module) ? [listAssumption] : []),
+    ...(reached(roots, module).some((f) => f.structural !== undefined)
+      ? [recursionAssumption]
+      : []),
+  ];
+}
+
+/**
+ * The functions a property's claim may unfold: its function, the module
+ * functions its arrows call, and, through their calls, everything they
+ * reach.
+ */
+function reached(roots: readonly string[], module: SubsetModule): SubsetFunction[] {
+  const byName = new Map(module.functions.map((f) => [f.name, f]));
+  const out = new Map<string, SubsetFunction>();
+  const visit = (name: string) => {
+    const f = byName.get(name);
+    if (!f || out.has(name)) return;
+    out.set(name, f);
+    const walk = (e: Expr): void => {
+      if (e.kind === "call") visit(e.callee);
+      for (const c of children(e)) walk(c);
+    };
+    walk(f.body);
+  };
+  for (const r of roots) visit(r);
+  return [...out.values()];
+}
+
+/**
+ * Whether a list can be in play in a property: a binder whose type holds
+ * an array at any depth, or a function the claim may unfold that holds a
+ * list in its types (through records too) or builds one.
+ */
+function usesLists(property: Property, roots: readonly string[], module: SubsetModule): boolean {
+  const records = new Map(module.records.map((r) => [r.name, r]));
+  const seen = new Set<string>();
+  const hasList = (t: SubsetType): boolean => {
+    if (t.kind === "list") return true;
+    if (t.kind === "nullable") return hasList(t.inner);
+    if (t.kind === "record" && !seen.has(t.name)) {
+      seen.add(t.name);
+      return records.get(t.name)?.fields.some((f) => hasList(f.type)) ?? false;
+    }
+    return false;
+  };
+  const hasArray = (t: SpecType): boolean => {
+    if (t.kind === "array") return true;
+    if (t.kind === "union") return t.members.some(hasArray);
+    if (t.kind === "record") return t.fields.some((f) => hasArray(f.type));
+    return false;
+  };
+  const builds = (e: Expr): boolean => listKinds.has(e.kind) || children(e).some(builds);
+  // The arrows' own array literals and methods, read from their text: a disclosure may err only toward saying more.
+  const arrowLists = [property.when, property.ensures].some(
+    (a) => a !== undefined && /\[|\.(map|flatMap|every|some|reduce|slice|length)\b/.test(a.body),
+  );
+  return (
+    property.binders.some((b) => hasArray(b.type)) ||
+    arrowLists ||
+    reached(roots, module).some(
+      (f) => hasList(f.returns) || f.params.some((p) => hasList(p.type)) || builds(f.body),
+    )
+  );
+}

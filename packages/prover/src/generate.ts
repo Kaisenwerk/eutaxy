@@ -665,7 +665,11 @@ export function conforms(type: SpecType, v: unknown): boolean {
         type.fields.every((f) => conforms(f.type, (v as Record<string, unknown>)[f.name]))
       );
     case "array":
-      return Array.isArray(v) && v.every((x) => conforms(type.element, x));
+      // A sparse array is outside: JavaScript's array methods skip its holes, a list has none.
+      if (!Array.isArray(v)) return false;
+      for (let i = 0; i < v.length; i++)
+        if (!(i in v) || !conforms(type.element, v[i])) return false;
+      return true;
     case "unknown":
       return true;
   }

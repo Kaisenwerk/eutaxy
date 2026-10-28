@@ -50,6 +50,16 @@ describe("prepare", () => {
     expect([...p.scripts.keys()].map((k) => k.split("\u0000")[1])).toEqual(["q"]);
   });
 
+  test("a function over lists is outside here; the module's other functions still get their scripts", () => {
+    const source =
+      "export function f(xs: readonly number[]): number { return xs.length; }\nexport function g(b: boolean): boolean { return b; }";
+    const spec =
+      'import { forall } from "eutaxy/spec";\nimport { f, g } from "./domain.ts";\nexport const p = forall(f, { ensures: (xs) => f(xs) >= 0 });\nexport const q = forall(g, { ensures: (b) => g(b) === b });';
+    const p = prepare({ source, specs: read(source, spec) });
+    expect(p.outside.get("f")).toContain("arrays are not in this engine's subset");
+    expect([...p.scripts.keys()].map((k) => k.split("\u0000")[1])).toEqual(["q"]);
+  });
+
   test("a property the emitter cannot state is skipped with why, located in the spec file", () => {
     const source =
       "export interface R { readonly n: number }\nexport function f(r: R): R { return r; }";

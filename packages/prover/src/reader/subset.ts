@@ -35,7 +35,11 @@ export type SubsetType =
   /** A tagged union of records declared as a type alias; its members are records of the module. */
   | { readonly kind: "union"; readonly name: string }
   /** The type of the literal `null` itself, which only a nullable type accepts. */
-  | { readonly kind: "null" };
+  | { readonly kind: "null" }
+  /** `readonly T[]` or `T[]`: a list of values of one type (Lean's `List`). */
+  | { readonly kind: "list"; readonly element: SubsetType }
+  /** The element type of `[]`, which fits in a list of any type. */
+  | { readonly kind: "nothing" };
 
 export interface Field {
   readonly name: string;
@@ -88,6 +92,30 @@ export type Expr =
       readonly body: Expr;
       /** The `const`'s annotation, when it has one: the binding's type, whatever the initializer's. */
       readonly type?: SubsetType;
+    }
+  /** `[a, b]`, or `[a, b, ...rest]` with the spread last. `xs.length` is a `field` read on a list. */
+  | { readonly kind: "list"; readonly items: readonly Expr[]; readonly rest?: Expr }
+  /** `xs.slice(1)`: every element but the first. */
+  | { readonly kind: "tail"; readonly list: Expr }
+  /** `xs[0] ?? fallback`: the first element, or the fallback for an empty list. */
+  | { readonly kind: "headOr"; readonly list: Expr; readonly fallback: Expr }
+  /** `xs.map`, `xs.flatMap`, `xs.every` or `xs.some` with `(item, index?) => body`. */
+  | {
+      readonly kind: "iterate";
+      readonly op: "map" | "flatMap" | "every" | "some";
+      readonly list: Expr;
+      readonly item: string;
+      readonly index?: string;
+      readonly body: Expr;
+    }
+  /** `xs.reduce((acc, item) => body, init)`: a left fold. */
+  | {
+      readonly kind: "fold";
+      readonly list: Expr;
+      readonly acc: string;
+      readonly item: string;
+      readonly body: Expr;
+      readonly init: Expr;
     };
 
 export interface Param {
@@ -114,6 +142,12 @@ export interface SubsetFunction {
   readonly line: number;
   /** Offset of the `(` opening its parameters: the declaration's identity, as the spec extractor records it. */
   readonly offset: number;
+  /**
+   * For a recursive function, the list parameter it recurses on (its
+   * index): the body tests that list's length against 0 first, and every
+   * call to itself, in the other branch, passes that list's slice(1).
+   */
+  readonly structural?: number;
 }
 
 /** A function the subset does not take, and why. */
@@ -275,13 +309,43 @@ function typeAnnotation(r: Reader, declared: Declared, bad: BadRecords = new Map
   const alternatives: Alternative[] = [];
   if (r.isPunct("|")) r.at++;
   for (;;) {
-    alternatives.push(alternative(r, declared, bad));
+    alternatives.push(listed(r, declared, bad));
     if (!r.isPunct("|")) break;
     r.at++;
   }
   if (r.isPunct("[") || r.isPunct("<") || r.isPunct("&"))
-    r.fail(`type …${r.peek()?.text}… (arrays, generics and intersections are outside the subset)`);
+    r.fail(
+      `type …${r.peek()?.text}… (generics, intersections and index access are outside the subset; an array is readonly T[] or T[])`,
+    );
   return classify(alternatives, r, first);
+}
+
+/**
+ * One alternative with its `[]` suffixes, each a list of it, or
+ * `readonly` before one that has them; a parenthesized type is one
+ * alternative. Only a type is listed: `"a"[]` and `null[]` are not read.
+ */
+function listed(r: Reader, declared: Declared, bad: BadRecords): Alternative {
+  const start = r.peek();
+  const readonly = r.isWord("readonly");
+  if (readonly) r.at++;
+  let a: Alternative;
+  if (r.isPunct("(")) {
+    const open = r.take();
+    a = { kind: "type", type: typeAnnotation(r, declared, bad), token: open };
+    r.expectPunct(")");
+  } else a = alternative(r, declared, bad);
+  let lists = 0;
+  while (r.isPunct("[") && r.isPunct("]", 1)) {
+    if (a.kind !== "type")
+      r.fail("an array of literals or null (declare its element type)", a.token);
+    r.at += 2;
+    a = { kind: "type", type: { kind: "list", element: a.type }, token: a.token };
+    lists++;
+  }
+  if (readonly && lists === 0) r.fail("readonly before a type that is not an array", start);
+  if (a.kind === "type" && start && r.isPunct("[")) r.fail("index access in a type", r.peek());
+  return a;
 }
 
 function alternative(r: Reader, declared: Declared, bad: BadRecords): Alternative {
@@ -302,8 +366,8 @@ function alternative(r: Reader, declared: Declared, bad: BadRecords): Alternativ
     return { kind: "type", type: { kind: "record", name: t.text }, token: t };
   const alias = declared.aliases.get(t.text);
   if (alias) return { kind: "type", type: alias, token: t };
-  if (t.text === "readonly" || t.text === "Array" || t.text === "ReadonlyArray")
-    r.fail("an array type (arrays are outside the subset)", t);
+  if (t.text === "Array" || t.text === "ReadonlyArray")
+    r.fail(`${t.text}<…> (the subset spells an array readonly T[] or T[])`, t);
   r.fail(
     `type ${t.text} (the subset has number, boolean, string, null, and the module's own record types, unions and aliases)`,
     t,
@@ -870,9 +934,25 @@ class FunctionParser {
     return value;
   }
 
+  /** `xs[0]` just read, with `??` next: `expression` takes it if it is the whole left operand. */
+  private pendingIndex: { readonly list: Expr; readonly at: number } | undefined;
+
   expression(scope: ReadonlyMap<string, SubsetType>): Expr {
     const r: Reader = this.r;
-    const left = this.binary(scope, 0);
+    const start = r.at;
+    let left = this.binary(scope, 0);
+    if (r.isPunct("??")) {
+      const pending = this.pendingIndex;
+      // The left operand must be `xs[0]` alone: nothing but the list and its index since `start`.
+      if (!pending || pending.at !== r.at || left !== pending.list || !this.indexOnly(start))
+        r.fail(
+          "?? after anything but xs[0] (write xs[0] ?? fallback, parenthesized where it meets other operators)",
+        );
+      this.pendingIndex = undefined;
+      r.at++;
+      left = { kind: "headOr", list: pending.list, fallback: this.binary(scope, 0) };
+      if (r.isPunct("??")) r.fail("a chain of ??");
+    }
     if (r.isPunct("?")) {
       r.at++;
       const then = this.expression(scope);
@@ -881,6 +961,19 @@ class FunctionParser {
       return { kind: "cond", test: left, ifTrue: then, ifFalse: otherwise };
     }
     return left;
+  }
+
+  /** Whether the tokens from `start` to here hold no operator outside brackets: an operand and its `[0]`. */
+  private indexOnly(start: number): boolean {
+    let depth = 0;
+    for (let i = start; i < this.r.at; i++) {
+      const t = this.r.tokens[i] as Token;
+      if (t.kind !== "punct") continue;
+      if (t.text === "(" || t.text === "[" || t.text === "{") depth++;
+      else if (t.text === ")" || t.text === "]" || t.text === "}") depth--;
+      else if (depth === 0 && t.text !== ".") return false;
+    }
+    return true;
   }
 
   private binary(scope: ReadonlyMap<string, SubsetType>, level: number): Expr {
@@ -892,7 +985,7 @@ class FunctionParser {
       if (t?.kind !== "punct" || !ops.includes(t.text as BinaryOp)) {
         if (
           t?.kind === "punct" &&
-          ["==", "!=", "/", "%", "**", "??", "<<", ">>", "&", "|", "^"].includes(t.text)
+          ["==", "!=", "/", "%", "**", "<<", ">>", "&", "|", "^"].includes(t.text)
         )
           this.r.fail(`the ${t.text} operator`, t);
         return left;
@@ -933,11 +1026,28 @@ class FunctionParser {
       if (r.isPunct(".")) {
         r.at++;
         const field = r.ident();
+        if (r.isPunct("(")) {
+          e = this.method(scope, e, field);
+          continue;
+        }
         e = { kind: "field", object: e, field };
         continue;
       }
       if (r.isPunct("?.")) r.fail("optional chaining");
-      if (r.isPunct("[")) r.fail("index access");
+      if (r.isPunct("[")) {
+        // `xs[0] ?? fallback` only: any other index may be past the end, which is undefined.
+        const open = r.take();
+        const index = r.take();
+        if (index.kind !== "number" || index.text !== "0" || !r.isPunct("]"))
+          r.fail("index access other than xs[0] ?? fallback", open);
+        r.at++;
+        // `??` binds looser than every other operator: `expression` pairs it with this index, and
+        // only when the index is all of its left operand (`a === xs[0] ?? b` is `(a === xs[0]) ?? b`).
+        if (!r.isPunct("??"))
+          r.fail("xs[0] without ?? fallback (it is undefined on an empty list)", open);
+        this.pendingIndex = { list: e, at: r.at };
+        return e;
+      }
       if (r.isPunct("(")) {
         // A binder or local named like a function shadows it: the call is to a number, which throws.
         if (e.kind === "var" && scope.has(e.name))
@@ -1017,12 +1127,93 @@ class FunctionParser {
           return e;
         }
         if (t.text === "{") return this.record(scope);
-        if (t.text === "[") r.fail("an array literal", t);
+        if (t.text === "[") return this.listLiteral(scope);
         r.fail(`unexpected ${t.text}`, t);
         break;
       default:
         r.fail(`unexpected ${t.text}`, t);
     }
+  }
+
+  /** `[a, b]` or `[a, b, ...rest]`, the `[` taken. */
+  private listLiteral(scope: ReadonlyMap<string, SubsetType>): Expr {
+    const r: Reader = this.r;
+    const items: Expr[] = [];
+    let rest: Expr | undefined;
+    while (!r.isPunct("]")) {
+      if (rest) r.fail("a spread that is not last in an array literal");
+      if (r.isPunct("...")) {
+        r.at++;
+        rest = this.expression(scope);
+      } else items.push(this.expression(scope));
+      if (r.isPunct(",")) r.at++;
+      else if (!r.isPunct("]")) r.fail(`unexpected ${r.peek()?.text} in an array literal`);
+    }
+    r.at++;
+    return { kind: "list", items, ...(rest ? { rest } : {}) };
+  }
+
+  /** `(a, b) => body` or `a => body`, an expression body only; the names it binds go into scope. */
+  private callback(
+    scope: ReadonlyMap<string, SubsetType>,
+    arity: number,
+    what: string,
+  ): { names: string[]; body: Expr } {
+    const r: Reader = this.r;
+    const names: string[] = [];
+    if (r.isPunct("(")) {
+      r.at++;
+      while (!r.isPunct(")")) {
+        names.push(r.ident());
+        if (r.isPunct(":")) r.fail(`a type annotation on ${what}'s parameter`);
+        if (r.isPunct(",")) r.at++;
+      }
+      r.at++;
+    } else names.push(r.ident());
+    if (names.length === 0 || names.length > arity)
+      r.fail(`${what} takes a callback of 1 to ${arity} parameter(s), given ${names.length}`);
+    for (const n of names)
+      if (scope.has(n) || this.declared.has(n))
+        r.fail(`${what}'s parameter ${n} shadows a name already bound here`);
+    if (new Set(names).size !== names.length) r.fail(`${what}'s parameters repeat a name`);
+    r.expectPunct("=>");
+    if (r.isPunct("{")) r.fail(`a block body in ${what}'s callback (write an expression)`);
+    const inner = new Map(scope);
+    for (const n of names) inner.set(n, { kind: "null" });
+    return { names, body: this.expression(inner) };
+  }
+
+  /** A method call on a list: slice(1), map, flatMap, every, some, reduce; the `(` not yet taken. */
+  private method(scope: ReadonlyMap<string, SubsetType>, list: Expr, name: string): Expr {
+    const r: Reader = this.r;
+    r.at++;
+    let e: Expr;
+    if (name === "slice") {
+      const one = r.take();
+      if (one.kind !== "number" || one.text !== "1")
+        r.fail("slice with an argument other than 1", one);
+      e = { kind: "tail", list };
+    } else if (name === "map" || name === "flatMap" || name === "every" || name === "some") {
+      const { names, body } = this.callback(scope, 2, name);
+      e = {
+        kind: "iterate",
+        op: name,
+        list,
+        item: names[0] as string,
+        ...(names[1] === undefined ? {} : { index: names[1] }),
+        body,
+      };
+    } else if (name === "reduce") {
+      const { names, body } = this.callback(scope, 2, "reduce");
+      if (names.length !== 2) r.fail("reduce takes a callback of (accumulator, item)");
+      r.expectPunct(",");
+      const init = this.expression(scope);
+      e = { kind: "fold", list, acc: names[0] as string, item: names[1] as string, body, init };
+    } else
+      r.fail(`the method ${name} (the subset has slice(1), map, flatMap, every, some and reduce)`);
+    if (r.isPunct(",")) r.at++;
+    r.expectPunct(")");
+    return e;
   }
 
   private record(scope: ReadonlyMap<string, SubsetType>): Expr {
@@ -1062,6 +1253,10 @@ export function describe(t: SubsetType): string {
       return t.name;
     case "nullable":
       return `${describe(t.inner)} | null`;
+    case "list":
+      return t.element.kind === "nullable"
+        ? `(${describe(t.element)})[]`
+        : `${describe(t.element)}[]`;
     default:
       return t.kind;
   }
@@ -1076,6 +1271,10 @@ const sameType = (a: SubsetType, b: SubsetType): boolean => JSON.stringify(a) ==
  */
 export function fits(actual: SubsetType, expected: SubsetType, ctx: TypeContext): boolean {
   if (sameType(actual, expected)) return true;
+  // The element of `[]` is no value at all, so it stands for any; a list fits where its elements do.
+  if (actual.kind === "nothing") return true;
+  if (actual.kind === "list" && expected.kind === "list")
+    return fits(actual.element, expected.element, ctx);
   if (expected.kind === "union")
     return actual.kind === "record" && ctx.records.get(actual.name)?.union === expected.name;
   if (expected.kind === "nullable")
@@ -1092,6 +1291,10 @@ export function fits(actual: SubsetType, expected: SubsetType, ctx: TypeContext)
 function join(a: SubsetType, b: SubsetType, ctx: TypeContext): SubsetType | undefined {
   if (fits(a, b, ctx)) return b;
   if (fits(b, a, ctx)) return a;
+  if (a.kind === "list" && b.kind === "list") {
+    const element = join(a.element, b.element, ctx);
+    return element && { kind: "list", element };
+  }
   if (a.kind === "record" && b.kind === "record") {
     const ua = ctx.records.get(a.name)?.union;
     if (ua !== undefined && ua === ctx.records.get(b.name)?.union)
@@ -1119,7 +1322,8 @@ function comparable(l: SubsetType, r: SubsetType): boolean {
   return sameType(base(l), base(r)) && !isReference(base(l));
 }
 
-const isReference = (t: SubsetType): boolean => t.kind === "record" || t.kind === "union";
+const isReference = (t: SubsetType): boolean =>
+  t.kind === "record" || t.kind === "union" || t.kind === "list";
 
 /**
  * The names a test, holding or failing, shows to be non-null: `x !== null`
@@ -1222,7 +1426,90 @@ export function insertNarrows(
       inner.set(e.name, e.type ?? typeOf(value, scope, ctx, fail));
       return { ...e, value, body: go(e.body, inner) };
     }
+    case "list":
+      return {
+        kind: "list",
+        items: e.items.map((x) => go(x, scope)),
+        ...(e.rest ? { rest: go(e.rest, scope) } : {}),
+      };
+    case "tail":
+      return { kind: "tail", list: go(e.list, scope) };
+    case "headOr":
+      return { kind: "headOr", list: go(e.list, scope), fallback: go(e.fallback, scope) };
+    case "iterate": {
+      const list = go(e.list, scope);
+      return { ...e, list, body: go(e.body, iterateScope(e, list, scope, ctx, fail)) };
+    }
+    case "fold": {
+      const list = go(e.list, scope);
+      const init = go(e.init, scope);
+      // The callback's names before its body is typed: its null checks narrow first, as in map.
+      const inner = new Map(scope);
+      inner.set(e.acc, typeOf(init, scope, ctx, fail));
+      inner.set(e.item, elementOf(typeOf(list, scope, ctx, fail), "reduce", fail));
+      return { ...e, list, init, body: go(e.body, inner) };
+    }
   }
+}
+
+/**
+ * The element type of a list expression's type. An operation on an empty
+ * array no type is given for (`[].length`, `[].slice(1)`) is refused: an
+ * engine could only guess the element type, and such code has a plain
+ * value to write instead; `const xs: T[] = []` gives one.
+ */
+function elementOf(t: SubsetType, what: string, fail: (message: string) => never): SubsetType {
+  if (t.kind !== "list") fail(`${what} on a ${describe(t)}, not a list`);
+  if (holdsNothing(t))
+    fail(`${what} on an empty array of no declared type (annotate it: const xs: T[] = [])`);
+  return t.element;
+}
+
+/** Whether a type holds the element type of an empty array literal anywhere in it (`[[]]` does). */
+function holdsNothing(t: SubsetType): boolean {
+  if (t.kind === "nothing") return true;
+  if (t.kind === "list") return holdsNothing(t.element);
+  if (t.kind === "nullable") return holdsNothing(t.inner);
+  return false;
+}
+
+/** The scope inside an iteration's callback: the item an element, the index an integer. */
+function iterateScope(
+  e: Extract<Expr, { kind: "iterate" }>,
+  list: Expr,
+  scope: ReadonlyMap<string, SubsetType>,
+  ctx: TypeContext,
+  fail: (message: string) => never,
+): Map<string, SubsetType> {
+  const inner = new Map(scope);
+  inner.set(e.item, elementOf(typeOf(list, scope, ctx, fail), e.op, fail));
+  if (e.index !== undefined) inner.set(e.index, { kind: "int" });
+  return inner;
+}
+
+/**
+ * The scope inside a fold's callback and the accumulator's type: the
+ * initial value's, widened once to the body's when the body's holds it.
+ * A callback that takes the accumulator apart as a list needs the initial
+ * value typed (`xs.reduce((acc, x) => [x, ...acc], [])` does not
+ * type-check in TypeScript either).
+ */
+function foldScope(
+  e: Extract<Expr, { kind: "fold" }>,
+  list: Expr,
+  init: Expr,
+  scope: ReadonlyMap<string, SubsetType>,
+  ctx: TypeContext,
+  fail: (message: string) => never,
+): { scope: Map<string, SubsetType>; acc: SubsetType } {
+  const item = elementOf(typeOf(list, scope, ctx, fail), "reduce", fail);
+  const at = (acc: SubsetType) => new Map([...scope, [e.acc, acc], [e.item, item]]);
+  const start = typeOf(init, scope, ctx, fail);
+  const body = typeOf(e.body, at(start), ctx, fail);
+  if (fits(body, start, ctx)) return { scope: at(start), acc: start };
+  if (fits(start, body, ctx) && fits(typeOf(e.body, at(body), ctx, fail), body, ctx))
+    return { scope: at(body), acc: body };
+  fail(`reduce's callback makes a ${describe(body)} from an accumulator of ${describe(start)}`);
 }
 
 /** A function's parameters and return type, for typing calls. */
@@ -1324,6 +1611,10 @@ export function typeOf(
       const inferred = typeOf(e.value, scope, ctx, fail);
       if (e.type && !fits(inferred, e.type, ctx))
         fail(`const ${e.name} is annotated ${describe(e.type)} but holds a ${describe(inferred)}`);
+      if (!e.type && holdsNothing(inferred))
+        fail(
+          `const ${e.name} holds an empty array of no declared type (annotate it: const ${e.name}: T[] = [])`,
+        );
       return typeOf(e.body, new Map([...scope, [e.name, e.type ?? inferred]]), ctx, fail);
     }
     case "call": {
@@ -1343,6 +1634,11 @@ export function typeOf(
     }
     case "field": {
       const o = typeOf(e.object, scope, ctx, fail);
+      if (o.kind === "list") {
+        if (e.field !== "length") fail(`${e.field} read from a list (the subset has length)`);
+        elementOf(o, "length", fail);
+        return { kind: "int" };
+      }
       if (o.kind === "nullable")
         fail(
           `field ${e.field} read from a ${describe(o)}: compare it with null first, which narrows it`,
@@ -1408,6 +1704,43 @@ export function typeOf(
         );
       return { kind: "record", name: (chosen[0] as RecordType).name };
     }
+    case "list": {
+      let element: SubsetType = { kind: "nothing" };
+      const add = (t: SubsetType) => {
+        const joined = join(element, t, ctx);
+        if (!joined) fail(`an array literal of a ${describe(element)} and a ${describe(t)}`);
+        element = joined;
+      };
+      for (const item of e.items) add(typeOf(item, scope, ctx, fail));
+      if (e.rest) add(elementOf(typeOf(e.rest, scope, ctx, fail), "a spread", fail));
+      return { kind: "list", element };
+    }
+    case "tail": {
+      const t = typeOf(e.list, scope, ctx, fail);
+      elementOf(t, "slice", fail);
+      return t;
+    }
+    case "headOr": {
+      const element = elementOf(typeOf(e.list, scope, ctx, fail), "[0]", fail);
+      // `??` replaces null as well as the missing head: on a list of a nullable type it is not headD.
+      if (element.kind === "nullable" || element.kind === "null")
+        fail("xs[0] ?? on a list of a nullable type (?? replaces a null element too)");
+      const fallback = typeOf(e.fallback, scope, ctx, fail);
+      const joined = join(element, fallback, ctx);
+      if (!joined) fail(`?? between a ${describe(element)} and a ${describe(fallback)}`);
+      return joined;
+    }
+    case "iterate": {
+      const body = typeOf(e.body, iterateScope(e, e.list, scope, ctx, fail), ctx, fail);
+      if (e.op === "map") return { kind: "list", element: body };
+      if (e.op === "flatMap")
+        return { kind: "list", element: elementOf(body, "flatMap's callback result", fail) };
+      if (body.kind !== "bool")
+        fail(`${e.op}'s callback returns a ${describe(body)}, not a boolean`);
+      return { kind: "bool" };
+    }
+    case "fold":
+      return foldScope(e, e.list, e.init, scope, ctx, fail).acc;
   }
 }
 
@@ -1538,6 +1871,25 @@ function boundNames(e: Expr, out = new Set<string>()): Set<string> {
       out.add(e.name);
       boundNames(e.value, out);
       return boundNames(e.body, out);
+    case "list":
+      for (const x of e.items) boundNames(x, out);
+      return e.rest ? boundNames(e.rest, out) : out;
+    case "tail":
+      return boundNames(e.list, out);
+    case "headOr":
+      boundNames(e.list, out);
+      return boundNames(e.fallback, out);
+    case "iterate":
+      out.add(e.item);
+      if (e.index !== undefined) out.add(e.index);
+      boundNames(e.list, out);
+      return boundNames(e.body, out);
+    case "fold":
+      out.add(e.acc);
+      out.add(e.item);
+      boundNames(e.list, out);
+      boundNames(e.init, out);
+      return boundNames(e.body, out);
   }
 }
 
@@ -1606,7 +1958,59 @@ export function renameVars(
         body: renameVars(e.body, inner, new Set([...taken, bound])),
       };
     }
+    case "list":
+      return { kind: "list", items: e.items.map(go), ...(e.rest ? { rest: go(e.rest) } : {}) };
+    case "tail":
+      return { kind: "tail", list: go(e.list) };
+    case "headOr":
+      return { kind: "headOr", list: go(e.list), fallback: go(e.fallback) };
+    case "iterate": {
+      const own = [e.item, ...(e.index === undefined ? [] : [e.index])];
+      const { inner, bound, scoped } = bindAll(own, names, taken);
+      return {
+        ...e,
+        list: go(e.list),
+        item: bound[0] as string,
+        ...(e.index === undefined ? {} : { index: bound[1] as string }),
+        body: renameVars(e.body, inner, scoped),
+      };
+    }
+    case "fold": {
+      const { inner, bound, scoped } = bindAll([e.acc, e.item], names, taken);
+      return {
+        ...e,
+        list: go(e.list),
+        init: go(e.init),
+        acc: bound[0] as string,
+        item: bound[1] as string,
+        body: renameVars(e.body, inner, scoped),
+      };
+    }
   }
+}
+
+/**
+ * The renames inside a callback that binds `own` names, as for a let:
+ * each shadows a rename of its own name, and one that is a rename's target
+ * moves to a fresh name so it captures nothing.
+ */
+function bindAll(
+  own: readonly string[],
+  names: ReadonlyMap<string, string>,
+  taken: ReadonlySet<string>,
+): { inner: Map<string, string>; bound: string[]; scoped: Set<string> } {
+  const inner = new Map(names);
+  const targets = new Set(names.values());
+  const scoped = new Set(taken);
+  const bound = own.map((n) => {
+    inner.delete(n);
+    if (!targets.has(n)) return n;
+    const moved = fresh(n, scoped);
+    scoped.add(moved);
+    inner.set(n, moved);
+    return moved;
+  });
+  return { inner, bound, scoped };
 }
 
 /** The functions an expression calls. */
@@ -1642,6 +2046,21 @@ function callees(e: Expr, out = new Set<string>()): Set<string> {
       return out;
     case "let":
       callees(e.value, out);
+      return callees(e.body, out);
+    case "list":
+      for (const x of e.items) callees(x, out);
+      return e.rest ? callees(e.rest, out) : out;
+    case "tail":
+      return callees(e.list, out);
+    case "headOr":
+      callees(e.list, out);
+      return callees(e.fallback, out);
+    case "iterate":
+      callees(e.list, out);
+      return callees(e.body, out);
+    case "fold":
+      callees(e.list, out);
+      callees(e.init, out);
       return callees(e.body, out);
   }
 }
@@ -1875,13 +2294,21 @@ export function readSubset(source: string, functions?: readonly string[]): Subse
     }
     return false;
   };
+  // Recursion is in the subset as structural recursion on a list (`structuralOn`), a function calling
+  // itself directly; any other recursion is outside, and so are its callers.
   for (const [name, fn] of [...read])
     if (reaches(name, name)) {
+      const direct = [...callees(fn.body)].every((c) => c === name || !reaches(c, name));
+      const on = direct ? structuralOn(fn) : undefined;
+      if (on !== undefined) {
+        read.set(name, { ...fn, structural: on });
+        continue;
+      }
       read.delete(name);
       outside.set(name, {
         name,
         line: fn.line,
-        message: `${name} is recursive (it reaches itself through its calls); recursion is not in the subset yet`,
+        message: `${name} is recursive in a way the subset does not take: it takes a function calling itself on a list parameter's slice(1), after a first test of that list's length against 0 (if (xs.length === 0) return …)`,
       });
     }
   for (let changed = true; changed; ) {
@@ -1902,8 +2329,9 @@ export function readSubset(source: string, functions?: readonly string[]): Subse
   const ordered: SubsetFunction[] = [];
   const placed = new Set<string>();
   while (ordered.length < read.size)
+    // A structurally recursive function calls itself: that callee needs no placing first.
     for (const [name, fn] of read)
-      if (!placed.has(name) && [...callees(fn.body)].every((c) => placed.has(c))) {
+      if (!placed.has(name) && [...callees(fn.body)].every((c) => c === name || placed.has(c))) {
         ordered.push(fn);
         placed.add(name);
       }
@@ -1913,6 +2341,84 @@ export function readSubset(source: string, functions?: readonly string[]): Subse
     functions: ordered,
     outside: [...outside.values()],
   };
+}
+
+/**
+ * The list parameter a function recurses on structurally, or undefined:
+ * its body is `if (p.length === 0) … else …` for a list parameter p, the
+ * test and the first branch do not call it, and every call to it in the
+ * other branch passes `p.slice(1)` for p. Lean takes such a definition as
+ * a match on `[]` and `head :: tail`, recursing on the tail.
+ */
+function structuralOn(fn: SubsetFunction): number | undefined {
+  const body = fn.body;
+  if (body.kind !== "cond") return undefined;
+  const t = body.test;
+  if (t.kind !== "binary" || t.op !== "===") return undefined;
+  const sides = [t.left, t.right];
+  const zero = sides.find((x) => x.kind === "int" && x.value === "0");
+  const len = sides.find((x) => x !== zero);
+  if (!zero || len?.kind !== "field" || len.field !== "length" || len.object.kind !== "var")
+    return undefined;
+  const list = len.object.name;
+  const at = fn.params.findIndex((p) => p.name === list && p.type.kind === "list");
+  if (at < 0) return undefined;
+  if (callees(t).has(fn.name) || callees(body.ifTrue).has(fn.name)) return undefined;
+  const calls = selfCalls(body.ifFalse, fn.name);
+  const onTail = (a: Expr | undefined) =>
+    a?.kind === "tail" && a.list.kind === "var" && a.list.name === list;
+  return calls.length > 0 && calls.every((c) => onTail(c.args[at])) ? at : undefined;
+}
+
+/** Every call to `name` in an expression. */
+function selfCalls(e: Expr, name: string): Extract<Expr, { kind: "call" }>[] {
+  const out: Extract<Expr, { kind: "call" }>[] = [];
+  const walk = (x: Expr): void => {
+    if (x.kind === "call" && x.callee === name) out.push(x);
+    for (const child of children(x)) walk(child);
+  };
+  walk(e);
+  return out;
+}
+
+/** An expression's direct subexpressions. */
+export function children(e: Expr): Expr[] {
+  switch (e.kind) {
+    case "int":
+    case "bool":
+    case "string":
+    case "null":
+    case "var":
+      return [];
+    case "narrow":
+      return [e.body];
+    case "neg":
+    case "not":
+    case "isInteger":
+      return [e.operand];
+    case "binary":
+      return [e.left, e.right];
+    case "cond":
+      return [e.test, e.ifTrue, e.ifFalse];
+    case "call":
+      return [...e.args];
+    case "field":
+      return [e.object];
+    case "record":
+      return e.fields.map((f) => f.value);
+    case "let":
+      return [e.value, e.body];
+    case "list":
+      return [...e.items, ...(e.rest ? [e.rest] : [])];
+    case "tail":
+      return [e.list];
+    case "headOr":
+      return [e.list, e.fallback];
+    case "iterate":
+      return [e.list, e.body];
+    case "fold":
+      return [e.list, e.init, e.body];
+  }
 }
 
 /** Whether an expression holds a node of the kinds named. */
@@ -1943,6 +2449,16 @@ function hasNode(e: Expr, kinds: ReadonlySet<Expr["kind"]>): boolean {
       return e.fields.some((f) => hasNode(f.value, kinds));
     case "let":
       return hasNode(e.value, kinds) || hasNode(e.body, kinds);
+    case "list":
+      return e.items.some((x) => hasNode(x, kinds)) || (e.rest ? hasNode(e.rest, kinds) : false);
+    case "tail":
+      return hasNode(e.list, kinds);
+    case "headOr":
+      return hasNode(e.list, kinds) || hasNode(e.fallback, kinds);
+    case "iterate":
+      return hasNode(e.list, kinds) || hasNode(e.body, kinds);
+    case "fold":
+      return hasNode(e.list, kinds) || hasNode(e.init, kinds) || hasNode(e.body, kinds);
   }
 }
 
@@ -1957,8 +2473,14 @@ export function restrictModule(
   module: SubsetModule,
   takes: (t: SubsetType) => boolean,
   reason: string,
+  /** Expression kinds a function's body may not hold here: by default what nullable types bring. */
+  bodies: ReadonlySet<Expr["kind"]> = new Set(["null", "narrow"]),
 ): SubsetModule {
+  // A record with a field the engine does not take is out, and so is a union with such a member, and
+  // so, in turn, is a record with a field of that union: to a fixed point.
   const badRecords = new Set<string>();
+  for (const u of module.unions)
+    if (!takes({ kind: "union", name: u.name })) badRecords.add(`union:${u.name}`);
   for (let changed = true; changed; ) {
     changed = false;
     for (const rec of module.records)
@@ -1969,13 +2491,28 @@ export function restrictModule(
         badRecords.add(rec.name);
         changed = true;
       }
+    for (const u of module.unions) {
+      if (!badRecords.has(`union:${u.name}`) && u.members.some((m) => badRecords.has(m.record))) {
+        badRecords.add(`union:${u.name}`);
+        changed = true;
+      }
+      // A member of a union the engine models but has dropped goes with it: its sort is the union's.
+      // An engine that takes no unions keeps the members as records of their own.
+      if (takes({ kind: "union", name: u.name }) && badRecords.has(`union:${u.name}`))
+        for (const m of u.members)
+          if (!badRecords.has(m.record)) {
+            badRecords.add(m.record);
+            changed = true;
+          }
+    }
   }
   const outside = new Map(module.outside.map((o) => [o.name, o]));
   const kept = new Map(module.functions.map((f) => [f.name, f]));
   const uses = (f: SubsetFunction) =>
     !f.params.every((p) => typeTaken(p.type, takes, badRecords)) ||
     !typeTaken(f.returns, takes, badRecords) ||
-    hasNode(f.body, new Set(["null", "narrow"]));
+    annotations(f.body).some((t) => !typeTaken(t, takes, badRecords)) ||
+    hasNode(f.body, bodies);
   for (const f of module.functions)
     if (uses(f)) {
       kept.delete(f.name);
@@ -1997,7 +2534,7 @@ export function restrictModule(
   }
   return {
     records: module.records.filter((r) => !badRecords.has(r.name)),
-    unions: module.unions.filter((u) => takes({ kind: "union", name: u.name })),
+    unions: module.unions.filter((u) => !badRecords.has(`union:${u.name}`)),
     functions: module.functions.filter((f) => kept.has(f.name)),
     outside: [...outside.values()],
   };
@@ -2010,6 +2547,30 @@ function typeTaken(
 ): boolean {
   if (!takes(t)) return false;
   if (t.kind === "record") return !badRecords.has(t.name);
+  if (t.kind === "union") return !badRecords.has(`union:${t.name}`);
   if (t.kind === "nullable") return typeTaken(t.inner, takes, badRecords);
+  if (t.kind === "list") return typeTaken(t.element, takes, badRecords);
   return true;
 }
+
+/** The types a body's `const` annotations name. */
+function annotations(e: Expr, out: SubsetType[] = []): SubsetType[] {
+  if (e.kind === "let" && e.type) out.push(e.type);
+  for (const c of children(e)) annotations(c, out);
+  return out;
+}
+
+/** An expression only lists bring. */
+export type ListExpr = Extract<Expr, { kind: "list" | "tail" | "headOr" | "iterate" | "fold" }>;
+
+/** The expression kinds only lists bring, for an engine that does not take them. */
+export const listKinds: ReadonlySet<Expr["kind"]> = new Set<ListExpr["kind"]>([
+  "list",
+  "tail",
+  "headOr",
+  "iterate",
+  "fold",
+]);
+
+/** Whether an expression is one only lists bring (a type guard over `listKinds`). */
+export const isListExpr = (e: Expr): e is ListExpr => listKinds.has(e.kind);

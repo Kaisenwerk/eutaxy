@@ -3,6 +3,7 @@ export { hintsOf, type ReadSpecsInput, readSpecs } from "./specs.ts";
 export {
   type BinaryOp,
   type CalleeSignature,
+  children,
   type Declaration,
   type Declared,
   describe,
@@ -11,6 +12,9 @@ export {
   fits,
   hasLoneSurrogate,
   insertNarrows,
+  isListExpr,
+  type ListExpr,
+  listKinds,
   narrowsOf,
   type OutsideFunction,
   OutsideSubset,

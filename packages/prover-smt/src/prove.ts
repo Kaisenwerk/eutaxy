@@ -25,7 +25,13 @@ import {
   render,
   shrinkRefutation,
 } from "@eutaxy/prover";
-import { OutsideSubset, readSubset, type SubsetModule } from "@eutaxy/prover/reader";
+import {
+  listKinds,
+  OutsideSubset,
+  readSubset,
+  restrictModule,
+  type SubsetModule,
+} from "@eutaxy/prover/reader";
 import { type Fn, type Forall, type FunctionSpec, isSpec, type Property } from "@eutaxy/spec";
 import {
   decode,
@@ -90,9 +96,16 @@ const key = (fn: string, property: string): string => `${fn}\u0000${property}`;
 export function prepare(input: ProveInput): Prepared {
   const wanted = input.functions ? new Set(input.functions) : undefined;
   const fns = input.specs.functions.filter((f) => !wanted || wanted.has(f.name));
-  const module = readSubset(
-    input.source,
-    fns.map((f) => f.name),
+  // Lists are read, but this engine does not take them: functions using one are outside here, so the
+  // prelude never meets them and the module's other functions still go through.
+  const module = restrictModule(
+    readSubset(
+      input.source,
+      fns.map((f) => f.name),
+    ),
+    (t) => t.kind !== "list" && t.kind !== "nothing",
+    "arrays are not in this engine's subset (the Lean engine takes them)",
+    listKinds,
   );
   const outside = new Map<string, string>();
   for (const o of module.outside)

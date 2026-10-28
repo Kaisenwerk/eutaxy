@@ -248,3 +248,34 @@ export const p = forall(take, {
     expect(emitted.source).not.toContain("intro \n");
   });
 });
+
+describe("lists, review findings", () => {
+  test("an annotated empty list keeps its element type in Lean", () => {
+    const m = readSubset(
+      "export function f(): number { const xs: number[] = []; return xs.length; }",
+    );
+    expect(emitModule(m, []).source).toContain("let v_xs : (List Int) := []");
+    // The annotation types the binding in the emitter's own scope too: reduce's item is a number.
+    const folded = readSubset(
+      "export function g(): number { const xs: number[] = []; return xs.reduce((acc, x) => acc + x, 0); }",
+    );
+    expect(() => emitModule(folded, [])).not.toThrow();
+  });
+
+  test("an operation on an empty array of no declared type is refused, never typed by a guess", () => {
+    for (const body of ["[].length", "[].slice(1)", "[][0] ?? 0", "[[]].length"]) {
+      const m = readSubset(`export function f(): number { return ${body}; }`);
+      expect(m.outside[0]?.message, body).toContain("empty array of no declared type");
+    }
+  });
+
+  test("generated names are quoted whole: an index or a recursed list named with $", () => {
+    const m = readSubset(`
+export function f(xs: readonly number[]): readonly number[] { return xs.map((x, i$) => i$); }
+export function g($xs: readonly number[]): number { if ($xs.length === 0) return 0; return g($xs.slice(1)); }
+`);
+    const lean = emitModule(m, []).source;
+    expect(lean).toContain("«nv_i$»");
+    expect(lean).toContain("| «vh_$xs» :: «vt_$xs» =>");
+  });
+});

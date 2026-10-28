@@ -129,6 +129,53 @@ describe("prepare", () => {
 const toolchain = await findLean();
 const required = process.env["EUTAXY_REQUIRE_LEAN"] === "1";
 
+describe.skipIf("unavailable" in toolchain && !required)("proofs over lists", () => {
+  test("name the list model, wherever the list sits: in a record field too", async () => {
+    const source =
+      "export interface R { readonly xs: number[] }\nexport function n(r: R): number { return r.xs.length; }";
+    const spec =
+      'import { forall } from "eutaxy/spec";\nimport { n } from "./domain.ts";\nexport const p = forall(n, { ensures: (r) => n(r) >= 0 });';
+    const proofs = await proveModule({ source, specs: read(source, spec) });
+    const outcome = proofs.results[0]?.outcome;
+    expect(outcome?.kind).toBe("PROVEN");
+    if (outcome?.kind === "PROVEN") expect(outcome.assumptions.join("\n")).toContain("dense");
+  }, 120_000);
+
+  test("a recursive function's proof names its stack; an unrelated proof names neither model", async () => {
+    const source =
+      "export function sum(xs: readonly number[]): number {\n  if (xs.length === 0) return 0;\n  return (xs[0] ?? 0) + sum(xs.slice(1));\n}\nexport function same(n: number): number { return n; }";
+    const spec =
+      'import { forall } from "eutaxy/spec";\nimport { same, sum } from "./domain.ts";\nexport const empty = forall(sum, { when: (xs) => xs.length === 0, ensures: (xs) => sum(xs) === 0 });\nexport const id = forall(same, { ensures: (n) => same(n) === n });';
+    const proofs = await proveModule({ source, specs: read(source, spec) });
+    const byProperty = new Map(proofs.results.map((r) => [r.property, r.outcome]));
+    const empty = byProperty.get("empty");
+    const id = byProperty.get("id");
+    expect(empty?.kind).toBe("PROVEN");
+    expect(id?.kind).toBe("PROVEN");
+    if (empty?.kind === "PROVEN") {
+      expect(empty.assumptions.join("\n")).toContain("dense");
+      expect(empty.assumptions.join("\n")).toContain("call stack is bounded");
+    }
+    if (id?.kind === "PROVEN") {
+      expect(id.assumptions.join("\n")).not.toContain("dense");
+      expect(id.assumptions.join("\n")).not.toContain("call stack");
+    }
+  }, 120_000);
+
+  test("the models are named where the claim's arrows meet them, and on totality too", async () => {
+    const source =
+      "export function sum(xs: readonly number[]): number {\n  if (xs.length === 0) return 0;\n  return (xs[0] ?? 0) + sum(xs.slice(1));\n}\nexport function same(xs: readonly number[]): readonly number[] { return xs; }";
+    const spec =
+      'import { forall, total } from "eutaxy/spec";\nimport { same, sum } from "./domain.ts";\nexport const viaArrow = forall(same, { ensures: (xs) => sum(same(xs)) === sum(xs) });\nexport const viaParens = forall(same, { ensures: (xs) => (sum)(xs) === (sum)(same(xs)) });\nexport const ends = total(sum);';
+    const proofs = await proveModule({ source, specs: read(source, spec) });
+    for (const r of proofs.results) {
+      expect(r.outcome.kind, r.property).toBe("PROVEN");
+      if (r.outcome.kind === "PROVEN")
+        expect(r.outcome.assumptions.join("\n"), r.property).toContain("call stack is bounded");
+    }
+  }, 120_000);
+});
+
 describe.skipIf("unavailable" in toolchain && !required)("proveModule with the pinned Lean", () => {
   test("proves what holds, gives up on what does not, proves total by acceptance", async () => {
     const r = await proveModule({ source: refund, specs: read(refund, refundSpecs) });

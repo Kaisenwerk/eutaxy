@@ -16,6 +16,7 @@
 
 import {
   type Expr,
+  isListExpr,
   OutsideSubset,
   type RecordType,
   readArrowBody,
@@ -57,6 +58,7 @@ export const ident = {
 
 /** The short name a sort has inside option names: `Opt.F64`, `Opt.R_X`. */
 export function sortName(t: SubsetType, module: SubsetModule): string {
+  if (t.kind === "list" || t.kind === "nothing") return fail(listsOutside);
   switch (t.kind) {
     case "int":
       return "F64";
@@ -81,6 +83,7 @@ function unionOf(record: string, module: SubsetModule): string | undefined {
 }
 
 export function sort(t: SubsetType, module: SubsetModule): string {
+  if (t.kind === "list" || t.kind === "nothing") return fail(listsOutside);
   switch (t.kind) {
     case "int":
       return F64;
@@ -150,6 +153,9 @@ function env(module: SubsetModule): Env {
   };
 }
 
+/** Why a list, or an operation on one, is refused here. */
+const listsOutside = "arrays are not in this engine's subset (the Lean engine takes them)";
+
 const fail: (message: string) => never = (message) => {
   throw new OutsideSubset(message, 0);
 };
@@ -172,6 +178,7 @@ const tester = (constructorSymbol: string): string =>
 
 /** `===` of two terms of a type, as JavaScript has it. */
 function sameAs(a: string, b: string, t: SubsetType, env: Env): string {
+  if (t.kind === "list" || t.kind === "nothing") return fail(listsOutside);
   switch (t.kind) {
     case "int":
       return `(fp.eq ${a} ${b})`;
@@ -201,6 +208,7 @@ export function term(
   expected?: SubsetType,
 ): string {
   const t = (x: Expr, want?: SubsetType) => term(x, scope, env, want);
+  if (isListExpr(e)) return fail(listsOutside);
   // A node's type depends on the scope it is typed in (narrowing), so the memo is keyed by both.
   const typed = (x: Expr): SubsetType => {
     const key = JSON.stringify([...scope]);
@@ -703,6 +711,7 @@ export function propertyScript(property: Property, module: SubsetModule): Proper
 
 /** A TypeScript value of a subset type as a term, for translation checks. */
 export function value(v: unknown, t: SubsetType, module: SubsetModule): string {
+  if (t.kind === "list" || t.kind === "nothing") return fail(listsOutside);
   switch (t.kind) {
     case "int":
       if (typeof v !== "number") fail(`${String(v)} is not a number`);
@@ -743,6 +752,7 @@ export function value(v: unknown, t: SubsetType, module: SubsetModule): string {
 
 /** Equality of two terms of a type, as JavaScript would have it: `fp.eq` on numbers, field by field on records. */
 export function equal(a: string, b: string, t: SubsetType, module: SubsetModule): string {
+  if (t.kind === "list" || t.kind === "nothing") return fail(listsOutside);
   switch (t.kind) {
     case "int":
       return `(fp.eq ${a} ${b})`;

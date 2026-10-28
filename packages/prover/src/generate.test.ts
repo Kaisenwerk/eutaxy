@@ -230,6 +230,11 @@ describe("arrays", () => {
 
   test("conforms and shrinks: shorter first, then each element smaller", () => {
     expect(conforms(strings, ["a", "b"])).toBe(true);
+    // A sparse array is outside every array type: JavaScript's array methods skip its holes.
+    expect(conforms(strings, Array<string>(2))).toBe(false);
+    const holey = Array<string>(2);
+    holey[1] = "b";
+    expect(conforms(strings, holey)).toBe(false);
     expect(conforms(strings, ["a", 1])).toBe(false);
     expect(conforms(strings, "ab")).toBe(false);
     const c = shrinkCandidates(binder(strings), ["xy", "z", "w"]) as string[][];

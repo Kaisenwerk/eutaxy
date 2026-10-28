@@ -5,7 +5,7 @@ one tactic script, translation validation. Runs on the Node side, over a
 process boundary: nothing here is loaded into workerd.
 
 **Public surface.** `leanProver` (the engine as a `Prover`: `available` when
-the pinned toolchain is installed, `prove` is `proveModule`); `leanTakes` (the subset types this engine translates: nullable types and unions are not among them yet, and a function using them is `unsupported`); `proveModule` (a module's properties, read with its spec file, through
+the pinned toolchain is installed, `prove` is `proveModule`); `leanTakes` (the subset types this engine translates: lists of what it takes are among them, as `List`; nullable types and unions are not yet, and a function using them is `unsupported`); structural recursion on a list is emitted as a match on `[]` and `head :: tail`; `proveModule` (a module's properties, read with its spec file, through
 the subset reader, the emitter and the pinned Lean; one Lean run per module,
 errors mapped to theorems by line; `PROVEN` with engine name, version and
 assumptions, or `UNKNOWN` as `gave_up` when a proof does not close or Lean

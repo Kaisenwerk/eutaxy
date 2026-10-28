@@ -62,6 +62,10 @@ function leanType(t: SubsetType): string {
       return "String";
     case "record":
       return ident.record(t.name);
+    case "list":
+      return `(List ${leanType(t.element)})`;
+    case "nothing":
+      return fail("the element type of an empty array, which nothing gives");
     case "nullable":
     case "union":
     case "null":
@@ -80,6 +84,13 @@ export function emitRecord(r: RecordType): string {
 interface Env {
   readonly module: SubsetModule;
   readonly ctx: TypeContext;
+  /**
+   * In the non-empty branch of a structurally recursive function: the list
+   * parameter is `head :: tail` there, so `xs[0] ?? d` is the head,
+   * `xs.slice(1)` the tail (what the recursive call must be given for Lean
+   * to see the recursion is structural), and `xs` itself `head :: tail`.
+   */
+  readonly cons?: { readonly list: string; readonly head: string; readonly tail: string };
 }
 
 function env(module: SubsetModule): Env {
@@ -109,6 +120,7 @@ export function term(e: Expr, scope: ReadonlyMap<string, SubsetType>, env: Env):
     case "string":
       return leanString(e.value);
     case "var":
+      if (env.cons?.list === e.name) return `(${env.cons.head} :: ${env.cons.tail})`;
       return ident.variable(e.name);
     case "null":
     case "narrow":
@@ -158,6 +170,9 @@ export function term(e: Expr, scope: ReadonlyMap<string, SubsetType>, env: Env):
     case "call":
       return `(${ident.fn(e.callee)}${e.args.map((a) => ` ${t(a)}`).join("")})`;
     case "field":
+      // A list's length is a natural number in Lean; the subset counts in Int.
+      if (typeOf(e.object, scope, env.ctx, fail).kind === "list")
+        return `(Int.ofNat (List.length ${t(e.object)}))`;
       return `${t(e.object)}.${ident.field(e.field)}`;
     case "record": {
       const type = typeOf(e, scope, env.ctx, fail);
@@ -169,8 +184,49 @@ export function term(e: Expr, scope: ReadonlyMap<string, SubsetType>, env: Env):
     }
     case "let": {
       const inner = new Map(scope);
-      inner.set(e.name, typeOf(e.value, scope, env.ctx, fail));
-      return `(let ${ident.variable(e.name)} := ${t(e.value)}; ${term(e.body, inner, env)})`;
+      const bound = e.type ?? typeOf(e.value, scope, env.ctx, fail);
+      inner.set(e.name, bound);
+      // The annotation, when there is one, types the binding in Lean too (`const xs: number[] = []`).
+      const annotated = e.type ? ` : ${leanType(e.type)}` : "";
+      return `(let ${ident.variable(e.name)}${annotated} := ${t(e.value)}; ${term(e.body, inner, env)})`;
+    }
+    case "list": {
+      if (e.items.length === 0 && !e.rest) return "[]";
+      if (!e.rest) return `[${e.items.map(t).join(", ")}]`;
+      return `(${[...e.items.map(t), t(e.rest)].join(" :: ")})`;
+    }
+    case "tail":
+      if (e.list.kind === "var" && env.cons?.list === e.list.name) return env.cons.tail;
+      return `(List.tail ${t(e.list)})`;
+    case "headOr":
+      if (e.list.kind === "var" && env.cons?.list === e.list.name) return env.cons.head;
+      return `(List.headD ${t(e.list)} ${t(e.fallback)})`;
+    case "iterate": {
+      const listType = typeOf(e.list, scope, env.ctx, fail);
+      if (listType.kind !== "list") fail(`${e.op} on a ${listType.kind}`);
+      const inner = new Map(scope);
+      inner.set(e.item, listType.element);
+      if (e.index !== undefined) inner.set(e.index, { kind: "int" });
+      const body = term(e.body, inner, env);
+      // The index counts from 0 as a natural number; the subset's is an Int.
+      const nat = e.index === undefined ? "" : quote(`nv_${e.index}`);
+      const fn =
+        e.index === undefined
+          ? `(fun ${ident.variable(e.item)} => ${body})`
+          : `(fun (${ident.variable(e.item)}, ${nat}) => let ${ident.variable(e.index)} := Int.ofNat ${nat}; ${body})`;
+      const list = e.index === undefined ? t(e.list) : `(List.zipIdx ${t(e.list)})`;
+      // map and flatMap take the function first; all and any take the list first.
+      if (e.op === "map") return `(List.map ${fn} ${list})`;
+      if (e.op === "flatMap") return `(List.flatMap ${fn} ${list})`;
+      return `(${e.op === "every" ? "List.all" : "List.any"} ${list} ${fn})`;
+    }
+    case "fold": {
+      const listType = typeOf(e.list, scope, env.ctx, fail);
+      if (listType.kind !== "list") fail(`reduce on a ${listType.kind}`);
+      const inner = new Map(scope);
+      inner.set(e.acc, typeOf(e, scope, env.ctx, fail));
+      inner.set(e.item, listType.element);
+      return `(List.foldl (fun ${ident.variable(e.acc)} ${ident.variable(e.item)} => ${term(e.body, inner, env)}) ${t(e.init)} ${t(e.list)})`;
     }
   }
 }
@@ -179,7 +235,19 @@ export function emitFunction(f: SubsetFunction, module: SubsetModule): string {
   const e = env(module);
   const scope = new Map(f.params.map((p) => [p.name, p.type]));
   const params = f.params.map((p) => `(${ident.variable(p.name)} : ${leanType(p.type)})`).join(" ");
-  return `def ${ident.fn(f.name)} ${params} : ${leanType(f.returns)} :=\n  ${term(f.body, scope, e)}`;
+  const head = `def ${ident.fn(f.name)} ${params} : ${leanType(f.returns)} :=`;
+  if (f.structural === undefined || f.body.kind !== "cond")
+    return `${head}\n  ${term(f.body, scope, e)}`;
+  // Structural recursion: a match on the list the body tests against 0, recursing on its tail.
+  // `vh_`/`vt_` names cannot meet a variable, whose names all start `v_`.
+  const list = (f.params[f.structural] as { name: string }).name;
+  const cons = { list, head: quote(`vh_${list}`), tail: quote(`vt_${list}`) };
+  return [
+    head,
+    `  match ${ident.variable(list)} with`,
+    `  | [] => ${term(f.body.ifTrue, scope, e)}`,
+    `  | ${cons.head} :: ${cons.tail} => ${term(f.body.ifFalse, scope, { ...e, cons })}`,
+  ].join("\n");
 }
 
 /**
@@ -227,8 +295,7 @@ export function binderType(name: string, t: SpecType, module: SubsetModule): Sub
       fail(`binder ${name} over ${t.kind}`);
       break;
     case "array":
-      fail(`binder ${name} over ${describeType(t)}: arrays are not in the engine's subset yet`);
-      break;
+      return { kind: "list", element: binderType(name, t.element, module) };
     case "unknown":
       fail(`binder ${name} over ${t.text}, which the reader could not read`);
   }
@@ -374,6 +441,7 @@ export function emitModule(
   const parts: string[] = [
     "-- Generated by Eutaxy's first-party engine from the module and its spec file; the theorems are its properties.",
     "set_option linter.unusedSimpArgs false",
+    "set_option linter.unusedVariables false",
     ...module.records.map(emitRecord),
     ...module.functions.map((f) => emitFunction(f, module)),
   ];
@@ -443,6 +511,11 @@ export function value(v: unknown, t: SubsetType, module: SubsetModule): string {
       if (extra.length > 0) fail(`${t.name} value has unexpected fields ${extra.join(", ")}`);
       return `({ ${rec.fields.map((f) => `${ident.field(f.name)} := ${value(o[f.name], f.type, module)}`).join(", ")} } : ${ident.record(t.name)})`;
     }
+    case "list":
+      if (!Array.isArray(v)) fail(`${String(v)} is not an array`);
+      return `([${v.map((x) => value(x, t.element, module)).join(", ")}] : ${leanType(t)})`;
+    case "nothing":
+      return fail("a value of no type");
     case "nullable":
     case "union":
     case "null":
