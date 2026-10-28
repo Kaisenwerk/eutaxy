@@ -1,5 +1,6 @@
 import { type Binder, type FunctionSpec, forall, type Property, type SpecType } from "@eutaxy/spec";
 import { describe, expect, test } from "vitest";
+import { checkedRung } from "./checked.ts";
 import { checkSpecModule, specLadder } from "./ladder.ts";
 import { testedRung } from "./tested.ts";
 
@@ -193,6 +194,77 @@ describe("the TESTED rung", () => {
       inputs: 3,
     });
     expect(seen).toEqual(new Set(["invited", "active", null]));
+  });
+});
+
+describe("sample", () => {
+  // The hint the reader derives from `sample: (x) => x <= 1000`, with the precondition's `integer`.
+  const n: Binder = {
+    name: "x",
+    type: { kind: "number" },
+    hint: { integer: true, upper: { value: "1000", inclusive: true } },
+  };
+  const one: FunctionSpec = {
+    name: "id",
+    params: [{ name: "x", type: { kind: "number" } }],
+    properties: [],
+    line: 1,
+    offset: 0,
+  };
+  const id = (x: number) => x;
+  const property: Property = { ...prop("small", [n]), name: "small" };
+
+  test("TESTED draws only inside it, and says so; a claim false outside it is not refuted", () => {
+    const claim = forall(id, { sample: (x) => x <= 1000, ensures: (x) => id(x) <= 1000 });
+    const v = testedRung({ module: "m", fn: one, property, spec: claim, seed: "s" });
+    expect(v).toMatchObject({ kind: "TESTED", inputs: 100, discarded: 0 });
+    expect(v.assumptions.join("\n")).toContain("drawn only where the sample holds");
+    const wrong = forall(id, { sample: (x) => x <= 1000, ensures: (x) => id(x) < 1000 });
+    expect(testedRung({ module: "m", fn: one, property, spec: wrong, seed: "s" })).toMatchObject({
+      kind: "REFUTED",
+    });
+  });
+
+  test("shrinking stays inside it, so a sample that keeps evaluations small keeps them small", () => {
+    const xs: Binder = { name: "xs", type: { kind: "array", element: { kind: "number" } } };
+    const len = (xs: readonly number[]) => xs.length;
+    const evaluated: number[] = [];
+    const neverTwo = forall(len, {
+      sample: (xs) => xs.length === 2,
+      ensures: (xs) => {
+        evaluated.push(xs.length);
+        return len(xs) !== 2;
+      },
+    });
+    const pair: FunctionSpec = {
+      name: "len",
+      params: [{ name: "xs", type: xs.type }],
+      properties: [],
+      line: 1,
+      offset: 0,
+    };
+    const p: Property = { ...prop("neverTwo", [xs]), name: "neverTwo" };
+    const v = testedRung({ module: "m", fn: pair, property: p, spec: neverTwo, seed: "s" });
+    expect(v).toMatchObject({ kind: "REFUTED" });
+    expect(new Set(evaluated)).toEqual(new Set([2]));
+  });
+
+  test("CHECKED ignores it: an observed input outside the sample still refutes", () => {
+    const claim = forall(id, { sample: (x) => x <= 1000, ensures: (x) => id(x) <= 1000 });
+    const v = checkedRung({
+      module: "m",
+      fn: one,
+      property,
+      spec: claim,
+      calls: [{ args: [5000] }],
+    });
+    expect(v).toMatchObject({ kind: "REFUTED", rung: "CHECKED" });
+  });
+
+  test("a sample that throws or is not a boolean makes the property malformed", () => {
+    const bad = forall(id, { sample: () => "yes" as unknown as boolean, ensures: () => true });
+    const v = testedRung({ module: "m", fn: one, property, spec: bad, seed: "s" });
+    expect(v).toMatchObject({ kind: "UNKNOWN", cause: "unsupported" });
   });
 });
 

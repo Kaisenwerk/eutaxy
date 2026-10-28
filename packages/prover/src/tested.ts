@@ -18,6 +18,7 @@ import {
   edgeLists,
   generateAssignment,
 } from "./generate.ts";
+import { copy } from "./render.ts";
 import { shrinkRefutation } from "./shrink.ts";
 
 export interface TestedOptions {
@@ -58,6 +59,7 @@ export function testedRung(input: TestedInput): SpecVerdict {
   let state: PrngState = seedPrng(seed);
   let held = 0;
   let discarded = 0;
+  let sampledOut = 0;
   // Distinct assignments only, as the CHECKED rung counts them: two booleans are two inputs, not a hundred.
   const seen = new Set<string>();
   const counterexample = (values: readonly unknown[], error?: string): Counterexample => ({
@@ -90,6 +92,24 @@ export function testedRung(input: TestedInput): SpecVerdict {
     const key = values.map(render).join(", ");
     if (seen.has(key)) continue;
     seen.add(key);
+    // Outside the sample is not drawn at all: neither inside nor outside the claim, just not tried.
+    if (spec.sample) {
+      let inSample: unknown;
+      try {
+        inSample = spec.sample(...(copy(values) as never[]));
+      } catch (err) {
+        return unknown("unsupported", malformedReason(`the sample threw ${String(err)}`));
+      }
+      if (typeof inSample !== "boolean")
+        return unknown(
+          "unsupported",
+          malformedReason(`the sample returned ${render(inSample)}, not a boolean`),
+        );
+      if (!inSample) {
+        sampledOut++;
+        continue;
+      }
+    }
     const result = evaluate(spec, values, true);
     if ("malformed" in result) return unknown("unsupported", malformedReason(result.malformed));
     if (result.outcome === "discarded") {
@@ -112,7 +132,9 @@ export function testedRung(input: TestedInput): SpecVerdict {
   if (held === 0)
     return unknown(
       "gave_up",
-      `all ${discarded} distinct generated inputs were outside the claim: its precondition admits too few of the parameter types to sample`,
+      sampledOut > 0 && discarded === 0
+        ? `all ${sampledOut} distinct generated inputs were outside the sample: it admits too few of the parameter types to draw`
+        : `all ${discarded + sampledOut} distinct generated inputs were outside the claim or the sample: its precondition admits too few of the parameter types to sample`,
     );
   return {
     ...base,
@@ -123,6 +145,11 @@ export function testedRung(input: TestedInput): SpecVerdict {
     assumptions: [
       `held on ${held} distinct input(s) generated from the parameter types with seed ${input.seed}; inputs never drawn are not covered`,
       `${fn.name} was called on generated inputs outside the simulator, so it is assumed pure`,
+      ...(spec.sample
+        ? [
+            `drawn only where the sample holds${property.sample ? ` (${property.sample.body.replace(/\s+/g, " ").trim()})` : ""}; the claim itself is not limited to it`,
+          ]
+        : []),
     ],
   };
 }

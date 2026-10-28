@@ -87,6 +87,8 @@ export interface Property {
   readonly kind: "forall" | "total";
   /** The parameters, named as `ensures` names them (the function's own names past its arity). */
   readonly binders: readonly Binder[];
+  /** Where the `TESTED` rung draws inputs; not part of the claim (see `Forall`). */
+  readonly sample?: Arrow;
   readonly when?: Arrow;
   readonly ensures?: Arrow;
   /**

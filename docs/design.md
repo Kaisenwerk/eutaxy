@@ -160,7 +160,14 @@ over the parameter types of `f`: `ensures` is the claim and the optional
 typed by the user's own compiler as the parameters of `f`, so a spec that
 does not match its function does not compile. Inputs failing `when` are
 outside the claim, and `ensures` is evaluated only where `when` holds, so
-a guard such as `c !== null` protects the reads after it. `total(f)`
+a guard such as `c !== null` protects the reads after it. An optional
+`sample` limits the inputs the `TESTED` rung draws, not the claim: where
+evaluating the claim on large inputs costs too much (a function building
+every schedule of sixteen levels of sixteen options), the sample keeps
+draws small and the verdict names it, while `CHECKED` still evaluates
+every input the simulator passed and an engine proves or refutes the
+claim for every input. A bound in `when` would instead weaken the claim
+the engines prove. `total(f)`
 claims termination on every input. Binder domains are the parameter
 types: a record, a nullable record, a union of string literals or a tagged
 union is a binder as a `number` is, and the claim names the function by

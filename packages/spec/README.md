@@ -2,8 +2,9 @@
 
 **Purpose.** `SpecIR`, and the two combinators a spec file writes. Function
 specs are TypeScript, in a spec file beside the module (`domain.ts` has
-`domain.props.ts`): `forall(f, { when, ensures })` quantifies over `f`'s
-parameter types, `total(f)` claims termination. Both return plain data
+`domain.props.ts`): `forall(f, { sample, when, ensures })` quantifies over `f`'s
+parameter types where `when` holds (`sample`, optional, limits only the
+inputs the `TESTED` rung draws, not the claim), `total(f)` claims termination. Both return plain data
 holding the function, so the user's compiler types the arrows' parameters
 as `f`'s. This package is what `eutaxy/spec` exports; it runs wherever the
 module under spec runs, workerd included.

@@ -111,6 +111,59 @@ export const p = forall(decideRefund, {
     expect(p?.binders.map((b) => b.name)).toEqual(["c", "refunded", "amount"]);
   });
 
+  test("sample is read beside when and ensures, kept apart from the claim", () => {
+    const specs = read(`
+import { forall } from "eutaxy/spec";
+import { decideRefund } from "./domain.ts";
+export const sampled = forall(decideRefund, {
+  sample: (captured) => captured <= 1000,
+  when: (_c, refunded) => 0 <= refunded,
+  ensures: (captured) => captured === captured,
+});
+export const twice = forall(decideRefund, { sample: () => true, sample: () => true, ensures: () => true });
+`);
+    expect(specs.errors.map((e) => e.message)).toEqual(["twice: sample is given twice"]);
+    const p = specs.functions[0]?.properties[0];
+    expect(p?.sample?.body).toBe("captured <= 1000");
+    expect(p?.when?.body).toBe("0 <= refunded");
+    // The sample steers the draws as a precondition would.
+    expect(p?.binders[0]?.hint).toMatchObject({ upper: { value: "1000", inclusive: true } });
+    expect(p?.binders[1]?.hint).toMatchObject({ lower: { value: "0", inclusive: true } });
+  });
+
+  test("hints from sample and when on one parameter combine, the tighter bound on each side", () => {
+    const specs = read(`
+import { forall } from "eutaxy/spec";
+import { decideRefund } from "./domain.ts";
+export const both = forall(decideRefund, {
+  sample: (captured) => 1000000 <= captured && captured < 1000100,
+  when: (captured) => Number.isInteger(captured) && captured <= 1000050,
+  ensures: () => true,
+});
+`);
+    expect(specs.functions[0]?.properties[0]?.binders[0]?.hint).toEqual({
+      integer: true,
+      lower: { value: "1000000", inclusive: true },
+      upper: { value: "1000050", inclusive: true },
+    });
+    // Bigint bounds compare exactly, past what a double holds.
+    const big = readSpecs({
+      module: "export function g(n: bigint): bigint { return n; }",
+      spec: `import { forall } from "eutaxy/spec";
+import { g } from "./domain.ts";
+export const p = forall(g, {
+  sample: (n) => 1000000n <= n && n <= 100000000000000000000000000000001n,
+  when: (n) => 0n <= n && n <= 100000000000000000000000000000000n,
+  ensures: () => true,
+});`,
+      moduleSpecifiers: ["./domain.ts"],
+    });
+    expect(big.functions[0]?.properties[0]?.binders[0]?.hint).toEqual({
+      lower: { value: "1000000n", inclusive: true },
+      upper: { value: "100000000000000000000000000000000n", inclusive: true },
+    });
+  });
+
   test("what does not read is an error with a line, never a guess", () => {
     const specs = read(`
 import { forall, total } from "eutaxy/spec";
@@ -141,7 +194,7 @@ export let mutable = total(decideRefund);
     expect(specs.errors[2]?.message).toContain("not imported from the module");
     expect(specs.errors[3]?.message).toContain("needs an ensures");
     expect(specs.errors[4]?.message).toContain("must be an arrow function");
-    expect(specs.errors[5]?.message).toContain("found extra");
+    expect(specs.errors[5]?.message).toContain("are sample, when and ensures, found extra");
     expect(specs.errors[6]?.message).toContain("not imported");
     expect(specs.errors[7]?.message).toContain("const export");
   });

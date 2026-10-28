@@ -22,6 +22,7 @@ import type {
   SpecError,
   SpecType,
 } from "@eutaxy/spec";
+import { endpointBigInt, endpointNumber } from "../generate.ts";
 import { type Token, TokenizeError, tokenize } from "./tokens.ts";
 import { readType, type TypeDeclaration, typeDeclarations, union } from "./types.ts";
 
@@ -544,6 +545,7 @@ interface SpecExport {
   readonly name: string;
   readonly kind: "forall" | "total";
   readonly fn: string;
+  readonly sample?: Arrow;
   readonly when?: Arrow;
   readonly ensures?: Arrow;
   readonly text: string;
@@ -771,6 +773,7 @@ function readSpecSide(
         fail("forall's second argument must be an object literal { when, ensures }", tokens[j]);
       const objectEnd = skipGroup(tokens, j);
       j++;
+      let sample: Arrow | undefined;
       let when: Arrow | undefined;
       let ensures: Arrow | undefined;
       while (j < objectEnd - 1) {
@@ -779,12 +782,18 @@ function readSpecSide(
           j++;
           continue;
         }
-        if (key.kind !== "ident" || (key.text !== "when" && key.text !== "ensures"))
-          fail(`forall's properties are when and ensures, found ${key.text}`, key);
+        if (
+          key.kind !== "ident" ||
+          (key.text !== "sample" && key.text !== "when" && key.text !== "ensures")
+        )
+          fail(`forall's properties are sample, when and ensures, found ${key.text}`, key);
         if (!isPunct(tokens[j + 1], ":"))
           fail(`${key.text} must be written as ${key.text}: (…) => …`, key);
         const read = arrow(j + 2, key.text);
-        if (key.text === "when") {
+        if (key.text === "sample") {
+          if (sample) fail("sample is given twice", key);
+          sample = read.arrow;
+        } else if (key.text === "when") {
           if (when) fail("when is given twice", key);
           when = read.arrow;
         } else {
@@ -801,6 +810,7 @@ function readSpecSide(
         name: name.text,
         kind: "forall",
         fn: arg.fn,
+        ...(sample ? { sample } : {}),
         ...(when ? { when } : {}),
         ensures,
         text: ensures.body.replace(/\s+/g, " ").trim(),
@@ -819,6 +829,54 @@ function readSpecSide(
     )
     .map(([local, imp]) => ({ local, name: imp.name }));
   return { specs, errors, imports: moduleImports };
+}
+
+/** The tighter of two endpoints on one side; the first when they cannot be compared. */
+function tighter(
+  first: Endpoint | undefined,
+  second: Endpoint | undefined,
+  side: "lower" | "upper",
+): Endpoint | undefined {
+  if (!first) return second;
+  if (!second) return first;
+  // Integral literals compare exactly (bigints reach past every double); others as doubles.
+  const integral = (e: Endpoint) => !/[.eE]/.test(e.value);
+  let order: number;
+  try {
+    if (integral(first) && integral(second)) {
+      const a = endpointBigInt(first.value);
+      const b = endpointBigInt(second.value);
+      order = a === b ? 0 : a > b ? 1 : -1;
+    } else {
+      const a = endpointNumber(first.value);
+      const b = endpointNumber(second.value);
+      if (Number.isNaN(a) || Number.isNaN(b)) return first;
+      order = a === b ? 0 : a > b ? 1 : -1;
+    }
+  } catch {
+    return first;
+  }
+  if (order !== 0) return (side === "lower" ? order > 0 : order < 0) ? first : second;
+  return first.inclusive ? second : first;
+}
+
+/**
+ * Two hints on one binder as one: integer when either says so, the
+ * tighter bound on each side, the first's regex (two cannot be combined,
+ * and the draws are checked against both arrows anyway).
+ */
+function combineHints(first: Hint | undefined, second: Hint | undefined): Hint | undefined {
+  if (!first) return second;
+  if (!second) return first;
+  const lower = tighter(first.lower, second.lower, "lower");
+  const upper = tighter(first.upper, second.upper, "upper");
+  const regex = first.regex ?? second.regex;
+  return {
+    ...(first.integer || second.integer ? { integer: true as const } : {}),
+    ...(lower ? { lower } : {}),
+    ...(upper ? { upper } : {}),
+    ...(regex ? { regex } : {}),
+  };
 }
 
 /** Read a module and its spec file. */
@@ -851,7 +909,14 @@ export function readSpecs(input: ReadSpecsInput): ModuleSpecs {
       errors.push({ line: s.line, message: `${s.name} is exported twice` });
       continue;
     }
-    const hints = s.when ? hintsOf(s.when) : new Map<number, Hint>();
+    // The precondition and the sample both steer the draws, combined per binder.
+    const fromSample = s.sample ? hintsOf(s.sample) : new Map<number, Hint>();
+    const fromWhen = s.when ? hintsOf(s.when) : new Map<number, Hint>();
+    const hints = new Map<number, Hint>();
+    for (const i of new Set([...fromSample.keys(), ...fromWhen.keys()])) {
+      const h = combineHints(fromWhen.get(i), fromSample.get(i));
+      if (h) hints.set(i, h);
+    }
     const binders: Binder[] = decl.params.map((p, i) => {
       const fromEnsures = s.ensures?.params[i];
       const name = fromEnsures ?? p.name ?? `arg${i}`;
@@ -862,6 +927,7 @@ export function readSpecs(input: ReadSpecsInput): ModuleSpecs {
       name: s.name,
       kind: s.kind,
       binders,
+      ...(s.sample ? { sample: s.sample } : {}),
       ...(s.when ? { when: s.when } : {}),
       ...(s.ensures ? { ensures: s.ensures } : {}),
       imports,

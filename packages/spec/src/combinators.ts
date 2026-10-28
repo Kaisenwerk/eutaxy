@@ -1,5 +1,5 @@
 /**
- * What a spec file writes: `forall(f, { when, ensures })` and `total(f)`.
+ * What a spec file writes: `forall(f, { sample, when, ensures })` and `total(f)`.
  * Both return plain data holding the function itself, so the user's
  * compiler types the arrows' parameters as `f`'s and a spec that does not
  * match its function does not compile. Nothing here runs a check: the
@@ -14,10 +14,15 @@ export type Fn = (...args: never[]) => unknown;
  * A universally quantified claim: for every input of `fn`'s parameter
  * types where `when` holds, `ensures` holds. `ensures` is evaluated only
  * where `when` does, so a guard such as `c !== null` protects what follows.
+ * `sample` is not part of the claim: it limits the inputs the `TESTED`
+ * rung draws (to keep each evaluation small, say), and the verdict says
+ * so; inputs the simulator passed are checked whatever it says, and an
+ * engine proves the claim for every input.
  */
 export interface Forall<F extends Fn> {
   readonly kind: "forall";
   readonly fn: F;
+  readonly sample?: (...args: Parameters<F>) => boolean;
   readonly when?: (...args: Parameters<F>) => boolean;
   readonly ensures: (...args: Parameters<F>) => boolean;
 }
@@ -33,6 +38,7 @@ export type Spec = Forall<Fn> | Total<Fn>;
 export function forall<F extends Fn>(
   fn: F,
   property: {
+    readonly sample?: (...args: Parameters<F>) => boolean;
     readonly when?: (...args: Parameters<F>) => boolean;
     readonly ensures: (...args: Parameters<F>) => boolean;
   },
@@ -40,6 +46,7 @@ export function forall<F extends Fn>(
   return {
     kind: "forall",
     fn,
+    ...(property.sample === undefined ? {} : { sample: property.sample }),
     ...(property.when === undefined ? {} : { when: property.when }),
     ensures: property.ensures,
   };
@@ -52,12 +59,19 @@ export function total<F extends Fn>(fn: F): Total<F> {
 /** Whether a spec file's export is one of the two spec shapes. */
 export function isSpec(value: unknown): value is Spec {
   if (typeof value !== "object" || value === null) return false;
-  const v = value as { kind?: unknown; fn?: unknown; ensures?: unknown; when?: unknown };
+  const v = value as {
+    kind?: unknown;
+    fn?: unknown;
+    ensures?: unknown;
+    when?: unknown;
+    sample?: unknown;
+  };
   if (typeof v.fn !== "function") return false;
   if (v.kind === "total") return true;
   return (
     v.kind === "forall" &&
     typeof v.ensures === "function" &&
-    (v.when === undefined || typeof v.when === "function")
+    (v.when === undefined || typeof v.when === "function") &&
+    (v.sample === undefined || typeof v.sample === "function")
   );
 }

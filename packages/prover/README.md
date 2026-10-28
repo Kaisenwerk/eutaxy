@@ -37,7 +37,7 @@ literals, the module's `interface` and `type` declarations with type
 parameters substituted, unions of them, and arrays of any of them (`T[]`,
 `readonly T[]`, `Array<T>`, `ReadonlyArray<T>`), and marks the rest
 `unknown`),
-every `export const name = forall(f, { when, ensures })` and `total(f)`
+every `export const name = forall(f, { sample, when, ensures })` and `total(f)`
 with the combinators imported from `eutaxy/spec` and `f` from the module,
 the arrows kept as text, and the precondition's conjuncts about one
 parameter as that binder's hint (`hintsOf`). `readSubset` and

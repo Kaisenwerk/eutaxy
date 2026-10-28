@@ -1,12 +1,14 @@
 {
-  "description": "A product of variables is outside linear arithmetic: true, but given up on. Multiplication by a constant is linear and proved.",
+  "description": "A product of variables is outside linear arithmetic: true, but given up on. Multiplication by a constant is linear and proved. A sample limits what TESTED draws, not the claim: the engines decide it for every input.",
   "expect": {
     "tested": {
       "square": {
         "squareNonNegative": "REFUTED"
       },
       "triple": {
-        "byConstant": "TESTED"
+        "byConstant": "TESTED",
+        "byConstantSampled": "TESTED",
+        "smallInsideTheSample": "TESTED"
       }
     },
     "lean": {
@@ -14,7 +16,9 @@
         "squareNonNegative": "gave_up"
       },
       "triple": {
-        "byConstant": "PROVEN"
+        "byConstant": "PROVEN",
+        "byConstantSampled": "PROVEN",
+        "smallInsideTheSample": "gave_up"
       }
     },
     "smt": {
@@ -22,7 +26,9 @@
         "squareNonNegative": "REFUTED"
       },
       "triple": {
-        "byConstant": "PROVEN"
+        "byConstant": "PROVEN",
+        "byConstantSampled": "PROVEN",
+        "smallInsideTheSample": "REFUTED"
       }
     }
   }

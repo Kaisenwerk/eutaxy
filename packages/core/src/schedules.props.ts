@@ -2,19 +2,21 @@
  * The enumeration model's claims, which v0.8's gate needs PROVEN: the
  * number of schedules is the product of the choices, none repeats, every
  * one picks an existing option at every depth, and they come in depth-first
- * (lexicographic) order. Bounded here only so that sampling stays fast.
+ * (lexicographic) order. Each claim is about every list of levels; the
+ * sample only keeps the TESTED rung's draws small (every schedule of
+ * sixteen levels of sixteen options would not fit in memory).
  */
 
 import { forall } from "@eutaxy/spec";
 import { scheduleCount, schedules } from "./schedules.ts";
 
 export const countIsProduct = forall(schedules, {
-  when: (levels) => levels.length <= 4 && levels.every((l) => l.length <= 4),
+  sample: (levels) => levels.length <= 4 && levels.every((l) => l.length <= 4),
   ensures: (levels) => schedules(levels).length === scheduleCount(levels),
 });
 
 export const inBounds = forall(schedules, {
-  when: (levels) => levels.length <= 4 && levels.every((l) => l.length <= 4),
+  sample: (levels) => levels.length <= 4 && levels.every((l) => l.length <= 4),
   ensures: (levels) =>
     schedules(levels).every(
       (s) =>
@@ -25,7 +27,7 @@ export const inBounds = forall(schedules, {
 
 /** Each schedule comes strictly after the one before it, comparing depth by depth; so none repeats. */
 export const depthFirstOrder = forall(schedules, {
-  when: (levels) => levels.length <= 4 && levels.every((l) => l.length <= 4),
+  sample: (levels) => levels.length <= 4 && levels.every((l) => l.length <= 4),
   ensures: (levels) => {
     const all = schedules(levels);
     return all.every((s, k) => {

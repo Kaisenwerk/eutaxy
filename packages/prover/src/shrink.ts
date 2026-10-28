@@ -7,6 +7,7 @@
 import type { Binder, Fn, Forall } from "@eutaxy/spec";
 import { type Evaluation, evaluate } from "./checked.ts";
 import { shrinkCandidates } from "./generate.ts";
+import { copy } from "./render.ts";
 
 /** How many evaluations shrinking may spend on one counterexample. */
 const shrinkBudget = 500;
@@ -32,6 +33,8 @@ export function shrinkRefutation(
           if (spent >= shrinkBudget) break;
           spent++;
           const trial = values.with(i, candidate);
+          // Inside the sample only: it bounds what an evaluation may cost, shrinking included.
+          if (spec.sample && !inSample(spec, trial)) continue;
           const still = refutes(evaluate(spec, trial, true));
           if (still === undefined) continue;
           values = trial;
@@ -50,4 +53,13 @@ export function shrinkRefutation(
 export function refutes(e: Evaluation): { readonly error?: string } | undefined {
   if ("malformed" in e || e.outcome !== "refuted") return undefined;
   return "error" in e && e.error !== undefined ? { error: e.error } : {};
+}
+
+/** Whether the spec's sample holds of the values (a sample that throws or answers other than true does not). */
+function inSample(spec: Forall<Fn>, values: readonly unknown[]): boolean {
+  try {
+    return spec.sample?.(...(copy(values) as never[])) === true;
+  } catch {
+    return false;
+  }
 }
