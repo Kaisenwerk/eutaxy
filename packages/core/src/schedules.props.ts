@@ -1,40 +1,34 @@
 /**
- * The enumeration model's claims, which v0.8's gate needs PROVEN: the
- * number of schedules is the product of the choices, none repeats, every
- * one picks an existing option at every depth, and they come in depth-first
- * (lexicographic) order. Each claim is about every list of levels; the
- * sample only keeps the TESTED rung's draws small (every schedule of
- * sixteen levels of sixteen options would not fit in memory).
+ * The enumeration model's claims. v0.8's gate needs the first two PROVEN:
+ * the number of schedules is the product of the choices, and no schedule
+ * repeats; every schedule is also in bounds. Their proofs, which need
+ * induction, are supplied in schedules.props.lean and checked by Lean's
+ * kernel. That the schedules come in depth-first order is held here at
+ * TESTED, and exactly, on every tree up to a bound, by engine's test of
+ * the enumerator against this model. Each claim is about every list of
+ * levels; the sample only keeps the TESTED rung's draws small (every
+ * schedule of sixteen levels of sixteen options would not fit in memory).
  */
 
 import { forall } from "@eutaxy/spec";
-import { scheduleCount, schedules } from "./schedules.ts";
+import { ascending, noRepeats, scheduleCount, schedules, withinLevels } from "./schedules.ts";
 
 export const countIsProduct = forall(schedules, {
   sample: (levels) => levels.length <= 4 && levels.every((l) => l.length <= 4),
   ensures: (levels) => schedules(levels).length === scheduleCount(levels),
 });
 
-export const inBounds = forall(schedules, {
+export const noRepeat = forall(schedules, {
   sample: (levels) => levels.length <= 4 && levels.every((l) => l.length <= 4),
-  ensures: (levels) =>
-    schedules(levels).every(
-      (s) =>
-        s.length === levels.length &&
-        s.every((i, d) => Number.isInteger(i) && i >= 0 && i < (levels[d] ?? []).length),
-    ),
+  ensures: (levels) => noRepeats(schedules(levels)),
 });
 
-/** Each schedule comes strictly after the one before it, comparing depth by depth; so none repeats. */
+export const inBounds = forall(schedules, {
+  sample: (levels) => levels.length <= 4 && levels.every((l) => l.length <= 4),
+  ensures: (levels) => schedules(levels).every((s) => withinLevels(s, levels)),
+});
+
 export const depthFirstOrder = forall(schedules, {
   sample: (levels) => levels.length <= 4 && levels.every((l) => l.length <= 4),
-  ensures: (levels) => {
-    const all = schedules(levels);
-    return all.every((s, k) => {
-      if (k === 0) return true;
-      const prev = all[k - 1] as readonly number[];
-      const d = s.findIndex((i, j) => i !== prev[j]);
-      return d >= 0 && (s[d] as number) > (prev[d] as number);
-    });
-  },
+  ensures: (levels) => ascending(schedules(levels)),
 });

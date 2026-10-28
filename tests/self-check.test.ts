@@ -1,8 +1,11 @@
 /**
- * The self-check: `eutaxy report` on Eutaxy's own core holds every
- * invariant checker to its naive reference (v0.8's gate needs each at
- * CHECKED or better), and would fail if a checker were wrong: each planted
- * bug below, made in a copy of the core's sources, is refuted.
+ * The self-check, v0.8's gate: `eutaxy report` on Eutaxy's own core holds
+ * every invariant checker to its naive reference (each at CHECKED or
+ * better), and would fail if a checker were wrong: each planted bug
+ * below, made in a copy of the core's sources, is refuted. And the
+ * enumeration model's claims are PROVEN by the Lean engine, with the
+ * proofs supplied in schedules.props.lean (engine's tests hold the
+ * enumerator to the model).
  */
 import { execFileSync } from "node:child_process";
 import { cpSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -17,12 +20,12 @@ interface Report {
   specs: { function: string; property: string; kind: string }[];
 }
 
-function report(dir: string): { status: number; report: Report } {
+function report(dir: string, args: readonly string[] = []): { status: number; report: Report } {
   let stdout: string;
   let stderr = "";
   let status = 0;
   try {
-    stdout = execFileSync(process.execPath, [bin, "report", dir, "--json"], {
+    stdout = execFileSync(process.execPath, [bin, "report", dir, "--json", ...args], {
       cwd: root,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
@@ -59,15 +62,34 @@ describe("the self-check", () => {
       "uniqueShared",
     ]);
     for (const s of checkers) expect(atLeastChecked.has(s.kind), s.property).toBe(true);
-    // The enumeration model's claims: TESTED until the Lean engine proves them (the gate wants PROVEN).
-    const model = r.report.specs.filter((s) => s.function === "schedules");
-    expect(model.map((s) => s.property).sort()).toEqual([
-      "countIsProduct",
-      "depthFirstOrder",
-      "inBounds",
-    ]);
-    for (const s of model) expect(atLeastChecked.has(s.kind), s.property).toBe(true);
   }, 120_000);
+
+  test("the enumeration model's claims are PROVEN by the Lean engine, with supplied proofs", () => {
+    // Required where the pinned Lean is installed (CI sets EUTAXY_REQUIRE_LEAN); skipped elsewhere.
+    const probe = execFileSync(
+      process.execPath,
+      [
+        "--input-type=module",
+        "-e",
+        'import { findLean } from "./packages/prover-lean/src/index.ts"; const t = await findLean(); process.stdout.write("unavailable" in t ? "no" : "yes");',
+      ],
+      { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+    );
+    const hasLean = probe.trim() === "yes";
+    if (!hasLean && process.env["EUTAXY_REQUIRE_LEAN"] !== "1") return;
+    expect(hasLean, "the pinned Lean toolchain is required here").toBe(true);
+    const r = report("packages/core/src", ["--prover", "lean"]);
+    expect(r.status).toBe(0);
+    const model = r.report.specs.filter((s) => s.function === "schedules");
+    const kinds = Object.fromEntries(model.map((s) => [s.property, s.kind]));
+    expect(kinds).toEqual({
+      countIsProduct: "PROVEN",
+      noRepeat: "PROVEN",
+      inBounds: "PROVEN",
+      // Held exactly on every tree up to a bound by engine's refinement test; its proof is not supplied.
+      depthFirstOrder: "TESTED",
+    });
+  }, 300_000);
 
   // Under packages/core so the copy resolves @eutaxy/spec; .probe-* is gitignored.
   // Each bug is one line, found by its text (after `after`, when the line occurs more than once).
