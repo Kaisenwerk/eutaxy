@@ -1,5 +1,5 @@
 {
-  "description": "Lists: readonly T[] as Lean's List; literals with a trailing spread, length, xs[0] ?? d, slice(1), map and flatMap (with the index), every, some, reduce, and structural recursion on slice(1). The Lean engine translates them, its translation checked on drawn lists; the SMT engine does not take lists. Claims needing induction are beyond the tactic script.",
+  "description": "Lists: readonly T[] as Lean's List; literals with a trailing spread, length, xs[0] ?? d, slice(1), map and flatMap (with the index), every, some, reduce, and structural recursion on slice(1). The Lean engine translates them, its translation checked on drawn lists; the SMT engine does not take lists. Claims needing induction are beyond the tactic script: domain.props.lean supplies their proofs, which Lean's kernel checks.",
   "expect": {
     "tested": {
       "schedules": {
@@ -26,7 +26,7 @@
     },
     "lean": {
       "schedules": {
-        "countIsProduct": "gave_up"
+        "countIsProduct": "PROVEN"
       },
       "scheduleCount": {
         "emptyCount": "PROVEN"
@@ -38,7 +38,7 @@
         "pushFrontGrows": "PROVEN"
       },
       "sum": {
-        "sumOfOne": "gave_up"
+        "sumOfOne": "PROVEN"
       },
       "allBelow": {
         "belowAnything": "PROVEN"

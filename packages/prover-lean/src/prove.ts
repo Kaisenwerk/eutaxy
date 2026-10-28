@@ -8,6 +8,8 @@
  * `total` is proved by Lean accepting the definition.
  */
 
+import { existsSync, readFileSync } from "node:fs";
+import { basename } from "node:path";
 import type {
   ModuleProofs,
   ProofOutcome,
@@ -29,6 +31,13 @@ import {
 import type { FunctionSpec, Property, SpecError, SpecType } from "@eutaxy/spec";
 import { type Emitted, emitModule } from "./emit.ts";
 import { checkLean, findLean, type LeanDiagnostic, leanVersion } from "./lean.ts";
+import {
+  axiomsOf,
+  provesExactly,
+  readSupplied,
+  type SuppliedProofs,
+  standardAxioms,
+} from "./supplied.ts";
 
 export const engineName = "lean";
 
@@ -94,6 +103,8 @@ function allWith(fns: readonly FunctionSpec[], outcome: ProofOutcome): PropertyP
 /** The emitted Lean for the module's functions in the subset, and the functions with specs outside it with why. */
 export interface Prepared {
   readonly module: SubsetModule;
+  /** The proofs supplied beside the spec file, when there is a proof file. */
+  readonly supplied?: SuppliedProofs;
   readonly emitted: Emitted;
   /** The functions to report on. */
   readonly fns: readonly FunctionSpec[];
@@ -145,10 +156,22 @@ export function prepare(input: ProveInput): Prepared {
         .map((property) => ({ function: fn.name, property })),
     );
   const specErrors = specs.errors;
+  // Proofs supplied beside the spec file: `domain.props.lean` beside `domain.props.ts`.
+  const proofFile = input.specPath?.replace(/\.ts$/, ".lean");
+  const supplied =
+    proofFile !== undefined && existsSync(proofFile)
+      ? readSupplied(basename(proofFile), readFileSync(proofFile, "utf8"))
+      : undefined;
   try {
     return {
       module,
-      emitted: emitModule(module, properties, input.extra),
+      ...(supplied ? { supplied } : {}),
+      emitted: emitModule(
+        module,
+        properties,
+        input.extra,
+        supplied && !supplied.refused ? supplied : undefined,
+      ),
       fns,
       outside,
       specErrors,
@@ -162,9 +185,48 @@ export function prepare(input: ProveInput): Prepared {
   }
 }
 
+/**
+ * A supplied proof's outcome: given up on when its lemmas or its tactics
+ * do not compile, or when it rests on an axiom beyond Lean's standard
+ * ones (`sorry` is one); PROVEN otherwise, saying it was supplied.
+ */
+function suppliedOutcome(
+  file: string,
+  error: LeanDiagnostic | undefined,
+  axioms: readonly string[] | undefined,
+  exact: boolean,
+  assumptions: readonly string[],
+): ProofOutcome {
+  if (error)
+    return unknown(
+      "gave_up",
+      `the proof supplied in ${file} does not close: ${error.message.split("\n")[0]}`,
+    );
+  if (!exact)
+    return unknown(
+      "gave_up",
+      `the proof supplied in ${file} proves more hypotheses than its statement has (a section variable?), or Lean did not report its type`,
+    );
+  if (axioms === undefined)
+    return unknown("gave_up", `Lean did not report the axioms of the proof supplied in ${file}`);
+  const beyond = axioms.filter((a) => !standardAxioms.has(a));
+  if (beyond.length > 0)
+    return unknown(
+      "gave_up",
+      `the proof supplied in ${file} rests on ${beyond.join(", ")}, beyond Lean's standard axioms`,
+    );
+  return {
+    ...proven,
+    assumptions: [
+      ...assumptions,
+      `the proof was supplied in ${file}, not found by the engine's tactic script; Lean's kernel checked it against the statement Eutaxy emitted, and it rests on no axioms beyond propext, Classical.choice and Quot.sound`,
+    ],
+  };
+}
+
 /** Prove a module's properties with the pinned Lean. */
 export async function proveModule(input: ProveInput): Promise<LeanModuleProofs> {
-  const { module, emitted, fns, outside, specErrors } = prepare(input);
+  const { module, emitted, fns, outside, specErrors, supplied } = prepare(input);
   const inSubset = fns.filter((f) => !outside.has(f.name));
   const unsupported = fns
     .filter((f) => outside.has(f.name))
@@ -198,7 +260,10 @@ export async function proveModule(input: ProveInput): Promise<LeanModuleProofs> 
         `Lean could not be run: ${checked.run.stderr.trim() || `exit ${checked.run.code}`}`,
       ),
     );
-  const elsewhere = errors.filter((d) => !inTheorem(d));
+  const inLemmas = (d: LeanDiagnostic) =>
+    emitted.lemmas !== undefined && d.line >= emitted.lemmas.from && d.line <= emitted.lemmas.to;
+  const lemmaErrors = errors.filter(inLemmas);
+  const elsewhere = errors.filter((d) => !inTheorem(d) && !inLemmas(d));
   if (elsewhere.length > 0) {
     // The emitted definitions themselves did not compile: an engine gap, never a verdict on the property.
     const where = elsewhere.map((d) => `line ${d.line}: ${d.message.split("\n")[0]}`).join("; ");
@@ -233,12 +298,34 @@ export async function proveModule(input: ProveInput): Promise<LeanModuleProofs> 
         });
         continue;
       }
+      if (supplied?.refused && supplied.proofs.has(property.name)) {
+        results.push({
+          function: fn.name,
+          property: property.name,
+          outcome: unknown("gave_up", supplied.refused),
+        });
+        continue;
+      }
       const theorem = emitted.theorems.find(
         (t) => t.function === fn.name && t.property === property.name,
       );
       const failed = theorem
         ? errors.filter((d) => d.line >= theorem.from && d.line <= theorem.to)
         : [];
+      if (theorem?.supplied && supplied) {
+        results.push({
+          function: fn.name,
+          property: property.name,
+          outcome: suppliedOutcome(
+            supplied.file,
+            lemmaErrors[0] ?? failed[0],
+            axiomsOf(checked.diagnostics, theorem.axiomsLine ?? 0, theorem.name),
+            provesExactly(checked.diagnostics, theorem.typeLine ?? 0, theorem.name),
+            [...engineAssumptions, ...modelAssumptions(property, fn.name, module)],
+          ),
+        });
+        continue;
+      }
       results.push({
         function: fn.name,
         property: property.name,

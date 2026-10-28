@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { diagnostics } from "./lean.ts";
+import { diagnostics, jsonDiagnostics } from "./lean.ts";
 
 describe("diagnostics", () => {
   test("file:line:col: severity: message, continuation lines kept with their diagnostic", () => {
@@ -25,5 +25,20 @@ describe("diagnostics", () => {
       { line: 3, column: 0, severity: "info", message: "fine" },
     ]);
     expect(diagnostics("")).toEqual([]);
+  });
+});
+
+describe("jsonDiagnostics", () => {
+  test("Lean's messages with their positions; anything else written is not one", () => {
+    const out = [
+      '{"data":"unsolved goals","pos":{"line":4,"column":19},"severity":"error"}',
+      "'t' does not depend on any axioms",
+      `{"data":"'t' depends on axioms: [propext]","pos":{"line":9,"column":0},"severity":"information"}`,
+      "{not json",
+    ].join("\n");
+    expect(jsonDiagnostics(out)).toEqual([
+      { line: 4, column: 19, severity: "error", message: "unsolved goals" },
+      { line: 9, column: 0, severity: "info", message: "'t' depends on axioms: [propext]" },
+    ]);
   });
 });

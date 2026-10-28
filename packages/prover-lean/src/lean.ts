@@ -12,7 +12,14 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
-/** The Lean release the engine's contract corpus is checked against. */
+/**
+ * The Lean release the engine's contract corpus is checked against. On a
+ * bump: run the corpus and the supplied-proof tests on the new release,
+ * and read its release notes for a new command that runs code while a
+ * file is checked (a `#` command is already refused; a new word goes into
+ * `supplied.ts`'s refused list in the same change). CI caches the
+ * toolchain by this file's hash.
+ */
 export const leanToolchain = "leanprover/lean4:v4.35.0";
 export const leanVersion = "4.35.0";
 /** How to put the pinned toolchain on this machine. */
@@ -121,6 +128,42 @@ export async function findLean(): Promise<LeanToolchain | { readonly unavailable
 }
 
 /** Parse Lean's diagnostics for the one file it was given. */
+/**
+ * Lean's messages from `--json` output: one object per line, each with
+ * its position. Lines that are not such an object (whatever a program
+ * writes to the terminal) are not messages and are skipped, so nothing in
+ * the checked file can pose as a message at a position it is not at.
+ */
+export function jsonDiagnostics(output: string): LeanDiagnostic[] {
+  const out: LeanDiagnostic[] = [];
+  for (const raw of output.split("\n")) {
+    if (!raw.startsWith("{")) continue;
+    let m: { pos?: { line?: unknown; column?: unknown }; severity?: unknown; data?: unknown };
+    try {
+      m = JSON.parse(raw) as typeof m;
+    } catch {
+      continue;
+    }
+    const severity =
+      m.severity === "error"
+        ? "error"
+        : m.severity === "warning"
+          ? "warning"
+          : m.severity === "information"
+            ? "info"
+            : undefined;
+    if (severity === undefined || typeof m.pos?.line !== "number" || typeof m.data !== "string")
+      continue;
+    out.push({
+      line: m.pos.line,
+      column: typeof m.pos.column === "number" ? m.pos.column : 0,
+      severity,
+      message: m.data.trimEnd(),
+    });
+  }
+  return out;
+}
+
 export function diagnostics(output: string): LeanDiagnostic[] {
   const out: LeanDiagnostic[] = [];
   const re = /^(?:.*?):(\d+):(\d+): (error|warning|info): (.*)$/;
@@ -165,11 +208,11 @@ export async function checkLean(
   try {
     writeFileSync(join(dir, "lean-toolchain"), `${leanToolchain}\n`);
     writeFileSync(join(dir, "Eutaxy.lean"), source);
-    const result = await run(toolchain.command, [...toolchain.args, "Eutaxy.lean"], {
+    const result = await run(toolchain.command, [...toolchain.args, "--json", "Eutaxy.lean"], {
       cwd: dir,
       timeoutMs: options.timeoutMs ?? 120_000,
     });
-    return { run: result, diagnostics: diagnostics(`${result.stdout}\n${result.stderr}`) };
+    return { run: result, diagnostics: jsonDiagnostics(`${result.stdout}\n${result.stderr}`) };
   } finally {
     if (!options.keep) rmSync(dir, { recursive: true, force: true });
   }

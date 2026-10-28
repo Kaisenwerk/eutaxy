@@ -838,7 +838,48 @@ lists either or both.
 **First-party engine (`prover-lean`).** Eutaxy's TypeScript-to-Lean 4
 engine. It accepts a defined pure subset of TypeScript, emits
 Lean 4 with the `SpecIR` obligations as theorems, discharges them with one
-tactic script, and maps Lean's diagnostics back to properties. The subset
+tactic script, and maps Lean's diagnostics back to properties. Where the
+script cannot close a goal (induction, most often), a proof can be
+supplied beside the spec file: `domain.props.lean` beside
+`domain.props.ts`, lemmas first, then a `-- proof: <property>` section of
+tactics per property. The proof file is code in the user's repository,
+trusted as the spec file beside it is: Eutaxy imports and runs
+`domain.props.ts`, so a repository that wants to deceive its own report
+already can, and the proof file opens no new door. What Eutaxy
+guarantees about a supplied proof is narrower and exact: the statement is
+Eutaxy's (each supplied property's statement is emitted as a definition
+before any supplied text, so a proof cannot change what it proves);
+Lean's kernel accepted the proof; and the proof rests on no axiom beyond
+Lean's standard ones (`propext`, `Classical.choice`, `Quot.sound`: `sorry`
+is an axiom there), read from Lean's `#print axioms` message at the line
+of Eutaxy's own command, with Eutaxy's own `#check` of the theorem showing
+exactly the statement and no added hypothesis. That is what keeps a coding
+agent from taking the short way to `PROVEN`. It is not a sandbox: Lean is
+programmable, and a file written to deceive the checker it runs inside (a
+macro, an attribute, an initializer, a `#` command printing a message
+shaped like Lean's) stands where a spec file that writes to the report
+stands. Such text is refused bluntly, not policed: any `#`, any `@[`, and
+the commands that register code or syntax, switch checks off, add axioms
+or trusted code, or scope hypotheses (`set_option`, `macro`, `syntax`,
+`notation`, `elab`, `attribute`, `initialize`, `simproc`, `run_…`,
+`axiom`, `sorry`, `unsafe`, `opaque`, `implemented_by`, `extern`,
+`native_decide`, `import`, `section`, `namespace`, `variable`, `include`,
+`omit`, `universe` and their kin) refuse the whole file wherever they
+stand as a token, in comments and strings too, since telling those apart
+would mean lexing Lean. A refused word costs a rename or a reworded
+comment, never soundness; a word inside a longer name
+(`List.prefix_append`) is that name and passes. The list changes on two
+occasions only: a legitimate proof is refused, and the rule narrows; or
+the pinned Lean release is bumped and the new release adds a command that
+runs code while a file is checked, and the word is added in the same
+change. It never grows because someone shows what a hostile file could
+do; that is answered above. The verdict is `PROVEN`
+and says the proof was supplied. An audit from outside the process that
+elaborated the file (a compiled program over the `.olean` that replays
+the kernel, as lean4checker does) would hold against a hostile file as
+well; it waits for a target that checks proofs it did not write. A second
+plain `lean` run that imports the module is not that audit: macros and
+initializers travel in the `.olean`. The subset
 is specified operationally by the contract corpus
 (`corpus/prover-contracts`: functions with known outcomes, provable, given
 up on, and outside the subset) and widens one characterised class at a

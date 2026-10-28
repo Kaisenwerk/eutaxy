@@ -210,7 +210,8 @@ for (const entry of entries) {
           ({ fn, args, result }) =>
             `example : ${leanIdent.fn(fn.name)}${args.map((a, i) => ` ${leanValue(a, (fn.params[i] as (typeof fn.params)[number]).type, subset)}`).join("")} = ${leanValue(result, fn.returns, subset)} := by decide`,
         );
-        const proofs = await proveWithLean({ source, specs, extra });
+        // specPath: a proof file beside the spec file supplies proofs the tactic script does not find.
+        const proofs = await proveWithLean({ source, specs, extra, specPath });
         expect(outcomes(proofs.results)).toEqual(manifest.expect.lean);
       },
       120_000,

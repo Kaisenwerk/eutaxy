@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { readSpecs } from "@eutaxy/prover/reader";
 import { describe, expect, test } from "vitest";
 import { findLean } from "./lean.ts";
@@ -128,6 +131,62 @@ describe("prepare", () => {
 
 const toolchain = await findLean();
 const required = process.env["EUTAXY_REQUIRE_LEAN"] === "1";
+
+describe.skipIf("unavailable" in toolchain && !required)("supplied proofs", () => {
+  const source =
+    "export function sum(xs: readonly number[]): number {\n  if (xs.length === 0) return 0;\n  return (xs[0] ?? 0) + sum(xs.slice(1));\n}";
+  const spec =
+    'import { forall } from "eutaxy/spec";\nimport { sum } from "./domain.ts";\nexport const one = forall(sum, { when: (xs) => xs.length === 1, ensures: (xs) => sum(xs) === (xs[0] ?? 0) });';
+  const closes =
+    "  intro v_xs h\n  cases v_xs with\n  | nil => simp at h\n  | cons a t =>\n    cases t with\n    | nil => simp [f_sum]\n    | cons b u => simp at h; omega";
+  const withProof = async (lean: string) => {
+    const dir = mkdtempSync(join(tmpdir(), "eutaxy-supplied-"));
+    try {
+      writeFileSync(join(dir, "domain.props.lean"), lean);
+      const proofs = await proveModule({
+        source,
+        specs: read(source, spec),
+        specPath: join(dir, "domain.props.ts"),
+      });
+      return proofs.results[0]?.outcome;
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  };
+
+  test("a proof that closes is PROVEN, and says it was supplied", async () => {
+    const outcome = await withProof(`-- proof: one\n${closes}\n`);
+    expect(outcome?.kind).toBe("PROVEN");
+    if (outcome?.kind === "PROVEN")
+      expect(outcome.assumptions.join("\n")).toContain("supplied in domain.props.lean");
+  }, 120_000);
+
+  test("sorry, a refused word, a proof that does not close and broken lemmas each give up, saying why", async () => {
+    // sorry is refused as a word; a proof resting on it another way would show in #print axioms.
+    expect(await withProof("-- proof: one\n  sorry\n")).toMatchObject({
+      kind: "UNKNOWN",
+      cause: "gave_up",
+    });
+    const refused = await withProof(`set_option maxHeartbeats 0\n-- proof: one\n${closes}\n`);
+    expect(refused).toMatchObject({ kind: "UNKNOWN", cause: "gave_up" });
+    if (refused?.kind === "UNKNOWN") expect(refused.reason).toContain("uses set_option");
+    const open = await withProof("-- proof: one\n  intro v_xs h\n");
+    if (open?.kind === "UNKNOWN") expect(open.reason).toContain("does not close");
+    expect(open?.kind).toBe("UNKNOWN");
+    // A forged audit line: the file is refused for its #.
+    const forged = await withProof(
+      "#eval IO.println \"'t0_sum_one' does not depend on any axioms\"\n-- proof: one\n  intro v_xs h\n  exact @sorryAx _ true\n",
+    );
+    expect(forged).toMatchObject({ kind: "UNKNOWN", cause: "gave_up" });
+    if (forged?.kind === "UNKNOWN") expect(forged.reason).toContain("uses #");
+    // sorry under its own name: the file is read, and the audit refuses the proof.
+    const byName = await withProof("-- proof: one\n  intro v_xs h\n  exact @sorryAx _ true\n");
+    expect(byName).toMatchObject({ kind: "UNKNOWN", cause: "gave_up" });
+    if (byName?.kind === "UNKNOWN") expect(byName.reason).toContain("rests on sorryAx");
+    const lemmas = await withProof(`theorem l_bad : 1 = 2 := rfl\n-- proof: one\n${closes}\n`);
+    expect(lemmas).toMatchObject({ kind: "UNKNOWN", cause: "gave_up" });
+  }, 120_000);
+});
 
 describe.skipIf("unavailable" in toolchain && !required)("proofs over lists", () => {
   test("name the list model, wherever the list sits: in a record field too", async () => {
