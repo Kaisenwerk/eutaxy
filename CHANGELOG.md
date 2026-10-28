@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.8.0](https://github.com/Kaisenwerk/eutaxy/compare/v0.7.0...v0.8.0) (2026-10-28)
+
+
+### Features
+
+* **cli:** eutaxy report runs every spec file under a directory ([9e12b43](https://github.com/Kaisenwerk/eutaxy/commit/9e12b43284c32f637ac3bb9816622b9aeb3be14b))
+* **core:** the enumeration model, and the enumerator held to it ([f13a3e4](https://github.com/Kaisenwerk/eutaxy/commit/f13a3e41475412557ef968ab3105f16395320457))
+* **core:** the enumeration model's claims proven ([5a18b2a](https://github.com/Kaisenwerk/eutaxy/commit/5a18b2a98525f4d88fb93daa26617a8b6fd45381))
+* **prover:** arrays in spec binders, drawn and shrunk at TESTED ([644c899](https://github.com/Kaisenwerk/eutaxy/commit/644c8992f22db2b784baeefdb9c15ba9bfa2ad37))
+* **prover:** lists and structural recursion in the subset, translated by Lean ([b216915](https://github.com/Kaisenwerk/eutaxy/commit/b21691567587052f19d6058e190c4256196f34ae))
+* **prover:** proofs supplied beside the spec file, checked by the kernel ([345822a](https://github.com/Kaisenwerk/eutaxy/commit/345822a3788d8952142775ca79db60d3c5e1876d))
+* **prover:** TESTED tries every edge value before any random draw ([26b8f6c](https://github.com/Kaisenwerk/eutaxy/commit/26b8f6c72890a39335fece08a77af7b8ff739c40))
+* **prover:** the ladder can start at TESTED when no scenario ran ([d3604dc](https://github.com/Kaisenwerk/eutaxy/commit/d3604dcf12265d42de3a4999f698bf26fbe4c623))
+* **report:** a spec report by module, as text and as JSON ([6e6f1a7](https://github.com/Kaisenwerk/eutaxy/commit/6e6f1a7a5672b9a3b23dd2f76d7f6e67e6ed97b9))
+* **spec:** sample, which limits the inputs TESTED draws but not the claim ([dad262a](https://github.com/Kaisenwerk/eutaxy/commit/dad262a8f4610b71153446b90a88e3690bc8c02c))
+
+
+### Bug Fixes
+
+* **cli:** a value flag given without a value is an error ([46ae049](https://github.com/Kaisenwerk/eutaxy/commit/46ae04982c3262d06755d68d13244a9f621c0580))
+
+
+### Documentation
+
+* **roadmap:** v0.8 done, v0.9 the reader on the TypeScript 7.1 API ([b67be7e](https://github.com/Kaisenwerk/eutaxy/commit/b67be7ebebdeb32c4e42b98f7f772d61650a1628))
+
 ## [0.7.0](https://github.com/Kaisenwerk/eutaxy/compare/v0.6.0...v0.7.0) (2026-10-27)
 
 
