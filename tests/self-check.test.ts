@@ -59,6 +59,14 @@ describe("the self-check", () => {
       "uniqueShared",
     ]);
     for (const s of checkers) expect(atLeastChecked.has(s.kind), s.property).toBe(true);
+    // The enumeration model's claims: TESTED until the Lean engine proves them (the gate wants PROVEN).
+    const model = r.report.specs.filter((s) => s.function === "schedules");
+    expect(model.map((s) => s.property).sort()).toEqual([
+      "countIsProduct",
+      "depthFirstOrder",
+      "inBounds",
+    ]);
+    for (const s of model) expect(atLeastChecked.has(s.kind), s.property).toBe(true);
   }, 120_000);
 
   // Under packages/core so the copy resolves @eutaxy/spec; .probe-* is gitignored.
@@ -177,6 +185,20 @@ describe("the self-check", () => {
       from: "(state.key === undefined || keyOf(e, state.key) === key),",
       to: "true,",
       refuted: ["refinesOnStateMatchesReference"],
+    },
+    {
+      bug: "the model repeats the first option",
+      file: "schedules.ts",
+      from: "rest.map((s) => [i, ...s])",
+      to: "rest.map((s) => [0, ...s])",
+      refuted: ["depthFirstOrder"],
+    },
+    {
+      bug: "the model drops the last option of every level",
+      file: "schedules.ts",
+      from: "return (levels[0] ?? []).flatMap(",
+      to: "return (levels[0] ?? []).slice(1).flatMap(",
+      refuted: ["countIsProduct"],
     },
   ])(
     "a planted bug is refuted: $bug",

@@ -49,6 +49,7 @@ export {
   validateScenario,
   type WorkerRef,
 } from "./scenario.ts";
+export { scheduleCount, schedules } from "./schedules.ts";
 export { type EffectSelector, getPath, matches, selectEffects } from "./selectors.ts";
 export { type ShrinkState, shrinkCandidates } from "./shrink.ts";
 export {
