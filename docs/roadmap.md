@@ -25,13 +25,23 @@ among them is `REFUTED` with a replayed counterexample, the refund
 example is `PROVEN` by both engines, and a claim that holds over the
 integers and fails over doubles ends `CONFLICT`.
 
-Enumerator proven through a prover adapter; invariant checkers verified
-against reference implementations; `eutaxy report`. The Lean engine takes
-nullable types and tagged unions (structures, inductives, `Option`) on
-the way, since the self-check's own core uses them.
+The exhaustive enumerator proven through a model; invariant checkers
+verified against reference implementations; `eutaxy report`. The
+enumerator in `engine` is a stateful walk over a tree of choices that
+runs discover, which no engine translates, so the claim is split where it
+can be checked: a pure model in `core` (the schedules of a choice tree)
+is proved, and the enumerator is held to the model on every choice tree
+up to a size bound by `engine`'s tests. The Lean engine learns what the
+model's proofs need: lists, structural recursion, and proofs supplied
+beside the spec file (a `.lean` file the kernel checks) where its own
+tactic script cannot close a goal. Nullable types and tagged unions in
+Lean (structures, inductives, `Option`) come on the way where the core's
+specs use them.
 
 **Gate:** Eutaxy's own `eutaxy report` on its core shows `PROVEN` for the
-enumerator and `CHECKED` or better for every invariant checker.
+enumerator's model (the number of schedules is the product of the
+choices, and no schedule repeats) and `CHECKED` or better for every
+invariant checker; `engine`'s tests hold the enumerator to the model.
 
 Patch work alongside, each when a target needs it, shipping as `0.7.x`
 until the gate passes:
