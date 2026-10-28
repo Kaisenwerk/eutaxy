@@ -72,8 +72,6 @@ const allowed: Readonly<Record<string, readonly string[]>> = {
   prover: ["core", "spec"],
   "prover-lean": ["prover", "spec"],
   "prover-smt": ["prover", "spec"],
-  "prover-thales": ["prover"],
-  "prover-lemmascript": ["prover"],
   report: ["core"],
   cli: [
     "spec",
@@ -84,8 +82,6 @@ const allowed: Readonly<Record<string, readonly string[]>> = {
     "prover",
     "prover-lean",
     "prover-smt",
-    "prover-thales",
-    "prover-lemmascript",
     "report",
   ],
   eutaxy: [
@@ -97,8 +93,6 @@ const allowed: Readonly<Record<string, readonly string[]>> = {
     "prover",
     "prover-lean",
     "prover-smt",
-    "prover-thales",
-    "prover-lemmascript",
     "report",
     "cli",
   ],

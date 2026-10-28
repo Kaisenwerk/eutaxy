@@ -14,9 +14,7 @@
     "@eutaxy/engine": "workspace:*",
     "@eutaxy/prover": "workspace:*",
     "@eutaxy/prover-lean": "workspace:*",
-    "@eutaxy/prover-lemmascript": "workspace:*",
     "@eutaxy/prover-smt": "workspace:*",
-    "@eutaxy/prover-thales": "workspace:*",
     "@eutaxy/report": "workspace:*",
     "@eutaxy/spec": "workspace:*"
   }

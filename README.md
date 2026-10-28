@@ -43,8 +43,7 @@ Nothing is ever reported as verified when it was only explored or sampled:
 
 ```
 packages/   spec, core, engine, cloudflare, aws, prover, prover-lean,
-            prover-smt, prover-thales, prover-lemmascript, report, cli,
-            eutaxy
+            prover-smt, report, cli, eutaxy
 docs/       design and roadmap
 ```
 

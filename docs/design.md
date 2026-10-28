@@ -103,20 +103,19 @@ platform-neutral `engine`; and the pure, dependency-free core (`spec`,
 layer below it. Prover engines attach to `prover` from the side, loaded at
 runtime over a process boundary.
 
-| Module                                | Responsibility                                                                                                                                                                        | May import       |
-| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------- |
-| `spec`                                | `SpecIR` and the combinators users write specs with (`forall`, `total`)                                                                                                               | nothing          |
-| `core`                                | Effect log, fault model, seeded PRNG, `Platform` interface, schedulers (seeded; exhaustive and partial-order reduction from v0.5), invariants including `refines`, shrinker, verdicts | `spec`           |
-| `engine`                              | Run loop, virtual clock, globals patching, per-run state reset, replay                                                                                                                | `core`           |
-| `cloudflare`                          | Binding proxies, platform model, allowlist, Vitest integration                                                                                                                        | `engine`, `core` |
-| `aws`                                 | AWS SDK `send` proxy, SQS-to-Lambda delivery model, DynamoDB reset and snapshots; runs in Node                                                                                        | `engine`, `core` |
-| `prover`                              | `Prover` interface, the reader (a module and its spec file to `SpecIR`), spec ladder, aggregation                                                                                     | `core`, `spec`   |
-| `prover-lean`                         | First-party engine: pure-TypeScript subset to Lean 4, tactic stack, translation validation                                                                                            | `prover`, `spec` |
-| `prover-smt`                          | First-party engine: the same subset to SMT-LIB 2 for Z3; doubles, code-unit strings, datatypes; counterexamples replayed                                                              | `prover`, `spec` |
-| `prover-thales`, `prover-lemmascript` | Optional process-boundary adapters for third-party engines                                                                                                                            | `prover`         |
-| `report`                              | Text, versioned JSON, Vitest regression emitter                                                                                                                                       | `core`           |
-| `cli`                                 | Commands, config, adapter discovery                                                                                                                                                   | all of the above |
-| `eutaxy` (facade)                     | Public API at `eutaxy`, `eutaxy/cloudflare` and `eutaxy/aws`                                                                                                                          | all of the above |
+| Module            | Responsibility                                                                                                                                                                        | May import       |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------- |
+| `spec`            | `SpecIR` and the combinators users write specs with (`forall`, `total`)                                                                                                               | nothing          |
+| `core`            | Effect log, fault model, seeded PRNG, `Platform` interface, schedulers (seeded; exhaustive and partial-order reduction from v0.5), invariants including `refines`, shrinker, verdicts | `spec`           |
+| `engine`          | Run loop, virtual clock, globals patching, per-run state reset, replay                                                                                                                | `core`           |
+| `cloudflare`      | Binding proxies, platform model, allowlist, Vitest integration                                                                                                                        | `engine`, `core` |
+| `aws`             | AWS SDK `send` proxy, SQS-to-Lambda delivery model, DynamoDB reset and snapshots; runs in Node                                                                                        | `engine`, `core` |
+| `prover`          | `Prover` interface, the reader (a module and its spec file to `SpecIR`), spec ladder, aggregation                                                                                     | `core`, `spec`   |
+| `prover-lean`     | First-party engine: pure-TypeScript subset to Lean 4, tactic stack, translation validation                                                                                            | `prover`, `spec` |
+| `prover-smt`      | First-party engine: the same subset to SMT-LIB 2 for Z3; doubles, code-unit strings, datatypes; counterexamples replayed                                                              | `prover`, `spec` |
+| `report`          | Text, versioned JSON, Vitest regression emitter                                                                                                                                       | `core`           |
+| `cli`             | Commands, config, engine selection                                                                                                                                                    | all of the above |
+| `eutaxy` (facade) | Public API at `eutaxy`, `eutaxy/cloudflare` and `eutaxy/aws`                                                                                                                          | all of the above |
 
 Outside `packages/`, the repository holds `corpus/` (planted bugs,
 differential scenarios, prover contracts; never published), `examples/` and
@@ -997,41 +996,41 @@ solver does not decide termination. The engine is pinned to one Z3
 release (`z3Version`), found on the PATH and required to report that
 version; nothing is downloaded during a check.
 
-**Third-party adapters** (Thales, LemmaScript) are optional, and exist for
-cross-checking and for code outside the first-party subset.
+**A further engine** would be a sibling package behind `Prover`, selected
+by the CLI like the two first-party ones; none is planned, since the two
+first-party engines cover what the roadmap's targets need, and two engines
+are what `CONFLICT` is for.
 
 ```ts
 export interface Prover {
   readonly name: string;
-  readonly capabilities: { preconditions: boolean; loops: boolean; quantifiers: boolean };
-  available(): Promise<boolean>;
-  prove(spec: SpecIR): Promise<ProofVerdict>;
+  /** Whether the engine can run here, or why not. */
+  available(): Promise<{ readonly version: string } | { readonly unavailable: string }>;
+  prove(input: ProveInput): Promise<ModuleProofs>;
 }
 ```
 
-Adapter rules:
+Engine rules:
 - Talk to engines over a process boundary (spawn, files, parsed output),
   never a library import, so Lean and Dafny stay out of Eutaxy's install.
-- Users write specs once; each adapter generates its engine's own syntax
+- Users write specs once; each engine generates its own syntax
   into a temporary copy and maps results back to source locations.
 - Record engine name and version with every `PROVEN`, and cache results
   keyed by source hash, spec hash and engine version so CI does not
   flip-flop.
 - Treat timeouts as `UNKNOWN`, never as failures; prefer Lean backends where
   determinism matters.
-- Each adapter has a contract corpus of functions with known verdicts
+- Each engine has a contract corpus of functions with known verdicts
   (provable, refutable, out of scope), including spec-translation cases, run
   in CI against the pinned engine version.
 - Aggregation across engines: one proves and another gives up gives `PROVEN`
   with the proving engine named; one proves and another refutes gives
   `CONFLICT`.
 
-| Engine                      | Best for                                                      | Backend         | Main caveat                                               |
-| --------------------------- | ------------------------------------------------------------- | --------------- | --------------------------------------------------------- |
-| `prover-lean` (first-party) | Push-button proofs of the pure core, on Eutaxy's own schedule | Lean 4          | Subset starts narrow and widens deliberately              |
-| `prover-smt` (first-party)  | Doubles, strings and records; symbolic counterexamples        | Z3 (SMT-LIB 2)  | No kernel-checked proof; refutations replayed instead     |
-| Thales (optional)           | Cross-check; pure functional TypeScript                       | Lean 4          | Strict subset (no mutation, no classes); separate project |
-| LemmaScript (optional)      | Imperative code with loop invariants                          | Lean 4 or Dafny | Tech preview; Dafny's SMT results can vary with timeouts  |
+| Engine                      | Best for                                                      | Backend        | Main caveat                                           |
+| --------------------------- | ------------------------------------------------------------- | -------------- | ----------------------------------------------------- |
+| `prover-lean` (first-party) | Push-button proofs of the pure core, on Eutaxy's own schedule | Lean 4         | Subset starts narrow and widens deliberately          |
+| `prover-smt` (first-party)  | Doubles, strings and records; symbolic counterexamples        | Z3 (SMT-LIB 2) | No kernel-checked proof; refutations replayed instead |
 
 ## Packaging, distribution and developer experience
 
@@ -1048,13 +1047,13 @@ Adapter rules:
 - Peer dependencies only for what users already have: Vitest and the
   Cloudflare Vitest plugin, pinned to tested major versions because that
   integration's API has moved more than once.
-- Provers opt-in: `eutaxy prover install thales` fetches a pinned,
-  checksum-verified toolchain bundle. Projects list engines in
+- Provers opt-in: `eutaxy prover install lean` (and `… smt`, roadmap)
+  fetches a pinned, checksum-verified toolchain. Projects list engines in
   `eutaxy.config.ts`; a listed engine that is not installed yields
   `UNKNOWN`. Never `optionalDependencies`, never a silent download during a
   check.
-- Split into separate packages later only for a reason, most likely the
-  prover adapters. Released in lockstep with exact version pins.
+- Split into separate packages later only for a reason, most likely a
+  prover engine. Released in lockstep with exact version pins.
 
 | Command                        | Does                                                                            |
 | ------------------------------ | ------------------------------------------------------------------------------- |

@@ -29,12 +29,6 @@
       "path": "../prover-smt"
     },
     {
-      "path": "../prover-thales"
-    },
-    {
-      "path": "../prover-lemmascript"
-    },
-    {
       "path": "../report"
     },
     {

@@ -307,15 +307,9 @@ importers:
       '@eutaxy/prover-lean':
         specifier: workspace:*
         version: link:../prover-lean
-      '@eutaxy/prover-lemmascript':
-        specifier: workspace:*
-        version: link:../prover-lemmascript
       '@eutaxy/prover-smt':
         specifier: workspace:*
         version: link:../prover-smt
-      '@eutaxy/prover-thales':
-        specifier: workspace:*
-        version: link:../prover-thales
       '@eutaxy/report':
         specifier: workspace:*
         version: link:../report
@@ -390,15 +384,9 @@ importers:
       '@eutaxy/prover-lean':
         specifier: workspace:*
         version: link:../prover-lean
-      '@eutaxy/prover-lemmascript':
-        specifier: workspace:*
-        version: link:../prover-lemmascript
       '@eutaxy/prover-smt':
         specifier: workspace:*
         version: link:../prover-smt
-      '@eutaxy/prover-thales':
-        specifier: workspace:*
-        version: link:../prover-thales
       '@eutaxy/report':
         specifier: workspace:*
         version: link:../report
@@ -427,12 +415,6 @@ importers:
         specifier: workspace:*
         version: link:../spec
 
-  packages/prover-lemmascript:
-    dependencies:
-      '@eutaxy/prover':
-        specifier: workspace:*
-        version: link:../prover
-
   packages/prover-smt:
     dependencies:
       '@eutaxy/prover':
@@ -441,12 +423,6 @@ importers:
       '@eutaxy/spec':
         specifier: workspace:*
         version: link:../spec
-
-  packages/prover-thales:
-    dependencies:
-      '@eutaxy/prover':
-        specifier: workspace:*
-        version: link:../prover
 
   packages/report:
     dependencies:

@@ -96,10 +96,8 @@ packages/aws/              AWS SDK proxy, SQS delivery model, DynamoDB reset and
 packages/prover/           Prover interface, ladder, aggregation
 packages/prover-lean/      first-party TypeScript-subset-to-Lean 4 engine
 packages/prover-smt/       first-party TypeScript-subset-to-SMT-LIB engine (Z3)
-packages/prover-thales/    optional third-party adapter
-packages/prover-lemmascript/
 packages/report/           text, JSON, Vitest regression emitter
-packages/cli/              commands, config, adapter discovery
+packages/cli/              commands, config, engine selection
 packages/eutaxy/           the published facade, eutaxy
 corpus/                    planted bugs, differential scenarios, prover contracts (never published)
 examples/                  runnable examples that double as acceptance tests
