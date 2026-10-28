@@ -225,6 +225,23 @@ describe("the ladder", () => {
     expect(gaveUp.assumptions.at(-1)).toContain("not TESTED: all");
   });
 
+  test("without a scenario the ladder starts at TESTED and never says the simulator missed a call", () => {
+    const v = specLadder(
+      { ...input(withinCaptured), calls: [] },
+      { checked: false, tested: { seed: "corpus" } },
+    );
+    expect(v).toMatchObject({ kind: "TESTED", inputs: 100 });
+    expect(v).not.toHaveProperty("checked");
+    expect(JSON.stringify(v)).not.toContain("never called");
+    const total: Property = { ...withinCaptured, name: "t", kind: "total" };
+    const t = specLadder({ ...input(total), calls: [] }, { checked: false, tested: { seed: "c" } });
+    expect(t).toMatchObject({ kind: "UNKNOWN", cause: "unsupported" });
+    if (t.kind === "UNKNOWN") expect(t.reason).toContain("generated inputs");
+    expect(() => specLadder({ ...input(withinCaptured), calls: [] }, { checked: false })).toThrow(
+      RangeError,
+    );
+  });
+
   test("neither rung deciding names both reasons", () => {
     const v = specLadder({ ...input(tight), calls: calls([]) }, { tested: { seed: "corpus" } });
     expect(v).toMatchObject({ kind: "UNKNOWN", cause: "gave_up" });

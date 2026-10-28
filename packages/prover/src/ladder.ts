@@ -13,10 +13,22 @@ import { type TestedOptions, testedRung } from "./tested.ts";
 export interface LadderOptions {
   /** Run the `TESTED` rung with these options; `false` stops the ladder at `CHECKED`. */
   readonly tested?: TestedOptions | false;
+  /** `false` when no scenario ran (`eutaxy report`): the ladder starts at `TESTED`, which it then needs. */
+  readonly checked?: false;
 }
 
 /** One property through the ladder's rungs. */
 export function specLadder(input: CheckedInput, options: LadderOptions = {}): SpecVerdict {
+  if (options.checked === false) {
+    if (!options.tested) throw new RangeError("a ladder without CHECKED needs the TESTED rung");
+    return testedRung({
+      module: input.module,
+      fn: input.fn,
+      property: input.property,
+      spec: input.spec,
+      ...options.tested,
+    });
+  }
   const checked = checkedRung(input);
   if (checked.kind === "REFUTED" || options.tested === false || options.tested === undefined)
     return checked;

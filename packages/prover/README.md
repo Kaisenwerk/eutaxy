@@ -8,7 +8,8 @@ into one tree.
 **Public surface.** The ladder: `specLadder` (one property through
 `CHECKED`, then `TESTED`; a counterexample at either rung is `REFUTED`),
 `checkSpecModule` (every verdict for one module, given the spec file's
-namespace and the module's, with `LadderOptions`). The `CHECKED` rung:
+namespace and the module's, with `LadderOptions`; `checked: false` starts
+the ladder at `TESTED` when no scenario ran, as in `eutaxy report`). The `CHECKED` rung:
 `checkedRung` (one property on the calls the simulator made: the binders
 are the function's parameters, the precondition discarding). The `TESTED`
 rung: `testedRung` (one property on assignments drawn from the parameter
