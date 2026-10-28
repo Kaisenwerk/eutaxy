@@ -15,11 +15,16 @@ import {
   type DrawnEffect,
   type DrawnSelector,
   type DrawnSnapshot,
+  type DrawnStep,
   everyRowFailing,
   impliesMissing,
   type Pick,
+  readerOf,
   referencesOrphans,
+  refinesOnState,
+  refinesViolation,
   rowOf,
+  stepsOf,
   targetOf,
   uniqueShared,
 } from "./self-check.ts";
@@ -190,4 +195,60 @@ export const referencesMatchesReference = forall(referencesOrphans, {
     }
     return same(referencesOrphans(snapshots, target, where, path, inTarget, column), expected);
   },
+});
+
+// refines, step by step: for each action in order, its invocation's latest decision that did not
+// throw, the latest read before that decision, and any other invocation's write between the read
+// and the action.
+
+function latest(steps: readonly DrawnStep[], before: number, pick: (s: DrawnStep) => boolean) {
+  for (let i = before - 1; i >= 0; i--) if (pick(steps[i] as DrawnStep)) return i;
+  return -1;
+}
+
+function referenceRefines(
+  steps: readonly DrawnStep[],
+  follows: boolean,
+  state: boolean,
+  keyed: boolean,
+): string[] | null {
+  for (let j = 0; j < steps.length; j++) {
+    const act = steps[j] as DrawnStep;
+    if (act.what !== "act") continue;
+    const own = (s: DrawnStep) => s.invocation === act.invocation;
+    // A decision that threw decided nothing; the latest one that did not is carried out.
+    const d = latest(steps, j, (s) => own(s) && s.what === "decide");
+    if (d < 0) return ["no_decision"];
+    if (follows && (steps[d] as DrawnStep).value !== act.value) return ["not_followed", "value"];
+    if (!state) continue;
+    const r = latest(steps, d, (s) => own(s) && s.what === "read");
+    if (r < 0) return ["no_read"];
+    const read = steps[r] as DrawnStep;
+    const stale = steps.some(
+      (s, k) =>
+        k > r &&
+        k < j &&
+        s.invocation !== act.invocation &&
+        s.what === "write" &&
+        (!keyed || s.value === read.value),
+    );
+    if (stale) return ["stale_read", ...(keyed ? [JSON.stringify(read.value)] : [])];
+  }
+  return null;
+}
+
+export const refinesMatchesReference = forall(refinesViolation, {
+  ensures: (x, y, order, follows, state, keyed) =>
+    same(
+      refinesViolation(x, y, order, follows, state, keyed),
+      referenceRefines(stepsOf(x, y, order), follows, state, keyed),
+    ),
+});
+
+export const refinesOnStateMatchesReference = forall(refinesOnState, {
+  ensures: (x, y, order, keyed) =>
+    same(
+      refinesOnState(x, y, order, keyed),
+      referenceRefines(stepsOf(readerOf(x), readerOf(y), order), true, true, keyed),
+    ),
 });

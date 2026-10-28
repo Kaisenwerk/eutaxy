@@ -286,3 +286,171 @@ export function referencesOrphans(
   });
   return v === null ? null : v.keys;
 }
+
+// refines: the shell follows its core's latest decision, and not on a stale read.
+
+/** One step of a run as drawn: a decision (or one that threw), an action, a read or a write. */
+export interface DrawnStep {
+  readonly invocation: "x" | "y";
+  readonly what: "decide" | "throws" | "act" | "read" | "write";
+  /** The decision's result, the action's value, or the key read or written. */
+  readonly value: Key;
+}
+
+/** The steps as a log: decisions as `Core:decide` results, actions on Shell, reads and writes on Store. */
+export function stepsLog(steps: readonly DrawnStep[]): EffectLog {
+  let log = emptyLog;
+  for (const s of steps) {
+    const base = { invocation: s.invocation };
+    switch (s.what) {
+      case "decide":
+      case "throws":
+        log = appendEffect(log, {
+          ...base,
+          kind: "result",
+          target: "Core:decide",
+          op: "decide",
+          payload:
+            s.what === "decide" ? { args: [], result: s.value } : { args: [], error: "boom" },
+        });
+        break;
+      case "act":
+        log = appendEffect(log, {
+          ...base,
+          kind: "call",
+          target: "Shell",
+          op: "act",
+          payload: { value: s.value },
+        });
+        break;
+      case "read":
+        log = appendEffect(log, {
+          ...base,
+          kind: "result",
+          target: "Store",
+          op: "read",
+          payload: { key: s.value },
+        });
+        break;
+      case "write":
+        log = appendEffect(log, {
+          ...base,
+          kind: "call",
+          target: "Store",
+          op: "write",
+          payload: { key: s.value },
+        });
+        break;
+    }
+  }
+  return log;
+}
+
+/**
+ * One invocation's shape as drawn, run in this order: an optional read, its
+ * decisions (one that succeeds, one that throws, either order of the two,
+ * or none), an optional write, then the action. Random steps would rarely
+ * line up into a read, a decision, another's write and an action.
+ */
+export interface DrawnInvocation {
+  readonly reads: boolean;
+  readonly readKey: Key;
+  readonly decides: "ok" | "okThenThrows" | "throwsThenOk" | "throws" | "none";
+  readonly result: Key;
+  readonly writes: boolean;
+  readonly writeKey: Key;
+  /** The action's value: the decision's result, or a key of its own. */
+  readonly acts: "result" | Key;
+}
+
+/** The two invocations' steps, interleaved: each entry of `order` takes the next step of x or y; the rest follow, x first. */
+export function stepsOf(
+  x: DrawnInvocation,
+  y: DrawnInvocation,
+  order: readonly ("x" | "y")[],
+): DrawnStep[] {
+  const own = (inv: DrawnInvocation, invocation: "x" | "y"): DrawnStep[] => [
+    ...(inv.reads ? [{ invocation, what: "read" as const, value: inv.readKey }] : []),
+    ...(inv.decides === "throws" || inv.decides === "throwsThenOk"
+      ? [{ invocation, what: "throws" as const, value: inv.result }]
+      : []),
+    ...(inv.decides === "ok" || inv.decides === "okThenThrows" || inv.decides === "throwsThenOk"
+      ? [{ invocation, what: "decide" as const, value: inv.result }]
+      : []),
+    ...(inv.decides === "okThenThrows"
+      ? [{ invocation, what: "throws" as const, value: inv.result }]
+      : []),
+    ...(inv.writes ? [{ invocation, what: "write" as const, value: inv.writeKey }] : []),
+    { invocation, what: "act" as const, value: inv.acts === "result" ? inv.result : inv.acts },
+  ];
+  const queues = { x: own(x, "x"), y: own(y, "y") };
+  const out: DrawnStep[] = [];
+  for (const o of order) {
+    const next = queues[o].shift();
+    if (next) out.push(next);
+  }
+  return [...out, ...queues.x, ...queues.y];
+}
+
+/**
+ * `refines` over the two invocations' steps (`stepsOf`): every action follows its invocation's latest
+ * decision (its value the decision's result, with `follows`), resting on
+ * a read no other invocation's write (to the same key, with `keyed`)
+ * overtook (with `state`). The keys of the first violation, or null.
+ */
+export function refinesViolation(
+  x: DrawnInvocation,
+  y: DrawnInvocation,
+  order: readonly ("x" | "y")[],
+  follows: boolean,
+  state: boolean,
+  keyed: boolean,
+): readonly string[] | null {
+  const v = checkInvariant(stepsLog(stepsOf(x, y, order)), {
+    kind: "refines",
+    name: "refines",
+    decision: "decide",
+    effect: { target: "Shell" },
+    ...(follows ? { follows: [{ effect: "value", decision: "result" }] } : {}),
+    ...(state
+      ? {
+          state: {
+            read: { target: "Store", op: "read" },
+            write: { target: "Store", op: "write" },
+            ...(keyed ? { key: "key" } : {}),
+          },
+        }
+      : {}),
+  });
+  return v === null ? null : v.keys;
+}
+
+/** One invocation that reads and decides, as `refinesOnState` draws it: then an optional write, then the action. */
+export interface DrawnReader {
+  readonly readKey: Key;
+  readonly writes: boolean;
+  readonly writeKey: Key;
+}
+
+/** The invocation shape a reader stands for: a read, a decision that succeeds, an optional write, the action. */
+export function readerOf(r: DrawnReader): DrawnInvocation {
+  return {
+    reads: true,
+    readKey: r.readKey,
+    decides: "ok",
+    result: "1",
+    writes: r.writes,
+    writeKey: r.writeKey,
+    acts: "result",
+  };
+}
+
+/** `refines` with only its state rule in play: both invocations read and decide, so what varies is who writes what, and when. */
+export function refinesOnState(
+  x: DrawnReader,
+  y: DrawnReader,
+  order: readonly ("x" | "y")[],
+  keyed: boolean,
+): readonly string[] | null {
+  return refinesViolation(readerOf(x), readerOf(y), order, true, true, keyed);
+}

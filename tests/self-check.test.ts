@@ -47,6 +47,8 @@ describe("the self-check", () => {
       "everyRowFailing",
       "impliesMissing",
       "referencesOrphans",
+      "refinesOnState",
+      "refinesViolation",
       "uniqueShared",
     ]);
     for (const s of checkers) expect(atLeastChecked.has(s.kind), s.property).toBe(true);
@@ -109,6 +111,27 @@ describe("the self-check", () => {
       from: "const targets = queryRows(log, inv.in);",
       to: "const targets = queryRows(log, { ...inv.in, target: inv.query.target });",
       refuted: ["referencesMatchesReference"],
+    },
+    {
+      bug: "refines takes a decision that threw for one",
+      file: "refines.ts",
+      from: 'e.target === target && e.kind === "result" && getPath(e.payload, "error") === undefined,',
+      to: 'e.target === target && e.kind === "result",',
+      refuted: ["refinesMatchesReference"],
+    },
+    {
+      bug: "refines counts the invocation's own write as stale",
+      file: "refines.ts",
+      from: "e.invocation !== effect.invocation &&",
+      to: "",
+      refuted: ["refinesOnStateMatchesReference"],
+    },
+    {
+      bug: "refines ignores the key a write touches",
+      file: "refines.ts",
+      from: "(state.key === undefined || keyOf(e, state.key) === key),",
+      to: "true,",
+      refuted: ["refinesOnStateMatchesReference"],
     },
   ])(
     "a planted bug is refuted: $bug",
