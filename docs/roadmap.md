@@ -60,6 +60,11 @@ then, work ships as `0.9.x` patch releases, each when a target needs it:
   kernel), when a target checks proofs its own repository did not write;
   today a proof file is trusted as the spec file beside it is.
 - MCP server and GitHub Action over the JSON schema.
+- The documentation site at eutaxy.dev (`site/`, VitePress, deployed to
+  GitHub Pages by the `pages` workflow), outside the phases because it
+  changes no behaviour: a guide and reference built from the README and
+  this design, with `docs/design.md` and this roadmap included verbatim so
+  they stay the one record of what is decided.
 - Left over from v0.5: concurrent delivery on the AWS platform (it still
   delivers one event at a time); latency on scripted externals; Workers KV,
   and Durable Object SQL storage (objects use key-value storage so far);

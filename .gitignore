@@ -18,3 +18,6 @@ packages/*/src/**/*.d.ts.map
 
 # Working files of `eutaxy check`
 .eutaxy/
+
+# The documentation site's build output and cache
+site/.vitepress/cache/

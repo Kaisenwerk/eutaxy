@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="42 12 120 176" role="img" aria-label="Eutaxy">
+  <title>Eutaxy</title>
+
+  <!-- Golden rectangle: width 86.52 : height 140 = 0.618 : 1 -->
+  <g class="ink" color="#000000">
+    <!-- Links stop inside each junction ring, so the ring holes stay clear -->
+    <g stroke="currentColor" stroke-width="7" stroke-linecap="round" fill="none">
+      <!-- bars -->
+      <line x1="56.74" y1="30"  x2="133.26" y2="30"/>
+      <line x1="56.74" y1="100" x2="133.26" y2="100"/>
+      <line x1="56.74" y1="170" x2="133.26" y2="170"/>
+      <!-- spine, two segments -->
+      <line x1="143.26" y1="40"  x2="143.26" y2="90"/>
+      <line x1="143.26" y1="110" x2="143.26" y2="160"/>
+    </g>
+
+    <!-- Junction nodes: rings with true transparent centers (outer r14, hole r5) -->
+    <path fill="currentColor" fill-rule="evenodd" d="
+      M129.26,30 a14,14 0 1,0 28,0 a14,14 0 1,0 -28,0 Z M138.26,30 a5,5 0 1,0 10,0 a5,5 0 1,0 -10,0 Z
+      M129.26,100 a14,14 0 1,0 28,0 a14,14 0 1,0 -28,0 Z M138.26,100 a5,5 0 1,0 10,0 a5,5 0 1,0 -10,0 Z
+      M129.26,170 a14,14 0 1,0 28,0 a14,14 0 1,0 -28,0 Z M138.26,170 a5,5 0 1,0 10,0 a5,5 0 1,0 -10,0 Z"/>
+
+    <!-- Terminal nodes at the bar ends -->
+    <g fill="currentColor">
+      <circle cx="56.74" cy="30"  r="11"/>
+      <circle cx="56.74" cy="100" r="11"/>
+      <circle cx="56.74" cy="170" r="11"/>
+    </g>
+  </g>
+</svg>

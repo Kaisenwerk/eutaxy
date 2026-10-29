@@ -1,0 +1,65 @@
+name: pages
+
+# Builds the documentation site on every change to it; deploys it to GitHub Pages from main.
+on:
+  push:
+    branches: [main]
+    paths:
+      - site/**
+      - docs/**
+      - packages/eutaxy/package.json
+      - package.json
+      - pnpm-lock.yaml
+      - pnpm-workspace.yaml
+      - .github/workflows/pages.yml
+  pull_request:
+    paths:
+      - site/**
+      - docs/**
+      - packages/eutaxy/package.json
+      - package.json
+      - pnpm-lock.yaml
+      - pnpm-workspace.yaml
+      - .github/workflows/pages.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # each page's last-updated date and the sitemap's lastmod come from git history
+      - uses: pnpm/action-setup@v6 # version comes from packageManager in package.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --filter @eutaxy/site
+      - run: pnpm --filter @eutaxy/site build
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: site/.vitepress/dist
+
+  deploy:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5

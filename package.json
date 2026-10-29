@@ -13,7 +13,7 @@
     "format": "biome check --write .",
     "typecheck": "tsc -b",
     "test": "vitest run",
-    "clean": "rm -rf packages/*/dist packages/*/.tsc corpus/*/dist tests/dist packages/*/*.tsbuildinfo corpus/*/*.tsbuildinfo tests/*.tsbuildinfo",
+    "clean": "rm -rf packages/*/dist packages/*/.tsc corpus/*/dist tests/dist packages/*/*.tsbuildinfo corpus/*/*.tsbuildinfo tests/*.tsbuildinfo site/.vitepress/dist site/.vitepress/.tsc site/*.tsbuildinfo",
     "build": "tsdown"
   },
   "devDependencies": {

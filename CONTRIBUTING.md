@@ -28,6 +28,11 @@ Each package under `packages/` has a `README.md` stating its purpose, public
 surface and allowed imports. A change should normally touch one package; if
 it needs more than two, say so in the pull request.
 
+The documentation site, [eutaxy.dev](https://eutaxy.dev), lives in `site/`.
+`pnpm --filter @eutaxy/site dev` serves it locally; a change that alters
+behaviour updates the page that describes it. Its Design and Roadmap pages
+include `docs/` as written.
+
 ## Releasing
 
 Releases are driven by commit messages. On every push to `main`,

@@ -1,0 +1,10 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "outDir": ".vitepress/.tsc",
+    "lib": ["es2023", "dom"],
+    "types": ["node", "vitepress/client"]
+  },
+  "include": [".vitepress/*.ts", ".vitepress/theme/*.ts"]
+}

@@ -101,6 +101,7 @@ packages/cli/              commands, config, engine selection
 packages/eutaxy/           the published facade, eutaxy
 corpus/                    planted bugs, differential scenarios, prover contracts (never published)
 examples/                  runnable examples that double as acceptance tests
+site/                      the documentation site, eutaxy.dev (VitePress; never published to npm)
 scripts/                   release helpers (the README on the npm page)
 ```
 

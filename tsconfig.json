@@ -48,6 +48,9 @@
     },
     {
       "path": "examples/payments-queue"
+    },
+    {
+      "path": "site"
     }
   ]
 }

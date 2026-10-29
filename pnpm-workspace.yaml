@@ -2,6 +2,7 @@ packages:
   - packages/*
   - corpus/*
   - examples/*
+  - site
 
 # Dependencies allowed to run their install scripts: workerd is the Workers
 # runtime; esbuild and classic-level (behind dynalite, the in-process DynamoDB

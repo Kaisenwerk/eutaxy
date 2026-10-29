@@ -19,7 +19,8 @@ Lean 4 (`--prover lean`) or with Z3 (`--prover smt`) when an engine is
 named; `refines` checks that the Worker carries out the core's decisions
 on state that was still current.
 
-**Status: 0.7, early.** The design is in
+**Status: early.** The documentation is at
+[eutaxy.dev](https://eutaxy.dev). The design is in
 [docs/design.md](docs/design.md); the phases and their gates are in
 [docs/roadmap.md](docs/roadmap.md).
 
