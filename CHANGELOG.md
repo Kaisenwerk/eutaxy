@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.9.0](https://github.com/Kaisenwerk/eutaxy/compare/v0.8.0...v0.9.0) (2026-10-29)
+
+
+### ⚠ BREAKING CHANGES
+
+* **prover:** `eutaxy` needs `typescript` 7.1 installed in the project (`typescript@7.1.0-beta` until the release): the spec reader runs it. `readSpecs` takes `modulePath` (and `specPath`) instead of `moduleSpecifiers`.
+
+### Features
+
+* **prover:** narrowing by a union's tag, in functions and in claims ([eb3b306](https://github.com/Kaisenwerk/eutaxy/commit/eb3b306d3a899116ac0d927819652fd783cc3e05))
+* **prover:** read specs and the subset through the TypeScript 7.1 API ([0c83197](https://github.com/Kaisenwerk/eutaxy/commit/0c831976f19696d856e9a12a3faef1398d111fa7))
+
 ## [0.8.0](https://github.com/Kaisenwerk/eutaxy/compare/v0.7.0...v0.8.0) (2026-10-28)
 
 
