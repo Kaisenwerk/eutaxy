@@ -9,51 +9,43 @@ passes, not on a date. The planted-bug and differential corpora grow with
 every phase. The JSON report schema is versioned, so CI and coding agents
 can rely on it.
 
-## v0.9 — Specs over real signatures (current)
+## v0.9 — Specs over real signatures (done)
 
 v0.4 (the simulator), v0.5 (Durable Objects and specs), v0.6 (provers:
 the `TESTED` rung, the first-party `prover-lean` engine with its contract
 corpus and translation validation, the `Prover` interface, the `PROVEN`
 rung and the aggregation across engines), v0.7 (specs in TypeScript, the
 `prover-smt` engine over Z3 with doubles, code-unit strings and replayed
-models, and nullable types and tagged unions in the subset reader) and
-v0.8 (the self-check: `eutaxy report`, arrays and lists in the subset,
+models, and nullable types and tagged unions in the subset reader), v0.8
+(the self-check: `eutaxy report`, arrays and lists in the subset,
 structural recursion in Lean, proofs supplied beside the spec file and
 checked by the kernel, the invariant checkers held to naive references,
-the enumeration model proven and the enumerator held to it) are done; the
-design describes what they built. The v0.8 gate holds in CI: `eutaxy
-report` on `packages/core/src` shows `PROVEN` for the enumeration model's
-count, no-repeat and in-bounds claims, `CHECKED` or better for every
-invariant checker, sixteen planted bugs in copies of the core are each
-`REFUTED`, and `engine`'s tests hold the enumerator to the model on every
-choice tree up to depth four and width three.
+the enumeration model proven and the enumerator held to it) and v0.9
+(the reader on the TypeScript compiler's API: binder types and the
+subset's types are what the user's compiler resolves, so generic aliases
+instantiated, inline object types, an alias declared later in the file,
+a record literal told apart by its declared return type and types
+imported from other files all read; narrowing by a union's tag) are
+done; the design describes what they built. The v0.9 gate: every
+contract-corpus entry and every corpus core reads through the compiler
+API with the verdicts it had, and five contract entries, one per
+signature shape above, reach `TESTED` and are `PROVEN` by the SMT engine
+where it decides them, two of them through a tag test that narrows the
+union in the function and in the claim.
 
-The reader moves to the TypeScript 7.1 API. Real core signatures use what
-the hand-written reader refuses: generic type aliases, inline object
-types, an alias declared later in the file, a record literal that only the
-declared return type tells apart from another alias of the same shape,
-and types imported from other files. 7.1's API (`typescript/sync`,
-`typescript/ast`, its checker) resolves all of these, so the reader stops
-parsing TypeScript and asks the user's compiler instead: the compiler
-becomes a peer dependency of `prover`, as Vitest is of the facade, and
-`spec` and `core` keep importing nothing. What stays Eutaxy's is the
-subset's meaning: its integers and doubles, its list model, narrowing,
-structural recursion, and the expression tree the engines translate; the
-engines never touch the compiler API, so the reader is one module to
-replace and the one place a compiler change lands. The work starts on the
-7.1 beta pinned exactly and follows it to the release candidate
-(2026-11-10) and the release (2026-11-24), so that a release of Eutaxy
-carrying the new reader needs 7.1 on the user's side. Narrowing by a
-union's tag comes with it, since the reader then sees what the checker
-narrows.
+`0.9.0` needs TypeScript 7.1 in the project (`typescript@7.1.0-beta`
+until the release on 2026-11-24, then the release): the spec reader runs
+the project's compiler. The reader follows the compiler's own releases
+(the beta, the release candidate on 2026-11-10, the release) and is
+pinned to each in turn. `readSpecs` takes the module's path
+(`modulePath`, and `specPath`) in place of the import specifiers it used
+to match by; the import is resolved by the compiler.
 
-**Gate:** every contract-corpus entry and every corpus core reads through
-the compiler API with the same verdicts as before, and the five signature
-shapes above, each a contract entry, reach `TESTED` and are `PROVEN` by
-the SMT engine where it decides them.
+## Next phase (not set)
 
-Patch work alongside, each when a target needs it, shipping as `0.8.x`
-until the gate passes:
+The next phase takes its target from real code the maintainer runs, as
+every phase has, and is written here with its gate once chosen. Until
+then, work ships as `0.9.x` patch releases, each when a target needs it:
 - The concurrent scheduler woken by progress rather than by real
   zero-timers (a run with two invocations in flight costs three to four
   times its I/O today, since a zero timer is about a millisecond in
