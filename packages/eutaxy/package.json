@@ -76,7 +76,8 @@
     "vitest": ">=4.1.0",
     "@aws-sdk/client-dynamodb": ">=3.0.0",
     "@aws-sdk/util-dynamodb": ">=3.0.0",
-    "@smithy/smithy-client": ">=3.0.0"
+    "@smithy/smithy-client": ">=3.0.0",
+    "typescript": ">=7.1.0-beta"
   },
   "peerDependenciesMeta": {
     "@cloudflare/workers-types": {

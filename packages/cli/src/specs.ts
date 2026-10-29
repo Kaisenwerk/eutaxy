@@ -30,18 +30,13 @@ export interface SpecModule {
 
 const skipDirs = new Set(["node_modules", ".eutaxy", "dist", ".git"]);
 
-/** The import specifiers by which a spec file may name its module: with the `.ts`, bare, or with `.js`. */
-export function moduleSpecifiers(modulePath: string): string[] {
-  const base = basename(modulePath, ".ts");
-  return [`./${base}.ts`, `./${base}`, `./${base}.js`];
-}
-
-/** Read one module and its spec file. */
+/** Read one module and its spec file; their imports resolve from where they are. */
 export function readSpecModule(modulePath: string, specPath: string): ModuleSpecs {
   return readSpecs({
     module: readFileSync(modulePath, "utf8"),
     spec: readFileSync(specPath, "utf8"),
-    moduleSpecifiers: moduleSpecifiers(modulePath),
+    modulePath,
+    specPath,
   });
 }
 

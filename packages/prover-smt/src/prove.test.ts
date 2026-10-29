@@ -37,7 +37,7 @@ export const absNonNegative = forall(abs, { ensures: (x) => abs(x) >= 0 });
 export const absNonNegativeOfIntegers = forall(abs, { when: (x) => Number.isInteger(x), ensures: (x) => abs(x) >= 0 });
 `;
 const read = (module: string, spec: string) =>
-  readSpecs({ module, spec, moduleSpecifiers: ["./domain.ts"] });
+  readSpecs({ module, spec, modulePath: "/virtual/domain.ts" });
 
 describe("prepare", () => {
   test("a function outside the subset names the construct and the line; the others get scripts", () => {
@@ -163,7 +163,7 @@ describe("review findings, with the pinned Z3", () => {
       const specs = readSpecs({
         module: source,
         spec: readFileSync(specPath, "utf8"),
-        moduleSpecifiers: ["./m.ts", "./m"],
+        modulePath: "/virtual/m.ts",
       });
       expect(specs.errors).toEqual([]);
       const r = await proveModule({ source, specs, specPath });
@@ -209,7 +209,7 @@ describe("nullable types and tagged unions, with the pinned Z3", () => {
       const specs = readSpecs({
         module: source,
         spec: readFileSync(specPath, "utf8"),
-        moduleSpecifiers: ["./u.ts"],
+        modulePath: "/virtual/u.ts",
       });
       expect(specs.errors).toEqual([]);
       const r = await proveModule({ source, specs, specPath });

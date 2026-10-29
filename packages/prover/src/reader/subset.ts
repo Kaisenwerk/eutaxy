@@ -1,21 +1,40 @@
 /**
  * The pure TypeScript subset the first-party engines accept, read into a
  * small tree: exported functions over `number`, `boolean` and `string`,
- * the module's own record types, nullable types (`T | null`) and tagged
- * unions of records declared as type aliases, returning any of those;
- * bodies made of `const` bindings, `if` with early returns, `return`, and
- * expressions from arithmetic (`+ - *`), comparisons, `=== !==` (`null`
- * included, which narrows a nullable name in the branch it guards),
- * `&& || !`, the conditional operator, record literals, field reads (on
- * a union, only a field every member has) and calls to the module's own
- * functions. Anything else is `OutsideSubset`, with the construct named:
- * the subset is specified by the contract corpus and widens one
- * characterised class at a time. What each engine takes of it is the
- * engine's business (`restrictModule`).
+ * record types, nullable types (`T | null`) and tagged unions of records,
+ * lists of any of those, returning any of those; bodies made of `const`
+ * bindings, `if` with early returns, `return`, and expressions from
+ * arithmetic (`+ - *`), comparisons, `=== !==` (`null` included, which
+ * narrows a nullable name in the branch it guards), `&& || !`, the
+ * conditional operator, record and array literals, field reads (on a
+ * union, only a field every member has), list methods and calls to the
+ * module's own functions. Types are whatever the compiler resolves them
+ * to: declared anywhere in the file, imported from another file, or an
+ * instantiated generic. Anything else is `OutsideSubset`, with the
+ * construct named: the subset is specified by the contract corpus and
+ * widens one characterised class at a time. What each engine takes of it
+ * is the engine's business (`restrictModule`). This module holds the
+ * subset's meaning: its types and tree, typing, narrowing, renaming and
+ * the three passes over a module; `expressions.ts` reads the syntax and
+ * `types.ts` the compiler's types.
  */
 
 import type { Arrow } from "@eutaxy/spec";
-import { type Token, TokenizeError, templateSubstitutions, tokenize } from "./tokens.ts";
+import {
+  type Expression,
+  type FunctionDeclaration,
+  type Identifier,
+  InternalSymbolName,
+  type Node,
+  type ObjectLiteralExpression,
+  type SourceFile,
+  SyntaxKind,
+} from "typescript/ast";
+import * as is from "typescript/ast/is";
+import type { Checker, Type } from "typescript/sync";
+import { isAsync, lineAt, openParen, textOf, withProgram, withSourceFile } from "./compiler.ts";
+import { blockOf, ExprReader, type Names, syntacticType, type TypeSource } from "./expressions.ts";
+import { SubsetTypes } from "./types.ts";
 
 export class OutsideSubset extends Error {
   readonly line: number;
@@ -84,6 +103,8 @@ export type Expr =
   | {
       readonly kind: "record";
       readonly fields: readonly { readonly name: string; readonly value: Expr }[];
+      /** The type its context gives the literal (a declared return type, a const annotation, a parameter), as the compiler sees it: a record, or the union a member is picked from. */
+      readonly type?: SubsetType;
     }
   | {
       readonly kind: "let";
@@ -123,16 +144,6 @@ export interface Param {
   readonly type: SubsetType;
 }
 
-/** A function's header, with the token index its body starts at. */
-interface Signature {
-  readonly name: string;
-  readonly params: readonly Param[];
-  readonly returns: SubsetType;
-  readonly line: number;
-  readonly offset: number;
-  readonly body: number;
-}
-
 export interface SubsetFunction {
   readonly name: string;
   readonly params: readonly Param[];
@@ -166,1083 +177,9 @@ export interface SubsetModule {
   readonly outside: readonly OutsideFunction[];
 }
 
-/** Binary operators by precedence, loosest first; all left-associative here. */
-const levels: readonly (readonly BinaryOp[])[] = [
-  ["||"],
-  ["&&"],
-  ["===", "!=="],
-  ["<", "<=", ">", ">="],
-  ["+", "-"],
-  ["*"],
-];
-
-class Reader {
-  at = 0;
-  readonly tokens: readonly Token[];
-  private readonly lineOf: (offset: number) => number;
-  constructor(tokens: readonly Token[], lineOf: (offset: number) => number) {
-    this.tokens = tokens;
-    this.lineOf = lineOf;
-  }
-
-  peek(n = 0): Token | undefined {
-    return this.tokens[this.at + n];
-  }
-
-  line(t: Token | undefined = this.peek()): number {
-    return t ? this.lineOf(t.start) : this.lineOf(this.tokens.at(-1)?.end ?? 0);
-  }
-
-  fail(what: string, t: Token | undefined = this.peek()): never {
-    throw new OutsideSubset(what, this.line(t));
-  }
-
-  isPunct(text: string, n = 0): boolean {
-    const t = this.peek(n);
-    return t?.kind === "punct" && t.text === text;
-  }
-
-  isWord(text: string, n = 0): boolean {
-    const t = this.peek(n);
-    return t?.kind === "ident" && t.text === text;
-  }
-
-  take(): Token {
-    const t = this.peek();
-    if (!t) this.fail("the module ends early");
-    this.at++;
-    return t;
-  }
-
-  expectPunct(text: string): void {
-    if (!this.isPunct(text)) this.fail(`expected ${text}, found ${this.peek()?.text ?? "the end"}`);
-    this.at++;
-  }
-
-  ident(): string {
-    const t = this.peek();
-    if (t?.kind !== "ident") this.fail(`expected a name, found ${t?.text ?? "the end"}`);
-    this.at++;
-    return t.text;
-  }
-}
-
 /** Whether a string holds a surrogate code unit without its pair: no Lean character corresponds to it. */
 export function hasLoneSurrogate(s: string): boolean {
   return /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(s);
-}
-
-/**
- * The value of a string literal token. Simple escapes and `\xHH`, `\uHHHH`,
- * `\u{H…}` are decoded; a line continuation, an octal escape or a lone
- * surrogate (which Lean's strings cannot hold) is outside the subset.
- */
-function stringLiteralValue(text: string, r: Reader, t: Token): string {
-  const body = text.slice(1, -1);
-  let out = "";
-  for (let i = 0; i < body.length; i++) {
-    const c = body[i] as string;
-    if (c !== "\\") {
-      out += c;
-      continue;
-    }
-    const e = body[++i];
-    const simple: Record<string, string> = {
-      n: "\n",
-      t: "\t",
-      r: "\r",
-      b: "\b",
-      f: "\f",
-      v: "\v",
-      "0": "\0",
-      "\\": "\\",
-      '"': '"',
-      "'": "'",
-    };
-    if (e !== undefined && e in simple && !(e === "0" && /[0-9]/.test(body[i + 1] ?? ""))) {
-      out += simple[e];
-      continue;
-    }
-    if (e === "x" && /^[0-9a-fA-F]{2}$/.test(body.slice(i + 1, i + 3))) {
-      out += String.fromCharCode(Number.parseInt(body.slice(i + 1, i + 3), 16));
-      i += 2;
-      continue;
-    }
-    if (e === "u") {
-      const m = /^\{([0-9a-fA-F]{1,6})\}|^([0-9a-fA-F]{4})/.exec(body.slice(i + 1));
-      if (m) {
-        const code = Number.parseInt((m[1] ?? m[2]) as string, 16);
-        if (code > 0x10ffff) r.fail(`a code point escape beyond U+10FFFF in a string literal`, t);
-        out += String.fromCodePoint(code);
-        i += m[0].length;
-        continue;
-      }
-    }
-    r.fail(`an escape sequence \\${e ?? ""} in a string literal`, t);
-  }
-  if (hasLoneSurrogate(out))
-    r.fail("a string literal with a lone surrogate, which Lean's strings cannot hold", t);
-  return out;
-}
-
-/** Record types the module declares but the subset does not take, with why. */
-type BadRecords = ReadonlyMap<string, string>;
-
-/** The module's declared types, as the reader resolves names. */
-export interface Declared {
-  readonly records: ReadonlySet<string>;
-  /** The records themselves, for a union naming its members. */
-  readonly recordsByName?: ReadonlyMap<string, RecordType>;
-  /** Type aliases to a type the subset reads (`type Status = "a" | "b"`, `type Maybe = T | null`) and the unions by name. */
-  readonly aliases: ReadonlyMap<string, SubsetType>;
-}
-
-/** One alternative of a type expression, before the union is classified. */
-type Alternative =
-  | { readonly kind: "type"; readonly type: SubsetType; readonly token: Token }
-  | { readonly kind: "literal"; readonly value: string | boolean; readonly token: Token }
-  | { readonly kind: "null"; readonly token: Token };
-
-/** A type annotation: one alternative, or a union of them, read in full. */
-function typeAnnotation(r: Reader, declared: Declared, bad: BadRecords = new Map()): SubsetType {
-  const first = r.peek();
-  const alternatives: Alternative[] = [];
-  if (r.isPunct("|")) r.at++;
-  for (;;) {
-    alternatives.push(listed(r, declared, bad));
-    if (!r.isPunct("|")) break;
-    r.at++;
-  }
-  if (r.isPunct("[") || r.isPunct("<") || r.isPunct("&"))
-    r.fail(
-      `type …${r.peek()?.text}… (generics, intersections and index access are outside the subset; an array is readonly T[] or T[])`,
-    );
-  return classify(alternatives, r, first);
-}
-
-/**
- * One alternative with its `[]` suffixes, each a list of it, or
- * `readonly` before one that has them; a parenthesized type is one
- * alternative. Only a type is listed: `"a"[]` and `null[]` are not read.
- */
-function listed(r: Reader, declared: Declared, bad: BadRecords): Alternative {
-  const start = r.peek();
-  const readonly = r.isWord("readonly");
-  if (readonly) r.at++;
-  let a: Alternative;
-  if (r.isPunct("(")) {
-    const open = r.take();
-    a = { kind: "type", type: typeAnnotation(r, declared, bad), token: open };
-    r.expectPunct(")");
-  } else a = alternative(r, declared, bad);
-  let lists = 0;
-  while (r.isPunct("[") && r.isPunct("]", 1)) {
-    if (a.kind !== "type")
-      r.fail("an array of literals or null (declare its element type)", a.token);
-    r.at += 2;
-    a = { kind: "type", type: { kind: "list", element: a.type }, token: a.token };
-    lists++;
-  }
-  if (readonly && lists === 0) r.fail("readonly before a type that is not an array", start);
-  if (a.kind === "type" && start && r.isPunct("[")) r.fail("index access in a type", r.peek());
-  return a;
-}
-
-function alternative(r: Reader, declared: Declared, bad: BadRecords): Alternative {
-  const t = r.take();
-  if (t.kind === "string")
-    return { kind: "literal", value: stringLiteralValue(t.text, r, t), token: t };
-  if (t.kind !== "ident") r.fail(`a type that is not a name: ${t.text}`, t);
-  if (t.text === "null") return { kind: "null", token: t };
-  if (t.text === "true" || t.text === "false")
-    return { kind: "literal", value: t.text === "true", token: t };
-  if (t.text === "undefined") r.fail("undefined in a type (the subset has null)", t);
-  const why = bad.get(t.text);
-  if (why !== undefined) r.fail(`type ${t.text} is outside the subset: ${why}`, t);
-  if (t.text === "number") return { kind: "type", type: { kind: "int" }, token: t };
-  if (t.text === "boolean") return { kind: "type", type: { kind: "bool" }, token: t };
-  if (t.text === "string") return { kind: "type", type: { kind: "string" }, token: t };
-  if (declared.records.has(t.text))
-    return { kind: "type", type: { kind: "record", name: t.text }, token: t };
-  const alias = declared.aliases.get(t.text);
-  if (alias) return { kind: "type", type: alias, token: t };
-  if (t.text === "Array" || t.text === "ReadonlyArray")
-    r.fail(`${t.text}<…> (the subset spells an array readonly T[] or T[])`, t);
-  r.fail(
-    `type ${t.text} (the subset has number, boolean, string, null, and the module's own record types, unions and aliases)`,
-    t,
-  );
-}
-
-/**
- * The type a list of alternatives names: a single type; string literals as
- * `string` (the proof covers every string, more than the type admits);
- * either with `null` as nullable. Several records are a tagged union only
- * when declared as an alias, where `unionAt` classifies them.
- */
-function classify(
-  alternatives: readonly Alternative[],
-  r: Reader,
-  at: Token | undefined,
-): SubsetType {
-  const nulls = alternatives.filter((a) => a.kind === "null");
-  const literals = alternatives.filter(
-    (a): a is Extract<Alternative, { kind: "literal" }> => a.kind === "literal",
-  );
-  const types = alternatives.filter(
-    (a): a is Extract<Alternative, { kind: "type" }> => a.kind === "type",
-  );
-  let base: SubsetType | undefined;
-  if (literals.length > 0 && types.length === 0) {
-    const kinds = new Set(literals.map((l) => typeof l.value));
-    if (kinds.size > 1) r.fail("a union mixing string and boolean literals", at);
-    base =
-      literals[0]?.value === true || literals[0]?.value === false
-        ? { kind: "bool" }
-        : { kind: "string" };
-  } else if (types.length === 1 && literals.length === 0)
-    base = (types[0] as (typeof types)[number]).type;
-  else if (types.length === 0 && literals.length === 0)
-    r.fail("null alone is not a type the subset takes", at);
-  else
-    r.fail(
-      "a union of several types (a tagged union of records is read only where it is declared as a type alias)",
-      at,
-    );
-  if (!base) r.fail("an empty type", at);
-  if (base.kind === "nullable" && nulls.length > 0) return base;
-  if (base.kind === "null") r.fail("null alone is not a type the subset takes", at);
-  return nulls.length > 0 ? { kind: "nullable", inner: base } : base;
-}
-
-/** Names a Lean structure declaration generates itself, which a field cannot take. */
-const structureNames = new Set([
-  "mk",
-  "rec",
-  "recOn",
-  "casesOn",
-  "noConfusion",
-  "noConfusionType",
-  "injEq",
-]);
-
-/** The fields of the `{ … }` at the reader; a literal-typed field keeps its literal. */
-function fieldsAt(r: Reader, declared: Declared): Field[] {
-  r.expectPunct("{");
-  const fields: Field[] = [];
-  while (!r.isPunct("}")) {
-    if (r.isWord("readonly")) r.at++;
-    const fname = r.ident();
-    if (r.isPunct("?")) r.fail(`optional field ${fname}`);
-    if (structureNames.has(fname)) r.fail(`field ${fname} takes a name Lean's structures reserve`);
-    if (fname === "__proto__") r.fail("a field named __proto__, which JavaScript treats specially");
-    r.expectPunct(":");
-    const literalToken = r.peek();
-    const type = typeAnnotation(r, declared);
-    // One literal alone (`ok: true`, `type: "locked"`): a tag; a union of literals is its base type.
-    const alone = r.peek(-1) === literalToken;
-    const literal = !alone
-      ? undefined
-      : literalToken?.kind === "string" && type.kind === "string"
-        ? stringLiteralValue(literalToken.text, r, literalToken)
-        : literalToken?.kind === "ident" &&
-            (literalToken.text === "true" || literalToken.text === "false") &&
-            type.kind === "bool"
-          ? literalToken.text === "true"
-          : undefined;
-    fields.push({ name: fname, type, ...(literal === undefined ? {} : { literal }) });
-    if (r.isPunct(";") || r.isPunct(",")) r.at++;
-  }
-  r.expectPunct("}");
-  return fields;
-}
-
-/** What a type declaration at the reader declares. */
-export type Declaration =
-  | { readonly kind: "record"; readonly record: RecordType }
-  | { readonly kind: "alias"; readonly name: string; readonly type: SubsetType }
-  | {
-      readonly kind: "union";
-      readonly union: UnionType;
-      readonly members: readonly RecordType[];
-    };
-
-/**
- * `interface Name { … }`, `type Name = { … }`, `type Name = <type>` or
- * `type Name = A | B | { … }` at the reader, after any `export`. A union of
- * records needs a tag: a field every member has, literal-typed, with a
- * different literal in each.
- */
-function declarationAt(r: Reader, declared: Declared): Declaration | undefined {
-  const start = r.at;
-  if (r.isWord("export")) r.at++;
-  const alias = r.isWord("type");
-  if (!r.isWord("interface") && !alias) {
-    r.at = start;
-    return undefined;
-  }
-  r.at++;
-  const name = r.ident();
-  if (r.isPunct("<")) r.fail("type parameters on a type declaration", r.peek());
-  if (!alias) {
-    if (r.isWord("extends")) r.fail("interface inheritance", r.peek());
-    const fields = fieldsAt(r, declared);
-    if (r.isPunct(";")) r.at++;
-    return { kind: "record", record: { name, fields } };
-  }
-  r.expectPunct("=");
-  if (r.isPunct("|")) r.at++;
-  // Alternatives: inline records, declared records, literals, null; a tagged union when several are records.
-  const inline: RecordType[] = [];
-  const named: string[] = [];
-  const others: Alternative[] = [];
-  const at = r.peek();
-  for (;;) {
-    if (r.isPunct("{"))
-      inline.push({
-        name: `${name}.${inline.length + named.length}`,
-        fields: fieldsAt(r, declared),
-      });
-    else {
-      const a = alternative(r, declared, new Map());
-      if (a.kind === "type" && a.type.kind === "record") named.push(a.type.name);
-      else others.push(a);
-    }
-    if (!r.isPunct("|")) break;
-    r.at++;
-  }
-  if (r.isPunct(";")) r.at++;
-  const recordCount = inline.length + named.length;
-  if (recordCount === 0) return { kind: "alias", name, type: classify(others, r, at) };
-  if (others.some((o) => o.kind !== "null")) r.fail("a union mixing records with other types", at);
-  if (recordCount === 1 && inline.length === 1) {
-    const only = inline[0] as RecordType;
-    if (others.length > 0)
-      r.fail(
-        `${name}: a nullable record type is written on the parameter, not declared as an alias`,
-        at,
-      );
-    return { kind: "record", record: { name, fields: only.fields } };
-  }
-  if (recordCount === 1) {
-    const type: SubsetType = { kind: "record", name: named[0] as string };
-    return {
-      kind: "alias",
-      name,
-      type: others.length > 0 ? { kind: "nullable", inner: type } : type,
-    };
-  }
-  if (others.length > 0)
-    r.fail(
-      `${name}: a union of records with null is written as the union, then | null, on the parameter`,
-      at,
-    );
-  // Named members are the module's records as they are; inline members become records of the union.
-  const memberRecords: RecordType[] = [...inline];
-  const memberNames = [...inline.map((m) => m.name), ...named];
-  const lookup = (n: string): RecordType | undefined =>
-    memberRecords.find((m) => m.name === n) ?? declared.recordsByName?.get(n);
-  const first = lookup(memberNames[0] as string);
-  if (!first) r.fail(`${name}: member ${memberNames[0]} is not a record the subset read`, at);
-  const tags = first.fields
-    .filter((f) => f.literal !== undefined)
-    .map((f) => f.name)
-    .filter((tag) =>
-      memberNames.every((m) => {
-        const rec = lookup(m);
-        return rec?.fields.some((f) => f.name === tag && f.literal !== undefined);
-      }),
-    )
-    .filter((tag) => {
-      const values = memberNames.map((m) => lookup(m)?.fields.find((f) => f.name === tag)?.literal);
-      return new Set(values.map((v) => JSON.stringify(v))).size === values.length;
-    });
-  const tag = tags[0];
-  if (tag === undefined)
-    r.fail(
-      `${name}: a union of records without a tag (a literal-typed field every member has, different in each)`,
-      at,
-    );
-  const members = memberNames.map((m) => {
-    const rec = lookup(m) as RecordType;
-    const value = rec.fields.find((f) => f.name === tag)?.literal as string | boolean;
-    return { tag: value, record: m };
-  });
-  // Inline members are named by their tag, so the constructor names read: `Outcome.true`, `Refused.locked`.
-  const renamed = new Map(
-    inline.map((m, i) => [
-      m.name,
-      `${name}.${String((members[i] as (typeof members)[number]).tag)}`,
-    ]),
-  );
-  const finalMembers = members.map((m) => ({ ...m, record: renamed.get(m.record) ?? m.record }));
-  const finalRecords = inline.map((m) => ({
-    ...m,
-    name: renamed.get(m.name) as string,
-    union: name,
-  }));
-  return { kind: "union", union: { name, tag, members: finalMembers }, members: finalRecords };
-}
-
-/** Skip a balanced bracket group starting at the reader. */
-function skipGroup(r: Reader): void {
-  const open = r.take();
-  const close = { "(": ")", "[": "]", "{": "}" }[open.text];
-  let depth = 1;
-  while (depth > 0) {
-    const t = r.take();
-    if (t.kind !== "punct") continue;
-    if (t.text === open.text) depth++;
-    else if (t.text === close) depth--;
-  }
-}
-
-/**
- * Whether the `function` token at `i` starts a declaration: at the start of
- * the module or after a statement end, with `export` and `async` allowed in
- * front. A `function` after `=`, `(`, `,`, `return` or `:` is an
- * expression, whose name is its own, not the module's.
- */
-function isDeclaration(
-  tokens: readonly Token[],
-  i: number,
-  lineOf: (offset: number) => number,
-): boolean {
-  let k = i - 1;
-  while (
-    tokens[k]?.kind === "ident" &&
-    ["async", "export", "default"].includes(tokens[k]?.text ?? "")
-  )
-    k--;
-  const before = tokens[k];
-  if (before === undefined) return true;
-  if (before.kind === "punct" && (before.text === ";" || before.text === "}")) return true;
-  // A line break ends the previous statement (automatic semicolon insertion) unless that statement
-  // is unfinished: an operator, an open bracket or a keyword still waiting for its operand.
-  if (lineOf(before.end) === lineOf(tokens[i]?.start ?? 0)) return false;
-  if (before.kind === "punct") return [")", "]", "++", "--"].includes(before.text);
-  if (before.kind === "ident")
-    return !"return typeof void new else case in of do yield await delete instanceof throw export default async"
-      .split(" ")
-      .includes(before.text);
-  return true; // a literal
-}
-
-/**
- * Names used as values anywhere in the token stream, with the line of the
- * first use: a bare identifier that is not being called (`f(`), not a
- * property (`o.f`), not an object key (`{ f: … }`) and not the name in its
- * own declaration (`function f`, `const f`). A function used that way may
- * be reassigned, wrapped, aliased or passed on, so what runs under its name
- * is not what its declaration says; one rule covers every assignment form
- * (`f = …`, `f! = …`, `f as T = …`, `[f] = …`, `for (f of …)`) and the
- * aliases besides. Template substitutions are code too and are scanned.
- */
-function valueUses(
-  tokens: readonly Token[],
-  lineOf: (offset: number) => number,
-): Map<string, number> {
-  const out = new Map<string, number>();
-  const isPunct = (t: Token | undefined, text: string) => t?.kind === "punct" && t.text === text;
-  tokens.forEach((t, i) => {
-    if (t.kind === "template") {
-      for (const sub of templateSubstitutions(t.text))
-        for (const [name, line] of valueUses(tokenize(sub), () => lineOf(t.start)))
-          if (!out.has(name)) out.set(name, line);
-      return;
-    }
-    if (t.kind !== "ident") return;
-    const before = tokens[i - 1];
-    const after = tokens[i + 1];
-    if (isPunct(after, "(")) return; // a call
-    if (isPunct(before, ".") || isPunct(before, "?.")) return; // a property of something else
-    // An object key, or a type's member (`readonly attempts: number;`), is no use of a value.
-    if (
-      isPunct(after, ":") &&
-      (isPunct(before, "{") ||
-        isPunct(before, ",") ||
-        isPunct(before, ";") ||
-        (before?.kind === "ident" && before.text === "readonly"))
-    )
-      return;
-    if (before?.kind === "ident" && ["function", "const", "let", "var"].includes(before.text))
-      return;
-    if (!out.has(t.text)) out.set(t.text, lineOf(t.start));
-  });
-  return out;
-}
-
-/** The line of the first token matching, template substitutions included (recursively). */
-function firstLine(
-  tokens: readonly Token[],
-  lineOf: (offset: number) => number,
-  matches: (t: Token, before: Token | undefined) => boolean,
-): number | undefined {
-  for (let i = 0; i < tokens.length; i++) {
-    const t = tokens[i] as Token;
-    if (t.kind === "template") {
-      for (const sub of templateSubstitutions(t.text)) {
-        let inner: Token[];
-        try {
-          inner = tokenize(sub);
-        } catch (err) {
-          if (!(err instanceof TokenizeError)) throw err;
-          return lineOf(t.start); // what cannot be read cannot be cleared
-        }
-        if (firstLine(inner, () => lineOf(t.start), matches) !== undefined) return lineOf(t.start);
-      }
-      continue;
-    }
-    if (matches(t, tokens[i - 1])) return lineOf(t.start);
-  }
-  return undefined;
-}
-
-/** The line of the first `eval` that is not a property of something else, template substitutions included. */
-function mentionsEval(
-  tokens: readonly Token[],
-  lineOf: (offset: number) => number,
-): number | undefined {
-  return firstLine(
-    tokens,
-    lineOf,
-    (t, before) =>
-      t.kind === "ident" &&
-      t.text === "eval" &&
-      !(before?.kind === "punct" && (before.text === "." || before.text === "?.")),
-  );
-}
-
-/** Words that start a declaration at module level, where a declaration the reader skips must stop. */
-const declarationStarts = new Set(
-  "export import function interface type const let var class enum declare async".split(" "),
-);
-
-/** Skip the rest of a declaration the subset does not take: to its `;`, or to the next declaration. */
-function skipDeclaration(r: Reader): void {
-  while (r.at < r.tokens.length) {
-    const t = r.peek() as Token;
-    if (t.kind === "punct" && t.text === ";") {
-      r.at++;
-      return;
-    }
-    if (t.kind === "punct" && ["(", "[", "{"].includes(t.text)) {
-      skipGroup(r);
-      continue;
-    }
-    if (t.kind === "ident" && declarationStarts.has(t.text)) return;
-    r.at++;
-  }
-}
-
-class FunctionParser {
-  private readonly r: Reader;
-  private readonly records: ReadonlyMap<string, RecordType>;
-  private readonly functions: ReadonlySet<string>;
-  /** Every function the module declares, in the subset or not, for messages. */
-  private readonly declared: ReadonlySet<string>;
-  private readonly badRecords: BadRecords;
-  /** For a spec file's arrow: its local names for the module's functions (the keys are what `declared` and `functions` hold). */
-  private readonly aliases: ReadonlyMap<string, string> | undefined;
-  /** The module's type aliases and unions, by name. */
-  private readonly typeAliases: ReadonlyMap<string, SubsetType>;
-  readonly signatures = new Map<string, CalleeSignature>();
-  constructor(
-    r: Reader,
-    records: ReadonlyMap<string, RecordType>,
-    functions: ReadonlySet<string>,
-    badRecords: BadRecords = new Map(),
-    declared: ReadonlySet<string> = functions,
-    aliases?: ReadonlyMap<string, string>,
-    typeAliases: ReadonlyMap<string, SubsetType> = new Map(),
-  ) {
-    this.r = r;
-    this.records = records;
-    this.functions = functions;
-    this.badRecords = badRecords;
-    this.declared = declared;
-    this.aliases = aliases;
-    this.typeAliases = typeAliases;
-  }
-
-  private get types(): Declared {
-    return {
-      records: new Set(this.records.keys()),
-      recordsByName: this.records,
-      aliases: this.typeAliases,
-    };
-  }
-
-  private get ctx(): TypeContext {
-    return { records: this.records, signatures: this.signatures };
-  }
-
-  /** `export function name(params): Type` at the reader, up to and including the body's `{`. */
-  signature(): Signature {
-    const r: Reader = this.r;
-    const line = r.line();
-    if (r.isWord("export")) r.at++;
-    if (r.isWord("async")) r.fail("an async function (core functions are synchronous)");
-    if (!r.isWord("function")) r.fail(`a declaration that is not a function: ${r.peek()?.text}`);
-    r.at++;
-    if (r.isPunct("*")) r.fail("a generator function");
-    const name = r.ident();
-    if (r.isPunct("<")) r.fail("type parameters");
-    const offset = r.peek()?.start ?? -1;
-    r.expectPunct("(");
-    const params: Param[] = [];
-    while (!r.isPunct(")")) {
-      if (r.isPunct("{") || r.isPunct("[")) r.fail("a destructured parameter");
-      if (r.isPunct("...")) r.fail("a rest parameter");
-      const pname = r.ident();
-      // `this: T` annotates the receiver and is erased; it is no argument the function is called with.
-      if (pname === "this") r.fail("a this parameter (the receiver is not modelled)");
-      if (r.isPunct("?")) r.fail(`optional parameter ${pname}`);
-      if (!r.isPunct(":")) r.fail(`parameter ${pname} without a type`);
-      r.at++;
-      const type = typeAnnotation(r, this.types, this.badRecords);
-      if (r.isPunct("=")) r.fail(`a default value for ${pname}`);
-      params.push({ name: pname, type });
-      if (r.isPunct(",")) r.at++;
-    }
-    r.expectPunct(")");
-    if (!r.isPunct(":"))
-      r.fail(`${name} without a return type (the subset needs it to name the record returned)`);
-    r.at++;
-    const returns = typeAnnotation(r, this.types, this.badRecords);
-    r.expectPunct("{");
-    return { name, params, returns, line, offset, body: r.at };
-  }
-
-  /** The function, its body read from where the signature stopped. */
-  declaration(sig: Signature): SubsetFunction {
-    this.r.at = sig.body;
-    const scope = new Map(sig.params.map((p) => [p.name, p.type]));
-    // Null checks narrow the names they guard in the branches they guard, before anything is typed.
-    const body = this.narrowed(this.block(scope, sig.returns), scope);
-    // Typing the whole body here: a record literal of no declared type, a field read on an integer or
-    // a body of another type than declared are all outside the subset, found now rather than by an engine.
-    const actual = this.typeOfExpr(body, scope);
-    if (!fits(actual, sig.returns, this.ctx))
-      this.r.fail(
-        `${sig.name} returns a ${describe(actual)} but declares ${describe(sig.returns)}`,
-      );
-    return {
-      name: sig.name,
-      params: sig.params,
-      returns: sig.returns,
-      body,
-      line: sig.line,
-      offset: sig.offset,
-    };
-  }
-
-  /**
-   * The statements up to the closing `}` as one expression: `const` becomes
-   * `let`, `if (c) return a; rest` becomes a conditional, and the last
-   * statement must return. Every path ends in a `return`.
-   */
-  /** A statement block's statements up to its `}`, for an arrow's block body. */
-  blockBody(scope: Map<string, SubsetType>, returns: SubsetType): Expr {
-    return this.block(scope, returns);
-  }
-
-  /** The expression with `narrow` nodes inserted where a null check guards a nullable name. */
-  narrowed(e: Expr, scope: ReadonlyMap<string, SubsetType>): Expr {
-    return insertNarrows(e, scope, this.ctx, (m) => this.r.fail(m));
-  }
-
-  private block(scope: Map<string, SubsetType>, returns: SubsetType): Expr {
-    const r: Reader = this.r;
-    if (r.isWord("const")) {
-      r.at++;
-      const name = r.ident();
-      // A const shadows a module function throughout its block, from before its own line (the temporal
-      // dead zone): a call above it would throw where the reader would see the function. Refused outright.
-      if (this.declared.has(name))
-        r.fail(`const ${name} shadows the module's function ${name} in its block`);
-      if (scope.has(name)) r.fail(`const ${name} redeclares a name already bound here`);
-      let annotated: SubsetType | undefined;
-      if (r.isPunct(":")) {
-        r.at++;
-        annotated = typeAnnotation(r, this.types, this.badRecords);
-      }
-      r.expectPunct("=");
-      const value = this.expression(scope);
-      if (r.isPunct(";")) r.at++;
-      // While parsing, the scope carries names; types come from `typeOf` once null checks have narrowed
-      // the tree, so an initializer under a guard is typed as the guard allows. The annotation is the
-      // binding's type (a null initializer is then a nullable, not null); `typeOf` checks it fits.
-      const inner = new Map(scope);
-      inner.set(name, annotated ?? { kind: "null" });
-      const body = this.block(inner, returns);
-      return { kind: "let", name, value, body, ...(annotated ? { type: annotated } : {}) };
-    }
-    if (r.isWord("if")) {
-      r.at++;
-      r.expectPunct("(");
-      const test = this.expression(scope);
-      r.expectPunct(")");
-      const then = this.branch(scope, returns);
-      let otherwise: Expr;
-      if (r.isWord("else")) {
-        r.at++;
-        otherwise = this.branch(scope, returns);
-        if (!r.isPunct("}")) r.fail("statements after an if/else that both return");
-        r.at++; // the block's closing brace, as the return path consumes it
-      } else otherwise = this.block(scope, returns);
-      return { kind: "cond", test, ifTrue: then, ifFalse: otherwise };
-    }
-    if (r.isWord("return")) {
-      const value = this.returned(scope);
-      if (!r.isPunct("}")) r.fail("statements after a return");
-      r.at++;
-      return value;
-    }
-    if (r.isWord("let") || r.isWord("var")) r.fail("a mutable binding (use const)");
-    if (r.isWord("for") || r.isWord("while") || r.isWord("do")) r.fail("a loop");
-    if (r.isWord("throw")) r.fail("throw");
-    if (r.isWord("switch")) r.fail("switch");
-    if (r.isWord("try")) r.fail("try");
-    if (r.isPunct("}")) r.fail("a path that does not return");
-    r.fail(`statement starting with ${r.peek()?.text}`);
-  }
-
-  /** An `if` branch: `return e;` or `{ ...statements ending in return }`. */
-  private branch(scope: Map<string, SubsetType>, returns: SubsetType): Expr {
-    const r: Reader = this.r;
-    if (r.isPunct("{")) {
-      r.at++;
-      return this.block(scope, returns);
-    }
-    if (!r.isWord("return")) r.fail("an if branch that does not return");
-    return this.returned(scope);
-  }
-
-  /** `return e;` at the reader. A line break after `return` makes JavaScript return undefined, so it is refused. */
-  private returned(scope: ReadonlyMap<string, SubsetType>): Expr {
-    const r: Reader = this.r;
-    const keyword = r.take();
-    if (r.isPunct(";") || r.isPunct("}")) r.fail("a return without a value", keyword);
-    if (r.line() !== r.line(keyword))
-      r.fail(
-        "a line break after return (JavaScript inserts a semicolon and returns undefined)",
-        keyword,
-      );
-    const value = this.expression(scope);
-    if (r.isPunct(";")) r.at++;
-    return value;
-  }
-
-  /** `xs[0]` just read, with `??` next: `expression` takes it if it is the whole left operand. */
-  private pendingIndex: { readonly list: Expr; readonly at: number } | undefined;
-
-  expression(scope: ReadonlyMap<string, SubsetType>): Expr {
-    const r: Reader = this.r;
-    const start = r.at;
-    let left = this.binary(scope, 0);
-    if (r.isPunct("??")) {
-      const pending = this.pendingIndex;
-      // The left operand must be `xs[0]` alone: nothing but the list and its index since `start`.
-      if (!pending || pending.at !== r.at || left !== pending.list || !this.indexOnly(start))
-        r.fail(
-          "?? after anything but xs[0] (write xs[0] ?? fallback, parenthesized where it meets other operators)",
-        );
-      this.pendingIndex = undefined;
-      r.at++;
-      left = { kind: "headOr", list: pending.list, fallback: this.binary(scope, 0) };
-      if (r.isPunct("??")) r.fail("a chain of ??");
-    }
-    if (r.isPunct("?")) {
-      r.at++;
-      const then = this.expression(scope);
-      r.expectPunct(":");
-      const otherwise = this.expression(scope);
-      return { kind: "cond", test: left, ifTrue: then, ifFalse: otherwise };
-    }
-    return left;
-  }
-
-  /** Whether the tokens from `start` to here hold no operator outside brackets: an operand and its `[0]`. */
-  private indexOnly(start: number): boolean {
-    let depth = 0;
-    for (let i = start; i < this.r.at; i++) {
-      const t = this.r.tokens[i] as Token;
-      if (t.kind !== "punct") continue;
-      if (t.text === "(" || t.text === "[" || t.text === "{") depth++;
-      else if (t.text === ")" || t.text === "]" || t.text === "}") depth--;
-      else if (depth === 0 && t.text !== ".") return false;
-    }
-    return true;
-  }
-
-  private binary(scope: ReadonlyMap<string, SubsetType>, level: number): Expr {
-    if (level >= levels.length) return this.unary(scope);
-    let left = this.binary(scope, level + 1);
-    const ops = levels[level] as readonly BinaryOp[];
-    for (;;) {
-      const t = this.r.peek();
-      if (t?.kind !== "punct" || !ops.includes(t.text as BinaryOp)) {
-        if (
-          t?.kind === "punct" &&
-          ["==", "!=", "/", "%", "**", "<<", ">>", "&", "|", "^"].includes(t.text)
-        )
-          this.r.fail(`the ${t.text} operator`, t);
-        return left;
-      }
-      this.r.at++;
-      const right = this.binary(scope, level + 1);
-      left = { kind: "binary", op: t.text as BinaryOp, left, right };
-    }
-  }
-
-  private unary(scope: ReadonlyMap<string, SubsetType>): Expr {
-    const r: Reader = this.r;
-    if (r.isPunct("!")) {
-      r.at++;
-      return { kind: "not", operand: this.unary(scope) };
-    }
-    if (r.isPunct("-")) {
-      r.at++;
-      const operand = this.unary(scope);
-      // A negated literal stays a literal with its sign flipped, so -(-1) is 1, never the text `--1`.
-      return operand.kind === "int"
-        ? {
-            kind: "int",
-            value: operand.value.startsWith("-") ? operand.value.slice(1) : `-${operand.value}`,
-          }
-        : { kind: "neg", operand };
-    }
-    if (r.isPunct("+")) r.fail("unary plus");
-    if (r.isWord("typeof") || r.isWord("void") || r.isWord("await") || r.isWord("new"))
-      r.fail(`the ${r.peek()?.text} operator`);
-    return this.postfix(scope, this.primary(scope));
-  }
-
-  private postfix(scope: ReadonlyMap<string, SubsetType>, base: Expr): Expr {
-    const r: Reader = this.r;
-    let e = base;
-    for (;;) {
-      if (r.isPunct(".")) {
-        r.at++;
-        const field = r.ident();
-        if (r.isPunct("(")) {
-          e = this.method(scope, e, field);
-          continue;
-        }
-        e = { kind: "field", object: e, field };
-        continue;
-      }
-      if (r.isPunct("?.")) r.fail("optional chaining");
-      if (r.isPunct("[")) {
-        // `xs[0] ?? fallback` only: any other index may be past the end, which is undefined.
-        const open = r.take();
-        const index = r.take();
-        if (index.kind !== "number" || index.text !== "0" || !r.isPunct("]"))
-          r.fail("index access other than xs[0] ?? fallback", open);
-        r.at++;
-        // `??` binds looser than every other operator: `expression` pairs it with this index, and
-        // only when the index is all of its left operand (`a === xs[0] ?? b` is `(a === xs[0]) ?? b`).
-        if (!r.isPunct("??"))
-          r.fail("xs[0] without ?? fallback (it is undefined on an empty list)", open);
-        this.pendingIndex = { list: e, at: r.at };
-        return e;
-      }
-      if (r.isPunct("(")) {
-        // A binder or local named like a function shadows it: the call is to a number, which throws.
-        if (e.kind === "var" && scope.has(e.name))
-          r.fail(`a call to ${e.name}, which names a value here, not the module's function`);
-        if (e.kind !== "var" || !this.functions.has(e.name))
-          r.fail(
-            e.kind !== "var"
-              ? "a call to a computed callee"
-              : this.declared.has(e.name)
-                ? `a call to ${e.name}, which is outside the subset`
-                : this.aliases
-                  ? `a call to ${e.name}, which is not a function imported from the module beside the spec file`
-                  : `a call to ${e.name}, which this module does not declare`,
-          );
-        r.at++;
-        const args: Expr[] = [];
-        while (!r.isPunct(")")) {
-          args.push(this.expression(scope));
-          if (r.isPunct(",")) r.at++;
-        }
-        r.at++;
-        // A spec file's local name for a module function resolves to the function.
-        e = { kind: "call", callee: this.aliases?.get(e.name) ?? e.name, args };
-        continue;
-      }
-      if (r.isWord("as") || r.isWord("satisfies")) r.fail(`the ${r.peek()?.text} operator`);
-      return e;
-    }
-  }
-
-  private primary(scope: ReadonlyMap<string, SubsetType>): Expr {
-    const r: Reader = this.r;
-    const t = r.take();
-    switch (t.kind) {
-      case "number":
-        if (!/^[0-9](_?[0-9])*$/.test(t.text))
-          r.fail(`the numeric literal ${t.text} (integers in decimal only)`, t);
-        return { kind: "int", value: t.text.replace(/_/g, "") };
-      case "string":
-        return { kind: "string", value: stringLiteralValue(t.text, r, t) };
-      case "template":
-        r.fail("a template literal", t);
-        break;
-      case "regex":
-        r.fail("a regular expression", t);
-        break;
-      case "ident":
-        if (t.text === "true" || t.text === "false")
-          return { kind: "bool", value: t.text === "true" };
-        if (t.text === "null") return { kind: "null" };
-        if (t.text === "undefined") r.fail("undefined (the subset has null)", t);
-        if (
-          t.text === "Number" &&
-          !scope.has("Number") &&
-          !this.declared.has("Number") &&
-          r.isPunct(".") &&
-          r.isWord("isInteger", 1) &&
-          r.isPunct("(", 2)
-        ) {
-          r.at += 3;
-          const operand = this.expression(scope);
-          r.expectPunct(")");
-          return { kind: "isInteger", operand };
-        }
-        if (scope.has(t.text) || this.declared.has(t.text)) return { kind: "var", name: t.text };
-        r.fail(
-          this.aliases
-            ? `${t.text}, which is neither a parameter, a const nor a function imported from the module beside the spec file`
-            : `${t.text}, which is neither a parameter, a const nor a function of this module`,
-          t,
-        );
-        break;
-      case "punct":
-        if (t.text === "(") {
-          const e = this.expression(scope);
-          r.expectPunct(")");
-          return e;
-        }
-        if (t.text === "{") return this.record(scope);
-        if (t.text === "[") return this.listLiteral(scope);
-        r.fail(`unexpected ${t.text}`, t);
-        break;
-      default:
-        r.fail(`unexpected ${t.text}`, t);
-    }
-  }
-
-  /** `[a, b]` or `[a, b, ...rest]`, the `[` taken. */
-  private listLiteral(scope: ReadonlyMap<string, SubsetType>): Expr {
-    const r: Reader = this.r;
-    const items: Expr[] = [];
-    let rest: Expr | undefined;
-    while (!r.isPunct("]")) {
-      if (rest) r.fail("a spread that is not last in an array literal");
-      if (r.isPunct("...")) {
-        r.at++;
-        rest = this.expression(scope);
-      } else items.push(this.expression(scope));
-      if (r.isPunct(",")) r.at++;
-      else if (!r.isPunct("]")) r.fail(`unexpected ${r.peek()?.text} in an array literal`);
-    }
-    r.at++;
-    return { kind: "list", items, ...(rest ? { rest } : {}) };
-  }
-
-  /** `(a, b) => body` or `a => body`, an expression body only; the names it binds go into scope. */
-  private callback(
-    scope: ReadonlyMap<string, SubsetType>,
-    arity: number,
-    what: string,
-  ): { names: string[]; body: Expr } {
-    const r: Reader = this.r;
-    const names: string[] = [];
-    if (r.isPunct("(")) {
-      r.at++;
-      while (!r.isPunct(")")) {
-        names.push(r.ident());
-        if (r.isPunct(":")) r.fail(`a type annotation on ${what}'s parameter`);
-        if (r.isPunct(",")) r.at++;
-      }
-      r.at++;
-    } else names.push(r.ident());
-    if (names.length === 0 || names.length > arity)
-      r.fail(`${what} takes a callback of 1 to ${arity} parameter(s), given ${names.length}`);
-    for (const n of names)
-      if (scope.has(n) || this.declared.has(n))
-        r.fail(`${what}'s parameter ${n} shadows a name already bound here`);
-    if (new Set(names).size !== names.length) r.fail(`${what}'s parameters repeat a name`);
-    r.expectPunct("=>");
-    if (r.isPunct("{")) r.fail(`a block body in ${what}'s callback (write an expression)`);
-    const inner = new Map(scope);
-    for (const n of names) inner.set(n, { kind: "null" });
-    return { names, body: this.expression(inner) };
-  }
-
-  /** A method call on a list: slice(1), map, flatMap, every, some, reduce; the `(` not yet taken. */
-  private method(scope: ReadonlyMap<string, SubsetType>, list: Expr, name: string): Expr {
-    const r: Reader = this.r;
-    r.at++;
-    let e: Expr;
-    if (name === "slice") {
-      const one = r.take();
-      if (one.kind !== "number" || one.text !== "1")
-        r.fail("slice with an argument other than 1", one);
-      e = { kind: "tail", list };
-    } else if (name === "map" || name === "flatMap" || name === "every" || name === "some") {
-      const { names, body } = this.callback(scope, 2, name);
-      e = {
-        kind: "iterate",
-        op: name,
-        list,
-        item: names[0] as string,
-        ...(names[1] === undefined ? {} : { index: names[1] }),
-        body,
-      };
-    } else if (name === "reduce") {
-      const { names, body } = this.callback(scope, 2, "reduce");
-      if (names.length !== 2) r.fail("reduce takes a callback of (accumulator, item)");
-      r.expectPunct(",");
-      const init = this.expression(scope);
-      e = { kind: "fold", list, acc: names[0] as string, item: names[1] as string, body, init };
-    } else
-      r.fail(`the method ${name} (the subset has slice(1), map, flatMap, every, some and reduce)`);
-    if (r.isPunct(",")) r.at++;
-    r.expectPunct(")");
-    return e;
-  }
-
-  private record(scope: ReadonlyMap<string, SubsetType>): Expr {
-    const r: Reader = this.r;
-    const fields: { name: string; value: Expr }[] = [];
-    while (!r.isPunct("}")) {
-      if (r.isPunct("...")) r.fail("spread in a record literal");
-      if (r.isPunct("[")) r.fail("a computed key");
-      const t = r.take();
-      if (t.kind !== "ident") r.fail(`a key that is not a name: ${t.text}`, t);
-      if (t.text === "__proto__")
-        r.fail("a __proto__ key, which sets the prototype, not a field", t);
-      if (r.isPunct("(")) r.fail(`a method ${t.text}`, t);
-      if (r.isPunct(":")) {
-        r.at++;
-        fields.push({ name: t.text, value: this.expression(scope) });
-      } else {
-        if (!scope.has(t.text)) r.fail(`shorthand ${t.text} names nothing in scope`, t);
-        fields.push({ name: t.text, value: { kind: "var", name: t.text } });
-      }
-      if (r.isPunct(",")) r.at++;
-    }
-    r.at++;
-    return { kind: "record", fields };
-  }
-
-  typeOfExpr(e: Expr, scope: ReadonlyMap<string, SubsetType>): SubsetType {
-    return typeOf(e, scope, this.ctx, (m) => this.r.fail(m));
-  }
 }
 
 /** A type, for messages. */
@@ -1416,10 +353,7 @@ export function insertNarrows(
     case "field":
       return { kind: "field", object: go(e.object, scope), field: e.field };
     case "record":
-      return {
-        kind: "record",
-        fields: e.fields.map((f) => ({ name: f.name, value: go(f.value, scope) })),
-      };
+      return { ...e, fields: e.fields.map((f) => ({ name: f.name, value: go(f.value, scope) })) };
     case "let": {
       const value = go(e.value, scope);
       const inner = new Map(scope);
@@ -1667,7 +601,15 @@ export function typeOf(
         .map((f) => f.name)
         .sort()
         .join(",");
-      const byNames = [...ctx.records.values()].filter(
+      // The context's type, when the compiler gave one, narrows the candidates: the record itself, or a union's members.
+      const context = e.type;
+      const candidates =
+        context?.kind === "record"
+          ? [...ctx.records.values()].filter((rec) => rec.name === context.name)
+          : context?.kind === "union"
+            ? [...ctx.records.values()].filter((rec) => rec.union === context.name)
+            : [...ctx.records.values()];
+      const byNames = candidates.filter(
         (rec) =>
           rec.fields
             .map((f) => f.name)
@@ -1742,96 +684,6 @@ export function typeOf(
     case "fold":
       return foldScope(e, e.list, e.init, scope, ctx, fail).acc;
   }
-}
-
-/**
- * A parser over text that is not the module: with `aliases`, the text is
- * a spec file's, whose names for the module's functions are its own
- * imports and nothing else; without, the text sees the module's names.
- */
-function parserFor(
-  text: string,
-  module: SubsetModule,
-  aliases?: ReadonlyMap<string, string>,
-): { r: Reader; parser: FunctionParser } {
-  let tokens: Token[];
-  try {
-    tokens = tokenize(text);
-  } catch (err) {
-    if (!(err instanceof TokenizeError)) throw err;
-    throw new OutsideSubset(`could not be tokenized: ${err.message}`, 0);
-  }
-  const r = new Reader(tokens, () => 0);
-  const records = new Map(module.records.map((rec) => [rec.name, rec]));
-  const inSubset = new Set(module.functions.map((f) => f.name));
-  let functions: ReadonlySet<string>;
-  let declared: ReadonlySet<string>;
-  if (aliases) {
-    declared = new Set(aliases.keys());
-    functions = new Set([...aliases].filter(([, fn]) => inSubset.has(fn)).map(([local]) => local));
-  } else {
-    functions = inSubset;
-    declared = new Set([...inSubset, ...module.outside.map((o) => o.name)]);
-  }
-  const typeAliases = new Map<string, SubsetType>(
-    module.unions.map((u) => [u.name, { kind: "union", name: u.name }]),
-  );
-  const parser = new FunctionParser(
-    r,
-    records,
-    functions,
-    new Map(),
-    declared,
-    aliases,
-    typeAliases,
-  );
-  for (const f of module.functions)
-    parser.signatures.set(f.name, { params: f.params, returns: f.returns });
-  return { r, parser };
-}
-
-/**
- * One TypeScript expression (a claim's body, say) in a scope of typed
- * names, over a module already read. The whole text must be the
- * expression.
- */
-export function readExpression(
-  text: string,
-  scope: ReadonlyMap<string, SubsetType>,
-  module: SubsetModule,
-  aliases?: ReadonlyMap<string, string>,
-): Expr {
-  const { r, parser } = parserFor(text, module, aliases);
-  const e = parser.expression(scope);
-  if (r.at < r.tokens.length) r.fail(`unexpected ${r.peek()?.text} after the expression`);
-  return e;
-}
-
-/**
- * The body of a spec file's arrow (`when` or `ensures`) as a boolean
- * expression: an expression body as it is, a block body through the same
- * statement reader as a function body (`const`, `if`, early returns).
- * The scope maps the arrow's own parameter names to the binders' types;
- * `aliases` maps the spec file's local names to the module's functions,
- * and a free name that is neither is outside the subset: the spec file's
- * scope is its imports, never the module's.
- */
-export function readArrowBody(
-  arrow: Arrow,
-  scope: ReadonlyMap<string, SubsetType>,
-  module: SubsetModule,
-  aliases: ReadonlyMap<string, string> = new Map(),
-): Expr {
-  if (!arrow.block) {
-    const { r, parser } = parserFor(arrow.body, module, aliases);
-    const e = parser.expression(scope);
-    if (r.at < r.tokens.length) r.fail(`unexpected ${r.peek()?.text} after the expression`);
-    return parser.narrowed(e, scope);
-  }
-  const { r, parser } = parserFor(`${arrow.body}}`, module, aliases);
-  const e = parser.blockBody(new Map(scope), { kind: "bool" });
-  if (r.at < r.tokens.length) r.fail(`unexpected ${r.peek()?.text} after the block`);
-  return parser.narrowed(e, scope);
 }
 
 /** Every name an expression binds or refers to: its variables and its lets. */
@@ -1935,10 +787,7 @@ export function renameVars(
     case "field":
       return { kind: "field", object: go(e.object), field: e.field };
     case "record":
-      return {
-        kind: "record",
-        fields: e.fields.map((f) => ({ name: f.name, value: go(f.value) })),
-      };
+      return { ...e, fields: e.fields.map((f) => ({ name: f.name, value: go(f.value) })) };
     case "let": {
       // A let binds its own name; a binder of that name is shadowed inside, as in the source.
       const inner = new Map(names);
@@ -2065,282 +914,536 @@ function callees(e: Expr, out = new Set<string>()): Set<string> {
   }
 }
 
-/**
- * Read a module: its record types, every function the subset takes (in
- * source order, so callees come before callers) and, for the others, why
- * not. A function calling one outside the subset is outside it too. The
- * names given are what the caller cares about; one the module does not
- * declare at its top level is reported among the others, not thrown.
- */
-export function readSubset(source: string, functions?: readonly string[]): SubsetModule {
-  // Every JavaScript line terminator counts (LF, CR, CRLF as one, U+2028, U+2029): a return
-  // followed by any of them returns undefined.
-  const lineOf = (offset: number): number => {
-    let line = 1;
-    for (let i = 0; i < offset && i < source.length; i++) {
-      const c = source[i];
-      if (c === "\r") {
-        line++;
-        if (source[i + 1] === "\n") i++;
-      } else if (c === "\n" || c === "\u2028" || c === "\u2029") line++;
-    }
-    return line;
-  };
-  let tokens: Token[];
+// ---------------------------------------------------------------------------
+// Reading: a module through the compiler, an arrow from its text.
+
+/** The path a module read from text alone is compiled under: an import of another file does not resolve from it. */
+const virtualModulePath = "/eutaxy/reader/module.ts";
+
+export interface ReadSubsetOptions {
+  /** The module's path on disk, under which its imports resolve. Without it the module stands alone. */
+  readonly path?: string;
+}
+
+/** What typing a module's expressions needs, shared by every function read. */
+function moduleContext(records: Map<string, RecordType>): {
+  ctx: TypeContext;
+  signatures: Map<string, CalleeSignature>;
+} {
+  const signatures = new Map<string, CalleeSignature>();
+  return { ctx: { records, signatures }, signatures };
+}
+
+/** The contextual type the compiler gives a record literal, as the subset reads it; undefined where it has none the subset takes. */
+function contextualType(
+  checker: Checker,
+  types: SubsetTypes,
+  node: ObjectLiteralExpression,
+): SubsetType | undefined {
+  const type = checker.getContextualType(node);
+  if (!type) return undefined;
+  // A context inferred from the literal itself (a callback's result, say) declares nothing: the
+  // literal is matched against the declared records instead.
+  const fromLiteral = (t: Type): boolean =>
+    t.isObjectType() && t.getSymbol()?.name === InternalSymbolName.Object;
+  if (fromLiteral(type) || (type.isUnionType() && type.getTypes().some(fromLiteral)))
+    return undefined;
+  const skip = Symbol("outside");
   try {
-    tokens = tokenize(source);
+    const read = types.of(type, () => {
+      throw skip;
+    });
+    return read.kind === "nullable" ? read.inner : read;
   } catch (err) {
-    // Source the scanner cannot read is source the reader cannot trust: every name asked for is outside.
-    if (!(err instanceof TokenizeError)) throw err;
-    return {
-      records: [],
-      unions: [],
-      functions: [],
-      outside: (functions ?? []).map((name) => ({
-        name,
-        line: 0,
-        message: `the module could not be tokenized: ${err.message}`,
-      })),
-    };
+    if (err === skip) return undefined;
+    throw err;
   }
-  const r = new Reader(tokens, lineOf);
-  // Pass 1: record types, and where every function declaration starts.
-  const records = new Map<string, RecordType>();
-  const unions: UnionType[] = [];
-  const typeAliases = new Map<string, SubsetType>();
-  const declaredTypes = (): Declared => ({
-    records: new Set(records.keys()),
-    recordsByName: records,
-    aliases: typeAliases,
-  });
-  const badRecords = new Map<string, string>();
-  const declared = new Set<string>();
-  const assigned = new Map<string, number>();
-  const starts: number[] = [];
-  while (r.at < tokens.length) {
-    const t = r.peek() as Token;
-    if (t.kind === "ident" && t.text === "import") {
-      // An import (type-only or not) declares nothing the subset reads.
-      r.at++;
-      skipDeclaration(r);
-      continue;
-    }
-    if (
-      t.kind === "ident" &&
-      (t.text === "interface" || t.text === "type" || t.text === "export")
-    ) {
-      const save = r.at;
-      try {
-        const decl = declarationAt(r, declaredTypes());
-        if (decl) {
-          if (decl.kind === "record") records.set(decl.record.name, decl.record);
-          else if (decl.kind === "alias") typeAliases.set(decl.name, decl.type);
-          else {
-            for (const m of decl.members) records.set(m.name, m);
-            // A named member is the module's own record, now also a member of the union.
-            for (const m of decl.union.members) {
-              const rec = records.get(m.record);
-              if (rec && rec.union === undefined)
-                records.set(m.record, { ...rec, union: decl.union.name });
-              else if (rec && rec.union !== decl.union.name)
-                // One datatype per record: a record in two unions would need two constructors.
-                badRecords.set(
-                  decl.union.name,
-                  `${m.record} is already a member of ${rec.union}; a record belongs to one union`,
-                );
-            }
-            if (!badRecords.has(decl.union.name)) {
-              unions.push(decl.union);
-              typeAliases.set(decl.union.name, { kind: "union", name: decl.union.name });
-            }
-          }
-          continue;
-        }
-      } catch (err) {
-        // A record type the subset does not take: noted, so a function using it says why, and skipped.
-        if (!(err instanceof OutsideSubset)) throw err;
-        r.at = save;
-        if (r.isWord("export")) r.at++;
-        r.at++;
-        // `export type { A }` and friends name no record; a named one is noted so its users say why.
-        if (r.peek()?.kind === "ident") badRecords.set(r.ident(), err.message);
-        skipDeclaration(r);
-        continue;
+}
+
+/** The line of the first direct `eval` in the file: a mention that is not a property of something else. */
+function directEval(sf: SourceFile): number | undefined {
+  let line: number | undefined;
+  const visit = (node: Node): void => {
+    if (line !== undefined) return;
+    if (is.isIdentifier(node) && node.text === "eval") {
+      const parent = node.parent;
+      const property =
+        (is.isPropertyAccessExpression(parent) && parent.name === node) ||
+        (is.isPropertyAssignment(parent) && parent.name === node);
+      if (!property) {
+        line = lineAt(sf, node);
+        return;
       }
-      r.at = save;
     }
-    if (t.kind === "ident" && t.text === "function" && isDeclaration(tokens, r.at, lineOf)) {
-      // `function* f` is a generator: its name is recorded so the signature pass can refuse it by name.
-      const name = r.isPunct("*", 1) ? r.peek(2) : r.peek(1);
-      if (name?.kind === "ident") declared.add(name.text);
-      // The declaration starts at its modifiers, which the second pass reads (and refuses, for async).
-      let start = r.at;
-      if (r.isWord("async", start - r.at - 1)) start--;
-      if (r.isWord("export", start - r.at - 1)) start--;
-      starts.push(start);
-      r.at++;
+    node.forEachChild(visit);
+  };
+  visit(sf);
+  return line;
+}
+
+/** Whether an identifier is written to: assigned, updated, or bound by a destructuring or a `for` head. */
+function isWritten(node: Node): boolean {
+  let n: Node = node;
+  for (;;) {
+    const p: Node = n.parent;
+    if (!p) return false;
+    // The outer expressions TypeScript lets wrap an assignment target: parentheses and assertions.
+    if (
+      (is.isParenthesizedExpression(p) ||
+        is.isNonNullExpression(p) ||
+        is.isAsExpression(p) ||
+        is.isSatisfiesExpression(p) ||
+        is.isTypeAssertion(p)) &&
+      p.expression === n
+    ) {
+      n = p;
       continue;
     }
-    if (t.kind === "punct" && ["(", "[", "{"].includes(t.text)) {
-      skipGroup(r);
+    if (is.isBinaryExpression(p)) {
+      const k = p.operatorToken.kind;
+      if (p.left === n && k >= SyntaxKind.FirstAssignment && k <= SyntaxKind.LastAssignment)
+        return true;
+      return false;
+    }
+    if (is.isPrefixUnaryExpression(p) || is.isPostfixUnaryExpression(p))
+      return p.operator === SyntaxKind.PlusPlusToken || p.operator === SyntaxKind.MinusMinusToken;
+    if (is.isForInStatement(p) || is.isForOfStatement(p)) return p.initializer === n;
+    // Inside a destructuring target, the whole pattern is what gets assigned.
+    if (is.isArrayLiteralExpression(p) || is.isSpreadElement(p) || is.isSpreadAssignment(p)) {
+      n = p;
       continue;
     }
-    r.at++;
+    if (is.isPropertyAssignment(p) && p.initializer === n) {
+      n = p.parent;
+      continue;
+    }
+    if (is.isShorthandPropertyAssignment(p) && p.name === n) {
+      n = p.parent;
+      continue;
+    }
+    if (is.isObjectLiteralExpression(p)) {
+      n = p;
+      continue;
+    }
+    return false;
   }
-  // A declared function used as a value anywhere in the module (assigned to, aliased, passed on) may not
-  // be what its declaration says when called; such a function, and its callers, are outside.
-  for (const [name, line] of valueUses(tokens, lineOf)) assigned.set(name, line);
-  const outside = new Map<string, OutsideFunction>();
-  // A name asked for that is no module-level declaration (inside a namespace, say) is reported, not thrown.
-  for (const name of functions ?? [])
-    if (!declared.has(name))
-      outside.set(name, {
-        name,
-        line: 0,
-        message: `the module declares no function ${name} at its top level`,
-      });
-  // A direct eval can rebind any declaration of the module without naming it, so any mention of `eval`
-  // that is not a property of something else (`globalThis.eval` is indirect, and cannot) puts the whole
-  // module outside: `eval(…)`, `(eval)(…)`, inside a template substitution alike.
-  const evalLine = mentionsEval(tokens, lineOf);
-  if (evalLine !== undefined)
-    for (const name of declared)
-      outside.set(name, {
-        name,
-        line: evalLine,
-        message: "the module mentions eval directly, which can rebind any of its declarations",
-      });
-  // An identifier escape (`\u0066` for `f`) spells a name the scans above cannot match: nothing is trusted.
-  const escapeLine = firstLine(tokens, lineOf, (t) => t.kind === "punct" && t.text === "\\");
-  if (escapeLine !== undefined)
-    for (const name of declared)
+}
+
+/**
+ * The declared functions the module assigns to anywhere, with the line
+ * of the first assignment: what runs under such a name may not be its
+ * declaration. A name is confirmed through the compiler, so a local of
+ * the same name assigned in some block is not the function.
+ */
+function assigned(
+  sf: SourceFile,
+  checker: Checker,
+  declarations: ReadonlyMap<string, FunctionDeclaration>,
+): Map<string, number> {
+  const out = new Map<string, number>();
+  const symbolIds = new Map<string, number | undefined>();
+  const idOf = (name: string): number | undefined => {
+    if (!symbolIds.has(name)) {
+      const decl = declarations.get(name);
+      symbolIds.set(name, decl?.name ? checker.getSymbolAtLocation(decl.name)?.id : undefined);
+    }
+    return symbolIds.get(name);
+  };
+  const visit = (node: Node): void => {
+    if (
+      is.isIdentifier(node) &&
+      declarations.has(node.text) &&
+      !out.has(node.text) &&
+      isWritten(node)
+    ) {
+      const id = idOf(node.text);
+      // In `({ f } = …)` the name is the property's; the value it assigns is the binding's symbol.
+      const parent = node.parent;
+      const symbol =
+        is.isShorthandPropertyAssignment(parent) && parent.name === node
+          ? checker.getShorthandAssignmentValueSymbol(parent)
+          : checker.getSymbolAtLocation(node);
+      if (id !== undefined && symbol?.id === id) out.set(node.text, lineAt(sf, node));
+    }
+    node.forEachChild(visit);
+  };
+  visit(sf);
+  return out;
+}
+
+/** A function's header read: its typed parameters and return type, with the body still to read. */
+interface Head {
+  readonly name: string;
+  readonly decl: FunctionDeclaration;
+  readonly params: readonly Param[];
+  readonly returns: SubsetType;
+  readonly line: number;
+  readonly offset: number;
+}
+
+/** `export function name(params): Type {` read, the types through the compiler. */
+function head(
+  reader: ExprReader,
+  types: SubsetTypes,
+  checker: Checker,
+  decl: FunctionDeclaration,
+): Head {
+  const sf = reader.sf;
+  const name = (decl.name as Identifier).text;
+  if (isAsync(decl)) reader.fail("an async function (core functions are synchronous)", decl);
+  if (decl.asteriskToken) reader.fail("a generator function", decl);
+  if (decl.typeParameters) reader.fail("type parameters", decl.typeParameters[0] ?? decl);
+  const params: Param[] = [];
+  for (const p of decl.parameters) {
+    if (!is.isIdentifier(p.name)) reader.fail("a destructured parameter", p);
+    const pname = p.name.text;
+    if (p.dotDotDotToken) reader.fail("a rest parameter", p);
+    // `this: T` annotates the receiver and is erased; it is no argument the function is called with.
+    if (pname === "this") reader.fail("a this parameter (the receiver is not modelled)", p);
+    if (p.questionToken) reader.fail(`optional parameter ${pname}`, p);
+    if (!p.type) reader.fail(`parameter ${pname} without a type`, p);
+    if (p.initializer) reader.fail(`a default value for ${pname}`, p);
+    params.push({
+      name: pname,
+      type: types.of(checker.getTypeAtLocation(p.type), reader.refuseAt(p.type)),
+    });
+  }
+  if (!decl.type)
+    reader.fail(
+      `${name} without a return type (the subset needs it to name the record returned)`,
+      decl,
+    );
+  const returns = types.of(checker.getTypeAtLocation(decl.type), reader.refuseAt(decl.type));
+  if (!decl.body) reader.fail("a function without a body", decl);
+  const offset = openParen(sf, decl);
+  if (offset === undefined) reader.fail("a function without a parameter list", decl);
+  return { name, decl, params, returns, line: lineAt(sf, decl), offset };
+}
+
+/** The function, its body read and typed against its header. */
+function declaration(reader: ExprReader, h: Head): SubsetFunction {
+  const body = h.decl.body as NonNullable<FunctionDeclaration["body"]>;
+  const scope = new Map(h.params.map((p) => [p.name, p.type]));
+  // Null checks narrow the names they guard in the branches they guard, before anything is typed.
+  const read = reader.narrowed(reader.block(body.statements, scope, body), scope, body);
+  // Typing the whole body here: a record literal of no declared type, a field read on an integer or
+  // a body of another type than declared are all outside the subset, found now rather than by an engine.
+  const actual = reader.typeOfExpr(read, scope, body);
+  if (!fits(actual, h.returns, reader.ctx))
+    reader.fail(
+      `${h.name} returns a ${describe(actual)} but declares ${describe(h.returns)}`,
+      body,
+    );
+  return {
+    name: h.name,
+    params: h.params,
+    returns: h.returns,
+    body: read,
+    line: h.line,
+    offset: h.offset,
+  };
+}
+
+/**
+ * Read a module: every function the subset takes (in source order, so
+ * callees come before callers), the record types and unions they use,
+ * and, for the other functions, why not. A function calling one outside
+ * the subset is outside it too. The names given are what the caller
+ * cares about; one the module does not declare at its top level is
+ * reported among the others, not thrown.
+ */
+export function readSubset(
+  source: string,
+  functions?: readonly string[],
+  options: ReadSubsetOptions = {},
+): SubsetModule {
+  const path = options.path ?? virtualModulePath;
+  return withProgram([{ path, text: source }], ({ checker, file, parseError }) => {
+    const sf = file(path);
+    // Pass 1: the module's top-level function declarations, and what makes them untrustworthy.
+    const declarations = new Map<string, FunctionDeclaration>();
+    const overloaded = new Set<string>();
+    for (const st of sf.statements) {
+      if (!is.isFunctionDeclaration(st) || !st.name) continue;
+      if (declarations.has(st.name.text)) overloaded.add(st.name.text);
+      else declarations.set(st.name.text, st);
+    }
+    const declared = new Set(declarations.keys());
+    const outside = new Map<string, OutsideFunction>();
+    const error = parseError(path);
+    // Source the compiler cannot parse is source the reader cannot trust: every function is outside.
+    if (error) {
+      for (const name of new Set([...declared, ...(functions ?? [])]))
+        outside.set(name, {
+          name,
+          line: 0,
+          message: `the module could not be parsed: ${error.message} (line ${error.line})`,
+        });
+      return { records: [], unions: [], functions: [], outside: [...outside.values()] };
+    }
+    // A name asked for that is no module-level declaration (inside a namespace, say) is reported, not thrown.
+    for (const name of functions ?? [])
+      if (!declared.has(name))
+        outside.set(name, {
+          name,
+          line: 0,
+          message: `the module declares no function ${name} at its top level`,
+        });
+    // A direct eval can rebind any declaration of the module without naming it, so any mention of `eval`
+    // that is not a property of something else (`globalThis.eval` is indirect, and cannot) puts the whole
+    // module outside: `eval(…)`, `(eval)(…)`, inside a template substitution alike.
+    const evalLine = directEval(sf);
+    if (evalLine !== undefined)
+      for (const name of declared)
+        outside.set(name, {
+          name,
+          line: evalLine,
+          message: "the module mentions eval directly, which can rebind any of its declarations",
+        });
+    for (const [name, line] of assigned(sf, checker, declarations))
       if (!outside.has(name))
         outside.set(name, {
           name,
-          line: escapeLine,
-          message:
-            "the module uses an identifier escape sequence (\\u…), so its names cannot be matched by spelling",
+          line,
+          message: `${name} is assigned in the module, so what runs under its name may not be its declaration`,
         });
-  for (const [name, line] of assigned)
-    if (declared.has(name) && !outside.has(name))
+    // The module's own declared types first, in their order, so a record literal of no declared type
+    // is matched against every record the module declares, and a record belongs to the union declared
+    // first. A declared type the subset does not take is left out here; a function using it says why.
+    const types = new SubsetTypes(checker);
+    const skip = Symbol("outside");
+    for (const st of sf.statements) {
+      if (!is.isInterfaceDeclaration(st) && !is.isTypeAliasDeclaration(st)) continue;
+      if (st.typeParameters) continue; // a generic alias is read where it is instantiated
+      const symbol = checker.getSymbolAtLocation(st.name);
+      if (!symbol) continue;
+      try {
+        types.of(checker.getDeclaredTypeOfSymbol(symbol), () => {
+          throw skip;
+        });
+      } catch (err) {
+        if (err !== skip) throw err;
+      }
+    }
+    // Pass 2: signatures, so every function's return type is known before any body is read.
+    const { ctx, signatures } = moduleContext(types.records);
+    const names: Names = {
+      callable: (n) => declared.has(n),
+      target: (n) => n,
+      declared: (n) => declared.has(n),
+      spec: false,
+    };
+    const typeSource: TypeSource = {
+      annotation: (node, refuse) => types.of(checker.getTypeAtLocation(node), refuse),
+      contextual: (node) => contextualType(checker, types, node),
+    };
+    const reader = new ExprReader(sf, names, typeSource, ctx);
+    const heads: Head[] = [];
+    for (const [name, decl] of declarations) {
+      try {
+        if (overloaded.has(name))
+          reader.fail(`${name} is declared more than once (overloads)`, decl);
+        const h = head(reader, types, checker, decl);
+        // Callers of an assigned function still type-check against its declaration; they are then outside with it.
+        signatures.set(name, { params: h.params, returns: h.returns });
+        if (!outside.has(name)) heads.push(h);
+      } catch (err) {
+        if (!(err instanceof OutsideSubset)) throw err;
+        if (!outside.has(name)) outside.set(name, { name, line: err.line, message: err.message });
+      }
+    }
+    // Pass 3: bodies.
+    const read = new Map<string, SubsetFunction>();
+    for (const h of heads) {
+      try {
+        read.set(h.name, declaration(reader, h));
+      } catch (err) {
+        if (!(err instanceof OutsideSubset)) throw err;
+        outside.set(h.name, { name: h.name, line: err.line, message: err.message });
+      }
+    }
+    closeOverCallees(read, outside);
+    // Recursion is in the subset as structural recursion on a list (`structuralOn`), a function calling
+    // itself directly; any other recursion is outside, and so are its callers.
+    const reaches = (from: string, target: string, seen = new Set<string>()): boolean => {
+      const fn = read.get(from);
+      if (!fn) return false;
+      for (const c of callees(fn.body)) {
+        if (c === target) return true;
+        if (!seen.has(c)) {
+          seen.add(c);
+          if (reaches(c, target, seen)) return true;
+        }
+      }
+      return false;
+    };
+    for (const [name, fn] of [...read])
+      if (reaches(name, name)) {
+        const direct = [...callees(fn.body)].every((c) => c === name || !reaches(c, name));
+        const on = direct ? structuralOn(fn) : undefined;
+        if (on !== undefined) {
+          read.set(name, { ...fn, structural: on });
+          continue;
+        }
+        read.delete(name);
+        outside.set(name, {
+          name,
+          line: fn.line,
+          message: `${name} is recursive in a way the subset does not take: it takes a function calling itself on a list parameter's slice(1), after a first test of that list's length against 0 (if (xs.length === 0) return …)`,
+        });
+      }
+    closeOverCallees(read, outside);
+    // Callees before callers, whatever the source order: Lean needs a definition before its use.
+    const ordered: SubsetFunction[] = [];
+    const placed = new Set<string>();
+    while (ordered.length < read.size)
+      // A structurally recursive function calls itself: that callee needs no placing first.
+      for (const [name, fn] of read)
+        if (!placed.has(name) && [...callees(fn.body)].every((c) => c === name || placed.has(c))) {
+          ordered.push(fn);
+          placed.add(name);
+        }
+    return {
+      records: [...types.records.values()],
+      unions: types.unions,
+      functions: ordered,
+      outside: [...outside.values()],
+    };
+  });
+}
+
+/** A caller of a function outside the subset is outside it too, however many steps away. */
+function closeOverCallees(
+  read: Map<string, SubsetFunction>,
+  outside: Map<string, OutsideFunction>,
+): void {
+  for (let changed = true; changed; ) {
+    changed = false;
+    for (const [name, fn] of read) {
+      const bad = [...callees(fn.body)].find((c) => outside.has(c));
+      if (bad === undefined) continue;
+      read.delete(name);
       outside.set(name, {
         name,
-        line,
-        message: `${name} is used as a value in the module (not only called), so what runs under its name may not be its declaration`,
+        line: fn.line,
+        message: `calls ${bad}, which is outside the subset: ${outside.get(bad)?.message}`,
       });
-  // Pass 2: signatures, so every function's return type is known before any body is read.
-  const parser = new FunctionParser(
-    r,
-    records,
-    declared,
-    badRecords,
-    declared,
-    undefined,
-    typeAliases,
+      changed = true;
+    }
+  }
+}
+
+/**
+ * A reader over text that is not the module: with `aliases`, the text is
+ * a spec file's, whose names for the module's functions are its own
+ * imports and nothing else; without, the text sees the module's names.
+ * No compiler stands behind the text, so a `const` annotation is read
+ * from its syntax against the module's declared types, and a record
+ * literal has no contextual type. Lines are not reported: the text's
+ * position is the caller's to know.
+ */
+function arrowReader(
+  sf: SourceFile,
+  module: SubsetModule,
+  aliases?: ReadonlyMap<string, string>,
+): ExprReader {
+  const records = new Map(module.records.map((rec) => [rec.name, rec]));
+  const unionNames = new Set(module.unions.map((u) => u.name));
+  const inSubset = new Set(module.functions.map((f) => f.name));
+  let names: Names;
+  if (aliases) {
+    const declared = new Set(aliases.keys());
+    const callable = new Set(
+      [...aliases].filter(([, fn]) => inSubset.has(fn)).map(([local]) => local),
+    );
+    names = {
+      callable: (n) => callable.has(n),
+      target: (n) => aliases.get(n) ?? n,
+      declared: (n) => declared.has(n),
+      spec: true,
+    };
+  } else {
+    const declared = new Set([...inSubset, ...module.outside.map((o) => o.name)]);
+    names = {
+      callable: (n) => inSubset.has(n),
+      target: (n) => n,
+      declared: (n) => declared.has(n),
+      spec: false,
+    };
+  }
+  const recordNames = new Set(records.keys());
+  const typeSource: TypeSource = {
+    annotation: (node, refuse) => syntacticType(sf, node, recordNames, unionNames, refuse),
+    contextual: () => undefined,
+  };
+  const signatures = new Map<string, CalleeSignature>(
+    module.functions.map((f) => [f.name, { params: f.params, returns: f.returns }]),
   );
-  const signatures: Signature[] = [];
-  for (const start of starts) {
-    r.at = start;
-    try {
-      const sig = parser.signature();
-      // Callers of a reassigned function still type-check against its declaration; they are then outside with it.
-      parser.signatures.set(sig.name, { params: sig.params, returns: sig.returns });
-      if (!outside.has(sig.name)) signatures.push(sig);
-    } catch (err) {
-      if (!(err instanceof OutsideSubset)) throw err;
-      // The name after `function`, past a generator's `*`.
-      const head = tokens.slice(start, start + 5);
-      const fnAt = head.findIndex((t) => t.kind === "ident" && t.text === "function");
-      const after = head[fnAt + 1]?.text === "*" ? head[fnAt + 2] : head[fnAt + 1];
-      const name = after?.kind === "ident" ? after.text : undefined;
-      if (name) outside.set(name, { name, line: err.line, message: err.message });
-    }
-  }
-  // Pass 3: bodies.
-  const read = new Map<string, SubsetFunction>();
-  for (const sig of signatures) {
-    try {
-      read.set(sig.name, parser.declaration(sig));
-    } catch (err) {
-      if (!(err instanceof OutsideSubset)) throw err;
-      outside.set(sig.name, { name: sig.name, line: err.line, message: err.message });
-    }
-  }
-  // A caller of a function outside the subset is outside it too, however many steps away.
-  for (let changed = true; changed; ) {
-    changed = false;
-    for (const [name, fn] of read) {
-      const bad = [...callees(fn.body)].find((c) => outside.has(c));
-      if (bad === undefined) continue;
-      read.delete(name);
-      outside.set(name, {
-        name,
-        line: fn.line,
-        message: `calls ${bad}, which is outside the subset: ${outside.get(bad)?.message}`,
-      });
-      changed = true;
-    }
-  }
-  // Recursion is not in the subset yet: a function reaching itself through its callees is outside, and so are its callers.
-  const reaches = (from: string, target: string, seen = new Set<string>()): boolean => {
-    const fn = read.get(from);
-    if (!fn) return false;
-    for (const c of callees(fn.body)) {
-      if (c === target) return true;
-      if (!seen.has(c)) {
-        seen.add(c);
-        if (reaches(c, target, seen)) return true;
-      }
-    }
-    return false;
+  return new ExprReader(sf, names, typeSource, { records, signatures }, () => 0);
+}
+
+/** The one expression a fragment `(text)` parsed to, or why the text is not one expression. */
+function fragmentExpression(sf: SourceFile): Expression {
+  const [first, second] = sf.statements;
+  if (second) throw new OutsideSubset(`unexpected ${textOf(sf, second)} after the expression`, 0);
+  if (!first || !is.isExpressionStatement(first) || !is.isParenthesizedExpression(first.expression))
+    throw new OutsideSubset("could not be parsed as an expression", 0);
+  let broken: string | undefined;
+  const visit = (node: Node): void => {
+    if (broken !== undefined) return;
+    if (is.isIdentifier(node) && node.text === "")
+      broken = "could not be parsed (something is missing)";
+    node.forEachChild(visit);
   };
-  // Recursion is in the subset as structural recursion on a list (`structuralOn`), a function calling
-  // itself directly; any other recursion is outside, and so are its callers.
-  for (const [name, fn] of [...read])
-    if (reaches(name, name)) {
-      const direct = [...callees(fn.body)].every((c) => c === name || !reaches(c, name));
-      const on = direct ? structuralOn(fn) : undefined;
-      if (on !== undefined) {
-        read.set(name, { ...fn, structural: on });
-        continue;
-      }
-      read.delete(name);
-      outside.set(name, {
-        name,
-        line: fn.line,
-        message: `${name} is recursive in a way the subset does not take: it takes a function calling itself on a list parameter's slice(1), after a first test of that list's length against 0 (if (xs.length === 0) return …)`,
-      });
-    }
-  for (let changed = true; changed; ) {
-    changed = false;
-    for (const [name, fn] of read) {
-      const bad = [...callees(fn.body)].find((c) => outside.has(c));
-      if (bad === undefined) continue;
-      read.delete(name);
-      outside.set(name, {
-        name,
-        line: fn.line,
-        message: `calls ${bad}, which is outside the subset: ${outside.get(bad)?.message}`,
-      });
-      changed = true;
-    }
-  }
-  // Callees before callers, whatever the source order: Lean needs a definition before its use.
-  const ordered: SubsetFunction[] = [];
-  const placed = new Set<string>();
-  while (ordered.length < read.size)
-    // A structurally recursive function calls itself: that callee needs no placing first.
-    for (const [name, fn] of read)
-      if (!placed.has(name) && [...callees(fn.body)].every((c) => c === name || placed.has(c))) {
-        ordered.push(fn);
-        placed.add(name);
-      }
-  return {
-    records: [...records.values()],
-    unions,
-    functions: ordered,
-    outside: [...outside.values()],
-  };
+  visit(first);
+  if (broken !== undefined) throw new OutsideSubset(broken, 0);
+  return first.expression.expression;
+}
+
+/**
+ * One TypeScript expression (a claim's body, say) in a scope of typed
+ * names, over a module already read. The whole text must be the
+ * expression.
+ */
+export function readExpression(
+  text: string,
+  scope: ReadonlyMap<string, SubsetType>,
+  module: SubsetModule,
+  aliases?: ReadonlyMap<string, string>,
+): Expr {
+  return withSourceFile(`(${text}\n)`, (sf) => {
+    const expr = fragmentExpression(sf);
+    return arrowReader(sf, module, aliases).expression(expr, scope);
+  });
+}
+
+/**
+ * The body of a spec file's arrow (`when` or `ensures`) as a boolean
+ * expression: an expression body as it is, a block body through the same
+ * statement reader as a function body (`const`, `if`, early returns).
+ * The scope maps the arrow's own parameter names to the binders' types;
+ * `aliases` maps the spec file's local names to the module's functions,
+ * and a free name that is neither is outside the subset: the spec file's
+ * scope is its imports, never the module's.
+ */
+export function readArrowBody(
+  arrow: Arrow,
+  scope: ReadonlyMap<string, SubsetType>,
+  module: SubsetModule,
+  aliases: ReadonlyMap<string, string> = new Map(),
+): Expr {
+  if (!arrow.block)
+    return withSourceFile(`(${arrow.body}\n)`, (sf) => {
+      const expr = fragmentExpression(sf);
+      const reader = arrowReader(sf, module, aliases);
+      return reader.narrowed(reader.expression(expr, scope), scope, sf);
+    });
+  return withSourceFile(`{${arrow.body}\n}`, (sf) => {
+    const block = blockOf(sf);
+    if (!block) throw new OutsideSubset("could not be parsed as a block", 0);
+    const reader = arrowReader(sf, module, aliases);
+    return reader.narrowed(reader.block(block.statements, new Map(scope), block), scope, sf);
+  });
 }
 
 /**
@@ -2553,9 +1656,9 @@ function typeTaken(
   return true;
 }
 
-/** The types a body's `const` annotations name. */
+/** The types a body's `const` annotations and its record literals' contexts name. */
 function annotations(e: Expr, out: SubsetType[] = []): SubsetType[] {
-  if (e.kind === "let" && e.type) out.push(e.type);
+  if ((e.kind === "let" || e.kind === "record") && e.type) out.push(e.type);
   for (const c of children(e)) annotations(c, out);
   return out;
 }

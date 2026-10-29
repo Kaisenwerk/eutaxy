@@ -14,6 +14,7 @@ allowBuilds:
 # pnpm refuses versions published within its minimum release age; these were
 # chosen deliberately (latest at the time, per the toolchain policy).
 minimumReleaseAgeExclude:
+  - "typescript@7.1.0-beta"
   - "@cloudflare/workers-types@5.20261022.1"
   - "@aws-sdk/client-dynamodb@3.1156.0"
   - "@aws-sdk/lib-dynamodb@3.1156.0"

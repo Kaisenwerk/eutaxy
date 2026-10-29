@@ -27,7 +27,7 @@ export const fullRefundAllowed = forall(decideRefund, {
 export const decideRefundTotal = total(decideRefund);
 `;
 const read = (module: string, spec: string) =>
-  readSpecs({ module, spec, moduleSpecifiers: ["./domain.ts"] });
+  readSpecs({ module, spec, modulePath: "/virtual/domain.ts" });
 const specOn = (fn: string, body: string, name = "p") =>
   `import { forall } from "eutaxy/spec";\nimport { ${fn} } from "./domain.ts";\nexport const ${name} = forall(${fn}, { ensures: ${body} });`;
 

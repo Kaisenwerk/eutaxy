@@ -127,6 +127,8 @@ differential scenarios, prover contracts; never published), `examples/` and
   declarations, references and this table in sync. (Project references alone
   do not enforce this: imports by package name resolve through
   `node_modules` and are exempt from the composite file-list check.)
+- Only `prover` imports the TypeScript compiler's API, from its reader
+  alone; `typescript` is its peer dependency, and so the facade's.
 - Only `cloudflare` knows about Cloudflare and only `aws` knows about AWS;
   each is a sibling package implementing `Platform`, and the engine, the
   invariants, the shrinker, the report and the CLI are shared.
@@ -190,12 +192,21 @@ export const withinCaptured = forall(decideRefund, {
 ```
 
 Eutaxy reads a module and its spec file into its own `SpecIR`, plain data
-with typed binders, on the Node side of a check. The reader is
-hand-written over the TypeScript subset until TypeScript 7.1 is stable;
-then it is the TypeScript API, a peer dependency of `prover` as Vitest is
-of the facade, so binder types are whatever the user's compiler resolves
-them to, including types imported from other files (7.0 shipped no
-programmatic API; 7.1 restores one). Inside workerd the spec file is
+with typed binders, on the Node side of a check. The reader asks the
+TypeScript compiler through its API (7.1, which restored the programmatic
+API 7.0 shipped without): `typescript` is a peer dependency of `prover`
+as Vitest is of the facade, one compiler process serves a Node process,
+and each read compiles the files it is given over an in-memory layer on
+top of the host's files, so binder types are whatever the user's compiler
+resolves them to: an alias declared later in the file, a generic alias
+instantiated, an inline object type, a type imported from another file.
+What stays Eutaxy's is the subset's meaning (its integers and doubles,
+its list model, narrowing, structural recursion, the expression tree the
+engines translate) and the naming of what the engines declare: a declared
+type by its name, an instantiated or inline one as the compiler prints
+it. The engines never touch the compiler API, so the reader is the one
+place a compiler change lands. The reader follows the compiler's releases
+and is pinned exactly in the workspace. Inside workerd the spec file is
 imported and its properties evaluated directly, so nothing is generated
 and nothing is `eval`ed. The spec surface is the one breaking change of
 `0.7.0`: `0.6.x` reads Lemma annotations in JSDoc, which `0.7.0` drops
@@ -1131,8 +1142,8 @@ refuted, so the self-check is shown to fail when a checker is wrong.
 
 Not self-verifiable: binding proxies, globals patching and the workerd/Vitest
 glue (covered by differential testing), and the spec reader (a common-mode
-failure, covered by a corpus of modules with known `SpecIR` and, once the
-reader is the TypeScript API, by that compiler).
+failure, covered by a corpus of modules with known `SpecIR`; what it reads
+is what the TypeScript compiler resolved).
 
 ## Risks
 

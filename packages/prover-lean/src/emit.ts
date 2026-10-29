@@ -50,7 +50,10 @@ const leanKeywords = new Set(
 );
 
 function quote(name: string): string {
-  return /^[A-Za-z_][A-Za-z0-9_]*$/.test(name) ? name : `«${name}»`;
+  // Guillemets hold anything but guillemets: those are escaped as `%ab` and `%bb`, with `%` itself
+  // as `%25` first, in every name, so two names never meet in one identifier.
+  const escaped = name.replace(/%/g, "%25").replace(/«/g, "%ab").replace(/»/g, "%bb");
+  return /^[A-Za-z_][A-Za-z0-9_]*$/.test(escaped) ? escaped : `«${escaped}»`;
 }
 
 function leanType(t: SubsetType): string {

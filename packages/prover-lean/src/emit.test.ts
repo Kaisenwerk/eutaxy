@@ -27,7 +27,7 @@ export const h = forall(tag, { when: (n, s) => /^a+$/.test(s), ensures: (n, s) =
 export const i = forall(tag, { ensures: (n, s) => tag(n, s) === s });
 `;
 const module = readSubset(source);
-const specs = readSpecs({ module: source, spec: specSource, moduleSpecifiers: ["./domain.ts"] });
+const specs = readSpecs({ module: source, spec: specSource, modulePath: "/virtual/domain.ts" });
 const prop = (name: string): Property => {
   const p = specs.functions.flatMap((f) => f.properties).find((x) => x.name === name);
   if (!p) throw new Error(`no property ${name}`);
@@ -104,7 +104,7 @@ describe("theorem names", () => {
     const sp = readSpecs({
       module: src,
       spec: 'import { forall } from "eutaxy/spec";\nimport { f } from "./m.ts";\nexport const a$b = forall(f, { ensures: (x) => f(x) === x });\nexport const a_b = forall(f, { ensures: (x) => f(x) === x });',
-      moduleSpecifiers: ["./m.ts"],
+      modulePath: "/virtual/m.ts",
     });
     const emitted = emitModule(
       readSubset(src),
@@ -158,7 +158,7 @@ describe("ident and value", () => {
 
 describe("review findings", () => {
   const read = (spec: string) =>
-    readSpecs({ module: source, spec, moduleSpecifiers: ["./domain.ts"] }).functions.flatMap(
+    readSpecs({ module: source, spec, modulePath: "/virtual/domain.ts" }).functions.flatMap(
       (f) => f.properties,
     );
 
@@ -209,7 +209,7 @@ export const p = forall(take, {
 
 describe("review findings, second round", () => {
   const read = (spec: string) =>
-    readSpecs({ module: source, spec, moduleSpecifiers: ["./domain.ts"] }).functions.flatMap(
+    readSpecs({ module: source, spec, modulePath: "/virtual/domain.ts" }).functions.flatMap(
       (f) => f.properties,
     );
 
@@ -234,7 +234,7 @@ export const p = forall(take, {
     const specs = readSpecs({
       module: src,
       spec: 'import { forall } from "eutaxy/spec";\nimport { one } from "./m.ts";\nexport const isOne = forall(one, { ensures: () => one() === 1 });',
-      moduleSpecifiers: ["./m.ts"],
+      modulePath: "/virtual/m.ts",
     });
     const m = readSubset(src);
     const emitted = emitModule(
@@ -277,5 +277,14 @@ export function g($xs: readonly number[]): number { if ($xs.length === 0) return
     const lean = emitModule(m, []).source;
     expect(lean).toContain("«nv_i$»");
     expect(lean).toContain("| «vh_$xs» :: «vt_$xs» =>");
+  });
+});
+
+describe("identifiers", () => {
+  test("names Lean cannot spell are quoted injectively: guillemets and % never meet", () => {
+    expect(ident.record("Plain")).toBe("R_Plain");
+    expect(ident.record("a»b")).not.toBe(ident.record("a%bbb"));
+    expect(ident.record("a«b")).not.toBe(ident.record("a%abb"));
+    expect(ident.record("a»b")).not.toContain("»b");
   });
 });

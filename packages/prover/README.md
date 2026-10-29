@@ -30,38 +30,48 @@ engine proves against a simulator counterexample, the verdict unchanged
 with a note when an engine fell short). Nothing here spawns an engine.
 
 **The reader** (`@eutaxy/prover/reader`, a subpath so workerd never loads
-it). `readSpecs` reads a module and its spec file: the exported functions
-and their parameter types (`function` declarations and `const` arrows,
-through `readType`, which reads primitives, literals, `null`, type
-literals, the module's `interface` and `type` declarations with type
-parameters substituted, unions of them, and arrays of any of them (`T[]`,
-`readonly T[]`, `Array<T>`, `ReadonlyArray<T>`), and marks the rest
-`unknown`),
-every `export const name = forall(f, { sample, when, ensures })` and `total(f)`
-with the combinators imported from `eutaxy/spec` and `f` from the module,
-the arrows kept as text, and the precondition's conjuncts about one
-parameter as that binder's hint (`hintsOf`). `readSubset` and
-`readExpression` read the subset every first-party engine translates:
-exported functions over `number`, `boolean` and `string` (string-literal
-unions read as string), the module's record types, nullable types and
-tagged unions declared as aliases, returning any of those, with `const`,
-`if` and early returns, `+ - *`, `+` joining strings, comparisons,
-`=== !==` (against `null` too, which narrows the tested name where the
-check holds: `narrow` nodes, `insertNarrows`, `narrowsOf`), `&& || !`, the
-conditional operator, `Number.isInteger`, string and record literals,
-field reads (a union's tag) and calls to the module's own functions; a
-function outside it, or calling one, is reported with the construct and
-the line, and the rest of the module still goes through. `fits` is the
+it) reads through the TypeScript compiler's API (`typescript`, a peer
+dependency at 7.1 or later; one compiler process per Node process, a
+program per read over an in-memory layer of the files being read, so
+their imports resolve as the user's compiler resolves them). `readSpecs`
+reads a module and its spec file: the exported functions and their
+parameter types (`function` declarations and `const` arrows, the types as
+the compiler resolves them, so an alias declared later, a generic alias
+instantiated or a type imported from another file reads as its
+structure; primitives, literals, `null`, records named as declared or as
+the compiler prints an inline one, unions and arrays, the rest
+`unknown`), every `export const name = forall(f, { sample, when,
+ensures })` and `total(f)` with the combinators imported from
+`eutaxy/spec` and `f` imported from the module (the import resolved to
+the module's file), the arrows kept as text, and the precondition's
+conjuncts about one parameter as that binder's hint (`hintsOf`).
+`readSubset` and `readExpression` read the subset every first-party
+engine translates: exported functions over `number`, `boolean` and
+`string` (string-literal unions read as string), record types (a declared
+one by its name, an inline or instantiated one by its printed form), nullable types and tagged unions, lists of any of
+those, returning any of those, with `const`, `if` and early returns,
+`+ - *`, `+` joining strings, comparisons, `=== !==` (against `null` too,
+which narrows the tested name where the check holds: `narrow` nodes,
+`insertNarrows`, `narrowsOf`), `&& || !`, the conditional operator,
+`Number.isInteger`, string, record and array literals (a record literal
+typed by its context where the compiler gives one, so the declared return
+type picks between aliases of one shape), field reads (a union's tag),
+list methods and calls to the module's own functions; a function outside
+it, or calling one, is reported with the construct and the line, and the
+rest of the module still goes through. A function the module assigns to,
+or any direct `eval`, puts what it may rebind outside. `fits` is the
 subset's assignability (a member where its union is, `null` or the inner
 type where a nullable is); `restrictModule` is the module as an engine
 that takes fewer types sees it. `readArrowBody` reads a spec file's arrow
-(expression or block body) in a scope of binder types, `renameVars`
-renames its parameters to the binders', `typeOf` types an expression.
-`tokenize` is the TypeScript-shaped tokenizer under all of it.
+(expression or block body) from its text in a scope of binder types,
+`renameVars` renames its parameters to the binders', `typeOf` types an
+expression. `closeCompiler` stops the compiler process.
 
-**May import.** `@eutaxy/core`, `@eutaxy/spec`. Only these are declared in `package.json`, and
+**May import.** `@eutaxy/core`, `@eutaxy/spec`, and the compiler API
+(`typescript/sync`, `typescript/ast`, `typescript/fs`) from the reader
+alone. Only these are declared in `package.json`, and
 pnpm links only declared workspace dependencies, so an import of any other
 package does not resolve. The project references in `tsconfig.json` mirror the
 list; a test keeps the two in sync with the design.
 
-**Phase.** v0.5 (`CHECKED`), v0.6 (`TESTED`, `PROVEN`, aggregation), v0.7 (the reader, typed binders). See `docs/design.md` and `docs/roadmap.md`.
+**Phase.** v0.5 (`CHECKED`), v0.6 (`TESTED`, `PROVEN`, aggregation), v0.7 (the reader, typed binders), v0.9 (the reader on the compiler API). See `docs/design.md` and `docs/roadmap.md`.

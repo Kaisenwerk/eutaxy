@@ -127,6 +127,7 @@ export function prepare(input: ProveInput): Prepared {
     readSubset(
       input.source,
       fns.map((f) => f.name),
+      input.modulePath === undefined ? {} : { path: input.modulePath },
     ),
     leanTakes,
     "nullable types and tagged unions are not in the Lean engine's subset yet",

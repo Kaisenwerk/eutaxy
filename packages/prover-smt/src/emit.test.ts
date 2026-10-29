@@ -35,7 +35,7 @@ export const c = forall(take, { ensures: (balance) => take(balance, 1) === take(
 export const d = forall(one, { ensures: () => one() === 1 });
 `;
 const module = readSubset(source);
-const specs = readSpecs({ module: source, spec: specSource, moduleSpecifiers: ["./domain.ts"] });
+const specs = readSpecs({ module: source, spec: specSource, modulePath: "/virtual/domain.ts" });
 const prop = (name: string): Property => {
   const p = specs.functions.flatMap((f) => f.properties).find((x) => x.name === name);
   if (!p) throw new Error(`no property ${name}`);
@@ -69,7 +69,7 @@ describe("terms", () => {
   test("symbols: simple when they can be, quoted otherwise", () => {
     expect(symbol("f_decide")).toBe("f_decide");
     expect(symbol("v_λ")).toBe("|v_λ|");
-    expect(symbol("a|b")).toBe("|a_b|");
+    expect(symbol("a|b")).toBe("a%7cb");
   });
 });
 
@@ -167,7 +167,7 @@ describe("review findings", () => {
     const sp = readSpecs({
       module: src,
       spec: 'import { forall } from "eutaxy/spec";\nimport { pick } from "./m.ts";\nexport const p = forall(pick, { ensures: (s) => pick(s) === "a" || pick(s) === "b" });',
-      moduleSpecifiers: ["./m.ts"],
+      modulePath: "/virtual/m.ts",
     });
     const m = readSubset(src);
     const [p] = sp.functions.flatMap((f) => f.properties);
@@ -262,7 +262,7 @@ export function decideAccess(status: "invited" | "active" | "disabled" | null): 
 import { admit, decideAccess } from "./m.ts";
 export const admits = forall(admit, { when: (c) => c !== null && !c.locked, ensures: (c, m) => admit(c, m).ok === m });
 export const sendCode = forall(decideAccess, { ensures: (s) => decideAccess(s) === "send_code" || s === null || s === "disabled" });`,
-      moduleSpecifiers: ["./m.ts"],
+      modulePath: "/virtual/m.ts",
     });
     expect(sp.errors).toEqual([]);
     const [admits, sendCode] = sp.functions.flatMap((f) => f.properties);
@@ -362,7 +362,7 @@ export function tagOf(u: U): string { return u.t; }
 import { onlyA, tagOf } from "./m.ts";
 export const a = forall(onlyA, { ensures: (x) => onlyA(x) === x.n });
 export const tags = forall(tagOf, { ensures: (u) => tagOf(u) === "a" || tagOf(u) === "b" });`,
-      moduleSpecifiers: ["./m.ts"],
+      modulePath: "/virtual/m.ts",
     });
     expect(sp.errors).toEqual([]);
     const [a, tags] = sp.functions.flatMap((f) => f.properties);
@@ -373,5 +373,17 @@ export const tags = forall(tagOf, { ensures: (u) => tagOf(u) === "a" || tagOf(u)
     expect(propertyScript(tags, m).script).toContain(
       "(assert (or (and (is-mk_A v_u) (= (fld.A.t v_u) (seq.unit #x0061))) (and (is-mk_B v_u) (= (fld.B.t v_u) (seq.unit #x0062)))))",
     );
+  });
+});
+
+describe("symbol", () => {
+  test("quotes what SMT-LIB cannot spell, injectively: names differing by | or \\ stay apart", () => {
+    expect(symbol("plain_name")).toBe("plain_name");
+    expect(symbol('Box<"a|b">')).not.toBe(symbol('Box<"a_b">'));
+    expect(symbol('Box<"a\\b">')).not.toBe(symbol('Box<"a_b">'));
+    expect(symbol('Box<"a|b">').slice(1, -1)).not.toContain("|");
+    // A quoted symbol and a simple one spelled alike are one symbol to SMT-LIB: % is escaped always.
+    expect(symbol("a%7cb")).not.toBe(symbol("a|b").slice(1, -1));
+    expect(symbol("a%7cb")).not.toBe(symbol("a|b"));
   });
 });

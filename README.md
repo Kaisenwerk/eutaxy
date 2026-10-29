@@ -54,10 +54,12 @@ declares exactly that, and pnpm links nothing else.
 ## Installing
 
 ```sh
-pnpm add -D eutaxy vitest @cloudflare/vitest-plugin
+pnpm add -D eutaxy vitest @cloudflare/vitest-plugin typescript@7.1.0-beta
 ```
 
-Requires Node 24. Published as `eutaxy` on npm. A `--prover` engine also
+Requires Node 24 and TypeScript 7.1 (the beta until it is released): the
+spec reader asks your compiler for the types of your functions. Published
+as `eutaxy` on npm. A `--prover` engine also
 needs its pinned toolchain on the machine: Lean through
 [elan](https://elan.lean-lang.org) for `lean`, Z3 5.3.2 on the PATH for
 `smt`. Without it that engine's properties are `UNKNOWN` (unavailable),

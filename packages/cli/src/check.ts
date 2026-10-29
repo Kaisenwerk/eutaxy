@@ -97,6 +97,7 @@ export async function proveSpecs(
           source,
           specs: found.specs,
           functions: withSpecs,
+          modulePath: found.path,
           specPath: found.specPath,
         }),
       });

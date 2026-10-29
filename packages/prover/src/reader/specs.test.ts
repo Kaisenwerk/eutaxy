@@ -22,8 +22,7 @@ function hidden(x: number): number { return x; }
 export { hidden as shown };
 `;
 
-const read = (spec: string) =>
-  readSpecs({ module, spec, moduleSpecifiers: ["./domain.ts", "./domain"] });
+const read = (spec: string) => readSpecs({ module, spec, modulePath: "/virtual/domain.ts" });
 
 describe("readSpecs", () => {
   test("forall over a function declaration: binders are its typed parameters, named as ensures names them", () => {
@@ -79,11 +78,12 @@ export const shownIs = spec.forall(domain.shown, { ensures: (x) => domain.shown(
     const byName = Object.fromEntries(specs.functions.map((f) => [f.name, f]));
     expect(byName["decideAccess"]?.params[0]?.type).toEqual({
       kind: "union",
+      // Members in the compiler's order, not the declaration's.
       members: [
-        { kind: "literal", value: "invited" },
+        { kind: "null" },
         { kind: "literal", value: "active" },
         { kind: "literal", value: "disabled" },
-        { kind: "null" },
+        { kind: "literal", value: "invited" },
       ],
     });
     expect(byName["judge"]?.params.map((p) => p.type)).toEqual([
@@ -156,7 +156,7 @@ export const p = forall(g, {
   when: (n) => 0n <= n && n <= 100000000000000000000000000000000n,
   ensures: () => true,
 });`,
-      moduleSpecifiers: ["./domain.ts"],
+      modulePath: "/virtual/domain.ts",
     });
     expect(big.functions[0]?.properties[0]?.binders[0]?.hint).toEqual({
       lower: { value: "1000000n", inclusive: true },
@@ -223,11 +223,19 @@ export const p = forall(decideRefund, { ensures: () => true });
       module:
         "export function f(a?: number, { b }: { b: string }, ...rest: number[]): number { return 1; }",
       spec: 'import { forall } from "eutaxy/spec";\nimport { f } from "./m.ts";\nexport const p = forall(f, { ensures: () => true });',
-      moduleSpecifiers: ["./m.ts"],
+      modulePath: "/virtual/m.ts",
     });
     expect(specs.functions[0]?.params).toEqual([
       { name: "a", type: { kind: "union", members: [{ kind: "number" }, { kind: "undefined" }] } },
-      { name: null, type: { kind: "record", fields: [{ name: "b", type: { kind: "string" } }] } },
+      // An inline record type is named as the compiler prints it.
+      {
+        name: null,
+        type: {
+          kind: "record",
+          name: "{ b: string; }",
+          fields: [{ name: "b", type: { kind: "string" } }],
+        },
+      },
       { name: null, type: { kind: "unknown", text: "...rest" } },
     ]);
     expect(specs.functions[0]?.properties[0]?.binders.map((b) => b.name)).toEqual([
@@ -235,6 +243,19 @@ export const p = forall(decideRefund, { ensures: () => true });
       "arg1",
       "arg2",
     ]);
+  });
+});
+
+describe("review findings on the compiler-backed reader", () => {
+  test("a rest parameter in an arrow has no name: the binder keeps the function's", () => {
+    const specs = readSpecs({
+      module: "export function f(xs: readonly number[]): number { return xs.length; }",
+      spec: 'import { forall } from "eutaxy/spec";\nimport { f } from "./m.ts";\nexport const p = forall(f, { ensures: (...xs) => xs.length < 1 });',
+      modulePath: "/virtual/m.ts",
+    });
+    expect(specs.errors).toEqual([]);
+    expect(specs.functions[0]?.properties[0]?.ensures?.params).toEqual([null]);
+    expect(specs.functions[0]?.properties[0]?.binders.map((b) => b.name)).toEqual(["xs"]);
   });
 });
 
@@ -280,7 +301,7 @@ describe("review findings", () => {
       const specs = readSpecs({
         module,
         spec: 'import { forall } from "eutaxy/spec";\nimport { f } from "./m.ts";\nexport const p = forall(f, { ensures: (n) => f(n) === n });',
-        moduleSpecifiers: ["./m.ts"],
+        modulePath: "/virtual/m.ts",
       });
       expect(specs.errors, module).toEqual([]);
       expect(specs.functions.map((fn) => fn.name)).toEqual(["f"]);
@@ -303,6 +324,19 @@ export const p = forall(decide, { ensures: (c, r, a) => decide(c, r, a).ok || sh
 });
 
 describe("review findings, second round", () => {
+  test("a spec export wrapped in satisfies, as, a non-null assertion or parentheses is read", () => {
+    const specs = read(`
+import { type Forall, forall } from "eutaxy/spec";
+import { decideRefund } from "./domain.ts";
+export const a = forall(decideRefund, { ensures: () => true }) satisfies Forall<typeof decideRefund>;
+export const b = forall(decideRefund, { ensures: () => true }) as Forall<typeof decideRefund>;
+export const c = forall(decideRefund, { ensures: () => true })!;
+export const d = (forall(decideRefund, { ensures: () => true }));
+`);
+    expect(specs.errors).toEqual([]);
+    expect(specs.functions[0]?.properties.map((p) => p.name)).toEqual(["a", "b", "c", "d"]);
+  });
+
   test("a spec export with a type annotation is read, not skipped", () => {
     const specs = read(`
 import { type Forall, forall } from "eutaxy/spec";

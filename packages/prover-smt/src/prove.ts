@@ -102,6 +102,7 @@ export function prepare(input: ProveInput): Prepared {
     readSubset(
       input.source,
       fns.map((f) => f.name),
+      input.modulePath === undefined ? {} : { path: input.modulePath },
     ),
     (t) => t.kind !== "list" && t.kind !== "nothing",
     "arrays are not in this engine's subset (the Lean engine takes them)",

@@ -11,5 +11,11 @@
   "dependencies": {
     "@eutaxy/core": "workspace:*",
     "@eutaxy/spec": "workspace:*"
+  },
+  "peerDependencies": {
+    "typescript": ">=7.1.0-beta"
+  },
+  "devDependencies": {
+    "typescript": "7.1.0-beta"
   }
 }

@@ -1,11 +1,10 @@
-// @eutaxy/prover/reader: modules and spec files read into SpecIR, and the pure TypeScript subset read into the tree every engine shares. See ../../README.md.
+// @eutaxy/prover/reader: modules and spec files read into SpecIR, and the pure TypeScript subset read into the tree every engine shares, through the TypeScript compiler's API. See ../../README.md.
+export { closeCompiler } from "./compiler.ts";
 export { hintsOf, type ReadSpecsInput, readSpecs } from "./specs.ts";
 export {
   type BinaryOp,
   type CalleeSignature,
   children,
-  type Declaration,
-  type Declared,
   describe,
   type Expr,
   type Field,
@@ -19,6 +18,7 @@ export {
   type OutsideFunction,
   OutsideSubset,
   type Param,
+  type ReadSubsetOptions,
   type RecordType,
   readArrowBody,
   readExpression,
@@ -32,11 +32,3 @@ export {
   typeOf,
   type UnionType,
 } from "./subset.ts";
-export {
-  type Token,
-  TokenizeError,
-  type TokenKind,
-  templateSubstitutions,
-  tokenize,
-} from "./tokens.ts";
-export { readType, type TypeDeclaration, type TypeEnv, typeDeclarations, union } from "./types.ts";

@@ -1,5 +1,12 @@
 import { describe, expect, test } from "vitest";
-import { listKinds, readExpression, readSubset, restrictModule } from "./subset.ts";
+import {
+  type Expr,
+  listKinds,
+  readExpression,
+  readSubset,
+  renameVars,
+  restrictModule,
+} from "./subset.ts";
 
 const refund = `
 export interface RefundDecision {
@@ -54,15 +61,18 @@ describe("readSubset", () => {
           right: { kind: "var", name: "captured" },
         },
       },
+      // Each literal carries the type its context gives it: the declared return type.
       ifTrue: {
         kind: "record",
         fields: [
           { name: "ok", value: { kind: "bool", value: false } },
           { name: "refunded", value: { kind: "var", name: "refunded" } },
         ],
+        type: { kind: "record", name: "RefundDecision" },
       },
       ifFalse: {
         kind: "record",
+        type: { kind: "record", name: "RefundDecision" },
         fields: [
           { name: "ok", value: { kind: "bool", value: true } },
           {
@@ -169,7 +179,7 @@ export function fine(n: number): number { return n; }
     ["export function f(x: string): string { return `${x}`; }", "a template literal"],
     ['export function f(x: string): boolean { return x === "\\ud83d"; }', "lone surrogate"],
     ['export function f(x: string): boolean { return x === "\\101"; }', "escape sequence"],
-    ['export function f(x: string): boolean { return x === "\\u{110000}"; }', "beyond U+10FFFF"],
+    ['export function f(x: string): boolean { return x === "\\u{110000}"; }', "0x10FFFF"],
     ["export function f(x: number): number { return x / 2; }", "the / operator"],
     ["export function f(x: number): number { return x % 2; }", "the % operator"],
     ["export function f(x: number): number { return 1.5; }", "numeric literal 1.5"],
@@ -178,8 +188,6 @@ export function fine(n: number): number { return n; }
     ["export function f(x: number): number { if (x > 0) return 1; }", "does not return"],
     ["export function f(x: number): number { return x; return x; }", "statements after a return"],
     ["export function f(x: number): number { return 'a' + 1; }", "+ on a string and a int"],
-    ["export function f(x: ReadonlyArray<number>): number { return 1; }", "ReadonlyArray<…>"],
-    ["export function f(x: readonly number): number { return 1; }", "readonly before a type"],
     ["export function f(xs: readonly number[]): number { return xs[1] ?? 0; }", "other than xs[0]"],
     [
       "export function f(xs: readonly number[]): readonly number[] { return xs.slice(2); }",
@@ -415,7 +423,7 @@ export function b(xs: readonly number[]): number { if (xs.length === 0) return 0
     expect(m.outside.find((o) => o.name === "f")?.message).toContain(reason);
   });
 
-  test("a function used as a value anywhere is not trusted, and neither are its callers", () => {
+  test("a function assigned anywhere in the module is not trusted, and neither are its callers", () => {
     const m = readSubset(`
 export function f(x: number): number { return x; }
 export function g(x: number): number { return f(x); }
@@ -427,8 +435,8 @@ export function h(x: number): number { return x; }
       ["f", 4],
       ["g", 3],
     ]);
-    expect(m.outside[0]?.message).toContain("is used as a value in the module");
-    // Every assignment form, every alias, in a block, a body or a template substitution.
+    expect(m.outside[0]?.message).toContain("is assigned in the module");
+    // Every assignment form, in a block, a body or a template substitution, spelled with an escape too.
     for (const line of [
       "f &&= (x: number): number => x + 1;",
       "[f] = [(x: number): number => x + 1];",
@@ -440,14 +448,12 @@ export function h(x: number): number { return x; }
       "f! = (x: number): number => x + 1;",
       "(f)! = (x: number): number => x + 1;",
       "f as unknown = (x: number): number => x + 1;",
+      "(<(x: number) => number>f) = (x: number): number => x + 1;",
       "if (true) { f = (x: number): number => x + 1; }",
       "export function g(x: number): number { f = g; return x; }",
-      "const alias = f;",
-      "[1].map(f);",
       // biome-ignore lint/suspicious/noTemplateCurlyInString: the source under test contains a template literal on purpose
-      "const s = `${f}`;",
-      "const o = { f };",
-      "f`tag`;",
+      "const s = `${(f = (x: number): number => x + 1)}`;",
+      "\\u0066 = (x: number): number => x + 1;",
     ]) {
       const m2 = readSubset(`export function f(x: number): number { return x; }\n${line}`);
       expect(
@@ -455,11 +461,73 @@ export function h(x: number): number { return x; }
         line,
       ).not.toContain("f");
     }
-    // A call, a property of something else, an object key or a new binding is not such a use.
+    // What runs under the name is still the declaration when it is called, aliased, passed on,
+    // read, used as an object key, or when a local of the same name is assigned.
     const fine = readSubset(
-      "export function f(x: number): number { return x; }\nexport function g(x: number): number { return f(x); }\nconst o = { f: 1 }; o.f = 2; o?.f;",
+      [
+        "export function f(x: number): number { return x; }",
+        "export function g(x: number): number { return f(x); }",
+        "const o = { f: 1 }; o.f = 2; o?.f;",
+        "const alias = f;",
+        "[1].map(f);",
+        // biome-ignore lint/suspicious/noTemplateCurlyInString: the source under test contains a template literal on purpose
+        "const s = `${f}`;",
+        "const p = { f };",
+        "function k(): void { let f = 1; f = 2; }",
+      ].join("\n"),
     );
     expect(fine.functions.map((fn) => fn.name)).toEqual(["f", "g"]);
+  });
+
+  test("review findings on the compiler-backed reader: async callbacks, shorthand assignment targets, recursive arrays, contextual types kept", () => {
+    // An async callback returns a promise, which is truthy: not the boolean the model computes.
+    const asyncCb = readSubset(
+      "export function f(xs: readonly number[]): boolean { return xs.some(async (x) => x > 0); }",
+    );
+    expect(asyncCb.outside[0]?.message).toContain("async");
+    // A shorthand destructuring assignment writes the function's binding.
+    const shorthand = readSubset(
+      "export function f(x: number): number { return x; }\n({ f } = { f: (x: number): number => x + 1 });",
+    );
+    expect(shorthand.functions).toEqual([]);
+    expect(shorthand.outside[0]?.message).toContain("is assigned in the module");
+    // A type holding itself through an array is refused, not looped over.
+    const recursive = readSubset(
+      "export type R = R[];\nexport function f(x: R): number { return 0; }",
+    );
+    expect(recursive.outside[0]?.message).toContain("holds itself");
+    // A literal in a callback: the compiler's context is the literal's own inferred type, which is
+    // no declaration; the literal is matched against the declared records as before.
+    const inferred = readSubset(
+      "export interface A { n: number }\nexport function f(xs: readonly number[]): readonly A[] { return xs.map((n) => ({ n })); }",
+    );
+    expect(inferred.outside).toEqual([]);
+    expect(inferred.records.map((r) => r.name)).toEqual(["A"]);
+    // One inline type written twice is one record.
+    const twice = readSubset("export function f(x: { n: number }): { n: number } { return x; }");
+    expect(twice.outside).toEqual([]);
+    expect(twice.records.map((r) => r.name)).toEqual(["{ n: number; }"]);
+    // The context's type survives narrowing: a declared record and an inline one of the same shape.
+    const same = readSubset(
+      "export interface A { n: number }\nexport function f(x: number | null): A { if (x === null) return { n: 0 }; return { n: x }; }\nexport function g(): { n: number } { return { n: 0 }; }",
+    );
+    expect(same.outside).toEqual([]);
+    expect(same.functions.map((fn) => [fn.name, fn.returns])).toEqual([
+      ["f", { kind: "record", name: "A" }],
+      ["g", { kind: "record", name: "{ n: number; }" }],
+    ]);
+    const body = same.functions[0]?.body;
+    expect(body?.kind === "cond" && body.ifTrue.kind === "record" && body.ifTrue.type).toEqual({
+      kind: "record",
+      name: "A",
+    });
+    const renamed = renameVars(same.functions[0]?.body as Expr, new Map([["x", "y"]]));
+    expect(
+      renamed.kind === "cond" && renamed.ifTrue.kind === "record" && renamed.ifTrue.type,
+    ).toEqual({
+      kind: "record",
+      name: "A",
+    });
   });
 
   test("a direct eval anywhere puts the whole module outside; an indirect one does not", () => {
@@ -484,24 +552,15 @@ export function h(x: number): number { return x; }
     expect(indirect.functions.map((fn) => fn.name)).toEqual(["f"]);
   });
 
-  test("an identifier escape, or source the scanner cannot read, puts the module outside", () => {
-    const escaped = readSubset(
-      "export function f(x: number): number { return x; }\n\\u0066 = (x: number): number => x + 1;",
-    );
-    expect(escaped.functions).toEqual([]);
-    expect(escaped.outside[0]?.message).toContain("identifier escape");
-    const inTemplate = readSubset(
-      // biome-ignore lint/suspicious/noTemplateCurlyInString: the source under test contains a template literal on purpose
-      "export function f(x: number): number { return x; }\nconst s = `${\\u0066 = (x: number): number => x + 1}`;",
-    );
-    expect(inTemplate.functions).toEqual([]);
+  test("source the compiler cannot parse puts every function outside, named or not", () => {
     const broken = readSubset(
       'export function f(x: number): number { return x; }\nconst s = "unterminated',
-      ["f"],
+      ["g"],
     );
     expect(broken.functions).toEqual([]);
     expect(broken.outside).toEqual([
-      { name: "f", line: 0, message: expect.stringContaining("could not be tokenized") },
+      { name: "f", line: 0, message: expect.stringContaining("could not be parsed") },
+      { name: "g", line: 0, message: expect.stringContaining("could not be parsed") },
     ]);
   });
 
@@ -565,18 +624,22 @@ export function b(x: number): B { return { v: x > 0 }; }
 export function wrong(x: number): A { return { v: x > 0 }; }
 export function two(x: number): C { return { v: x }; }
 `);
-    // A and C have the same fields, so a literal of those fields fits both: a and two are refused alike.
-    expect(m.functions.map((fn) => fn.name)).toEqual(["b"]);
-    // { v: x > 0 } fits B, so wrong is typed as returning B against its declared A.
+    // A and C have the same fields; the declared return type tells a's literal from two's.
+    expect(m.functions.map((fn) => fn.name)).toEqual(["a", "b", "two"]);
+    expect(m.functions.map((fn) => fn.returns)).toEqual([
+      { kind: "record", name: "A" },
+      { kind: "record", name: "B" },
+      { kind: "record", name: "C" },
+    ]);
+    // { v: x > 0 } is typed against its context, A, whose field v is a number.
     expect(m.outside.find((o) => o.name === "wrong")?.message).toBe(
-      "wrong returns a B but declares A",
+      "field v of a A literal holds a bool, not a int",
     );
-    const only = readSubset(
-      "export interface A { v: number }\nexport function f(x: number): A { return { v: x > 0 }; }",
+    // Without a context, a literal of fields two records share is ambiguous.
+    const bare = readSubset(
+      "export interface A { v: number }\nexport interface C { v: number }\nexport function f(x: number): number { const r = { v: x }; return r.v; }",
     );
-    expect(only.outside[0]?.message).toBe("field v of a A literal holds a bool, not a int");
-    expect(m.outside.find((o) => o.name === "a")?.message).toContain("matches A and C alike");
-    expect(m.outside.find((o) => o.name === "two")?.message).toContain("matches A and C alike");
+    expect(bare.outside[0]?.message).toContain("matches A and C alike");
     const annotated = readSubset(
       "export function f(x: number): number { const y: boolean = x + 1; return x; }",
     );

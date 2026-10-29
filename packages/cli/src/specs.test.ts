@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
-import { findSpecModules, moduleSpecifiers, specFiles, specKey } from "./specs.ts";
+import { findSpecModules, specFiles, specKey } from "./specs.ts";
 
 describe("findSpecModules and specFiles", () => {
   test("every spec file beside its module, read into specs; an orphan spec file is an error entry", () => {
@@ -34,14 +34,6 @@ describe("findSpecModules and specFiles", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
-  });
-
-  test("a spec file may name its module with the extension, without it, or as .js", () => {
-    expect(moduleSpecifiers("/x/core/domain.ts")).toEqual([
-      "./domain.ts",
-      "./domain",
-      "./domain.js",
-    ]);
   });
 
   test("keys normalize the way a scenario names a module", () => {

@@ -35,9 +35,14 @@ export const STR = "(Seq (_ BitVec 16))";
 
 /** A name as an SMT-LIB symbol: simple when it can be, quoted with | otherwise. */
 export function symbol(name: string): string {
-  return /^[A-Za-z~!@$%^&*_+=<>.?/-][A-Za-z0-9~!@$%^&*_+=<>.?/-]*$/.test(name)
-    ? name
-    : `|${name.replace(/[|\\]/g, "_")}|`;
+  // A quoted symbol may hold anything but `|` and `\`: those are escaped as `%7c` and `%5c`, with `%`
+  // itself as `%25` first, in every name, so two names never meet in one symbol (a quoted symbol and
+  // a simple one spelled alike are the same symbol; a record is named as the compiler prints its
+  // type, which may spell any of them).
+  const escaped = name.replace(/%/g, "%25").replace(/\\/g, "%5c").replace(/\|/g, "%7c");
+  return /^[A-Za-z~!@$%^&*_+=<>.?/-][A-Za-z0-9~!@$%^&*_+=<>.?/-]*$/.test(escaped)
+    ? escaped
+    : `|${escaped}|`;
 }
 
 /** TypeScript names as SMT symbols that cannot clash with each other or with the theories' names. */

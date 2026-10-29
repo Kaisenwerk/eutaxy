@@ -19,7 +19,7 @@ const base: ScenarioSpec = {
 const domainSpecs = readSpecs({
   module: "export function f(x: number) { return x; }",
   spec: 'import { forall } from "eutaxy/spec";\nimport { f } from "./domain.ts";\nexport const positive = forall(f, { when: (x) => x > 0, ensures: (x) => f(x) > 0 });',
-  moduleSpecifiers: ["./domain.ts"],
+  modulePath: "/virtual/domain.ts",
 });
 
 describe("globKey", () => {

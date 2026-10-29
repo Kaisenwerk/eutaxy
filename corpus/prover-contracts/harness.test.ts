@@ -174,14 +174,14 @@ for (const entry of entries) {
   describe(`${entry}: ${manifest.description}`, () => {
     test("the spec file reads", () => {
       // A spec file that does not read is a broken entry, never a quiet unsupported.
-      expect(readSpecs({ module: source, spec, moduleSpecifiers: ["./domain.ts"] }).errors).toEqual(
+      expect(readSpecs({ module: source, spec, modulePath: "/virtual/domain.ts" }).errors).toEqual(
         [],
       );
     });
 
     test("tested", async () => {
       // The TESTED rung on every property, the spec file loaded as the generated check loads it.
-      const specs = readSpecs({ module: source, spec, moduleSpecifiers: ["./domain.ts"] });
+      const specs = readSpecs({ module: source, spec, modulePath: "/virtual/domain.ts" });
       const props = (await import(pathToFileURL(specPath).href)) as Record<string, unknown>;
       const got: Record<string, Record<string, string>> = {};
       for (const fn of specs.functions)
@@ -204,7 +204,7 @@ for (const entry of entries) {
     test.skipIf("unavailable" in lean && !requireLean)(
       "lean",
       async () => {
-        const specs = readSpecs({ module: source, spec, moduleSpecifiers: ["./domain.ts"] });
+        const specs = readSpecs({ module: source, spec, modulePath: "/virtual/domain.ts" });
         const { subset, checks } = await drawn(dir, source, "lean");
         const extra = checks.map(
           ({ fn, args, result }) =>
@@ -220,7 +220,7 @@ for (const entry of entries) {
     test.skipIf("unavailable" in z3 && !requireZ3)(
       "smt",
       async () => {
-        const specs = readSpecs({ module: source, spec, moduleSpecifiers: ["./domain.ts"] });
+        const specs = readSpecs({ module: source, spec, modulePath: "/virtual/domain.ts" });
         const { subset, checks } = await drawn(dir, source, "smt");
         const extra = checks.map(({ fn, args, result }) => {
           const call =

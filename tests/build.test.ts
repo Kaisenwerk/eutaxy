@@ -95,6 +95,7 @@ describe("published package", () => {
         "@cloudflare/vitest-plugin",
         "@cloudflare/workers-types",
         "@smithy/smithy-client",
+        "typescript",
         "vitest",
       ]);
       const files = run("tar", ["-tzf", join(out, tarball)], root).split("\n");
