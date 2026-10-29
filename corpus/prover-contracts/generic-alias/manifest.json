@@ -1,0 +1,8 @@
+{
+  "description": "A generic alias (Result<T, E>) instantiated in a signature is read as its structure and named as the compiler prints it; the SMT engine proves a claim over its tag and refutes a planted one; the Lean engine reports unions unsupported.",
+  "expect": {
+    "tested": { "judge": { "okIffMatches": "TESTED", "alwaysOk": "REFUTED" } },
+    "lean": { "judge": { "okIffMatches": "unsupported", "alwaysOk": "unsupported" } },
+    "smt": { "judge": { "okIffMatches": "PROVEN", "alwaysOk": "REFUTED" } }
+  }
+}

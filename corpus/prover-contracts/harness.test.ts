@@ -116,14 +116,18 @@ const drawable = (t: SubsetType, engine: "lean" | "smt"): boolean =>
 
 /** The functions the translation can be validated on: in the subset, exported, every parameter drawable. */
 async function drawn(dir: string, source: string, engine: "lean" | "smt") {
-  const subset = readSubset(source);
+  const subset = readSubset(source, undefined, { path: join(dir, "domain.ts") });
   const module = (await import(join(dir, "domain.ts"))) as Record<
     string,
     (...a: unknown[]) => unknown
   >;
   // Any result is compared, as before lists; a list result only where the engine takes lists.
+  // The result must be a value the engine spells too: a drawable type or a record; a union or a
+  // nullable result is not (the Lean engine takes neither, the SMT engine is not asked here).
+  const valued = (t: SubsetType): boolean => drawable(t, engine) || t.kind === "record";
   const checked = (f: (typeof subset.functions)[number]) =>
     f.params.every((p) => drawable(p.type, engine)) &&
+    valued(f.returns) &&
     (engine === "lean" || f.returns.kind !== "list");
   const checks: { fn: (typeof subset.functions)[number]; args: unknown[]; result: unknown }[] = [];
   let functions = 0;
@@ -167,21 +171,21 @@ function outcomes(
 for (const entry of entries) {
   const dir = join(root, entry);
   const manifest = JSON.parse(readFileSync(join(dir, "manifest.json"), "utf8")) as Manifest;
-  const source = readFileSync(join(dir, "domain.ts"), "utf8");
+  // Real paths: a type imported from a file beside the module resolves from where the module is.
+  const modulePath = join(dir, "domain.ts");
+  const source = readFileSync(modulePath, "utf8");
   const spec = readFileSync(join(dir, "domain.props.ts"), "utf8");
   const specPath = join(dir, "domain.props.ts");
 
   describe(`${entry}: ${manifest.description}`, () => {
     test("the spec file reads", () => {
       // A spec file that does not read is a broken entry, never a quiet unsupported.
-      expect(readSpecs({ module: source, spec, modulePath: "/virtual/domain.ts" }).errors).toEqual(
-        [],
-      );
+      expect(readSpecs({ module: source, spec, modulePath }).errors).toEqual([]);
     });
 
     test("tested", async () => {
       // The TESTED rung on every property, the spec file loaded as the generated check loads it.
-      const specs = readSpecs({ module: source, spec, modulePath: "/virtual/domain.ts" });
+      const specs = readSpecs({ module: source, spec, modulePath });
       const props = (await import(pathToFileURL(specPath).href)) as Record<string, unknown>;
       const got: Record<string, Record<string, string>> = {};
       for (const fn of specs.functions)
@@ -204,14 +208,14 @@ for (const entry of entries) {
     test.skipIf("unavailable" in lean && !requireLean)(
       "lean",
       async () => {
-        const specs = readSpecs({ module: source, spec, modulePath: "/virtual/domain.ts" });
+        const specs = readSpecs({ module: source, spec, modulePath });
         const { subset, checks } = await drawn(dir, source, "lean");
         const extra = checks.map(
           ({ fn, args, result }) =>
             `example : ${leanIdent.fn(fn.name)}${args.map((a, i) => ` ${leanValue(a, (fn.params[i] as (typeof fn.params)[number]).type, subset)}`).join("")} = ${leanValue(result, fn.returns, subset)} := by decide`,
         );
         // specPath: a proof file beside the spec file supplies proofs the tactic script does not find.
-        const proofs = await proveWithLean({ source, specs, extra, specPath });
+        const proofs = await proveWithLean({ source, specs, extra, modulePath, specPath });
         expect(outcomes(proofs.results)).toEqual(manifest.expect.lean);
       },
       120_000,
@@ -220,7 +224,7 @@ for (const entry of entries) {
     test.skipIf("unavailable" in z3 && !requireZ3)(
       "smt",
       async () => {
-        const specs = readSpecs({ module: source, spec, modulePath: "/virtual/domain.ts" });
+        const specs = readSpecs({ module: source, spec, modulePath });
         const { subset, checks } = await drawn(dir, source, "smt");
         const extra = checks.map(({ fn, args, result }) => {
           const call =
@@ -229,7 +233,7 @@ for (const entry of entries) {
               : `(${smtIdent.fn(fn.name)} ${args.map((a, i) => smtValue(a, (fn.params[i] as (typeof fn.params)[number]).type, subset)).join(" ")})`;
           return equal(call, smtValue(result, fn.returns, subset), fn.returns, subset);
         });
-        const proofs = await proveWithSmt({ source, specs, specPath, extra });
+        const proofs = await proveWithSmt({ source, specs, modulePath, specPath, extra });
         expect(outcomes(proofs.results)).toEqual(manifest.expect.smt);
       },
       120_000,
