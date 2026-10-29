@@ -14,3 +14,11 @@ export const openAllows = forall(withdraw, {
   when: (a) => !a.frozen,
   ensures: (a, x) => withdraw(a, x).kind === "allow",
 });
+// `||` narrows its right operand where the left fails: there `d` is the other member.
+export const remainingNonNegative = forall(withdraw, {
+  when: (a, x) => Number.isInteger(a.balance) && Number.isInteger(x) && x >= 0,
+  ensures: (a, x) => {
+    const d = withdraw(a, x);
+    return d.kind === "deny" || d.remaining >= 0;
+  },
+});

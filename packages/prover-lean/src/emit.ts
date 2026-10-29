@@ -129,6 +129,8 @@ export function term(e: Expr, scope: ReadonlyMap<string, SubsetType>, env: Env):
     case "null":
     case "narrow":
       return fail("null, which the Lean engine does not take yet");
+    case "narrowTag":
+      return fail("a union, which the Lean engine does not take yet");
     case "neg":
       return `(-${t(e.operand)})`;
     case "not":

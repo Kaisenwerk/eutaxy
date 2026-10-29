@@ -201,7 +201,8 @@ top of the host's files, so binder types are whatever the user's compiler
 resolves them to: an alias declared later in the file, a generic alias
 instantiated, an inline object type, a type imported from another file.
 What stays Eutaxy's is the subset's meaning (its integers and doubles,
-its list model, narrowing, structural recursion, the expression tree the
+its list model, narrowing by a null check or by a union's tag, structural
+recursion, the expression tree the
 engines translate) and the naming of what the engines declare: a declared
 type by its name, an instantiated or inline one as the compiler prints
 it. The engines never touch the compiler API, so the reader is the one

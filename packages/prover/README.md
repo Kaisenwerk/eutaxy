@@ -52,10 +52,13 @@ one by its name, an inline or instantiated one by its printed form), nullable ty
 those, returning any of those, with `const`, `if` and early returns,
 `+ - *`, `+` joining strings, comparisons, `=== !==` (against `null` too,
 which narrows the tested name where the check holds: `narrow` nodes,
-`insertNarrows`, `narrowsOf`), `&& || !`, the conditional operator,
+`insertNarrows`, `narrowsOf`; a test of a union's tag likewise narrows
+the name to that member: `narrowTag` nodes, `tagNarrowsOf`), `&& || !`,
+the conditional operator,
 `Number.isInteger`, string, record and array literals (a record literal
 typed by its context where the compiler gives one, so the declared return
-type picks between aliases of one shape), field reads (a union's tag),
+type picks between aliases of one shape), field reads (on a union, the
+tag, or any field once the tag is tested),
 list methods and calls to the module's own functions; a function outside
 it, or calling one, is reported with the construct and the line, and the
 rest of the module still goes through. A function the module assigns to,

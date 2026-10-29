@@ -2,10 +2,13 @@ import { describe, expect, test } from "vitest";
 import {
   type Expr,
   listKinds,
+  readArrowBody,
   readExpression,
   readSubset,
   renameVars,
   restrictModule,
+  type SubsetType,
+  typeOf,
 } from "./subset.ts";
 
 const refund = `
@@ -891,5 +894,136 @@ export function g(x: boolean): U2 { return x ? { t: "a" } : { t: "c" }; }
     expect(m.outside.find((o) => o.name === "f")?.message).toContain("without a tag");
     expect(m.unions.map((u) => u.name)).toEqual(["U1"]);
     expect(m.outside.find((o) => o.name === "g")?.message).toContain("already a member of U1");
+  });
+});
+
+describe("narrowing by a union's tag", () => {
+  const module = `
+export type Result<T, E> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly error: E };
+export interface Locked { readonly type: "locked"; readonly until: number }
+export type Decision = { readonly kind: "allow"; readonly remaining: number } | { readonly kind: "deny" } | { readonly kind: "defer"; readonly until: number };
+export function valueOr(r: Result<number, Locked>, fallback: number): number {
+  if (r.ok) return r.value;
+  return r.error.until + fallback;
+}
+export function remaining(d: Decision): number {
+  return d.kind === "allow" ? d.remaining : 0;
+}
+export function nonNegative(d: Decision): boolean {
+  return d.kind !== "allow" || d.remaining >= 0;
+}
+export function flipped(r: Result<number, Locked>): number {
+  if (!r.ok) return r.error.until;
+  return r.value;
+}
+export function orBoth(r: Result<number, Locked>, d: Decision): number {
+  if (r.ok && d.kind === "allow") return r.value + d.remaining;
+  return 0;
+}
+export function twoOfThree(d: Decision): number {
+  if (d.kind !== "allow") return d.until;
+  return d.remaining;
+}
+`;
+  const m = readSubset(module);
+
+  test("a tag test narrows the name it guards to the member with that tag, in the branch it guards", () => {
+    expect(m.outside.map((o) => o.name)).toEqual(["twoOfThree"]);
+    expect(m.outside[0]?.message).toContain("not on every member");
+    const valueOr = m.functions.find((f) => f.name === "valueOr")?.body;
+    expect(valueOr).toEqual({
+      kind: "cond",
+      test: { kind: "field", object: { kind: "var", name: "r" }, field: "ok" },
+      ifTrue: {
+        kind: "narrowTag",
+        name: "r",
+        member: "Result<number, Locked>.true",
+        body: { kind: "field", object: { kind: "var", name: "r" }, field: "value" },
+      },
+      ifFalse: {
+        kind: "narrowTag",
+        name: "r",
+        member: "Result<number, Locked>.false",
+        body: {
+          kind: "binary",
+          op: "+",
+          left: {
+            kind: "field",
+            object: { kind: "field", object: { kind: "var", name: "r" }, field: "error" },
+            field: "until",
+          },
+          right: { kind: "var", name: "fallback" },
+        },
+      },
+    });
+    const remaining = m.functions.find((f) => f.name === "remaining")?.body;
+    expect(remaining?.kind === "cond" && remaining.ifTrue).toMatchObject({
+      kind: "narrowTag",
+      name: "d",
+      member: "Decision.allow",
+    });
+    // Three members: the failing branch of `=== "allow"` is no single member, so nothing is narrowed there.
+    expect(remaining?.kind === "cond" && remaining.ifFalse).toEqual({ kind: "int", value: "0" });
+    const nonNegative = m.functions.find((f) => f.name === "nonNegative")?.body;
+    expect(nonNegative?.kind === "binary" && nonNegative.right).toMatchObject({
+      kind: "narrowTag",
+      member: "Decision.allow",
+    });
+    // Two null checks joined by && narrow both names in the guarded branch.
+    const both = readSubset(
+      "export function f(x: number | null, y: number | null): number { if (x !== null && y !== null) return x + y; return 0; }",
+    );
+    expect(both.outside).toEqual([]);
+    const orBoth = m.functions.find((f) => f.name === "orBoth")?.body;
+    expect(orBoth?.kind === "cond" && orBoth.ifTrue).toMatchObject({
+      kind: "narrowTag",
+      name: "r",
+      body: { kind: "narrowTag", name: "d", member: "Decision.allow" },
+    });
+  });
+
+  test("two narrowed members, each nullable, join into their nullable union", () => {
+    const m2 = readSubset(`
+export type U = { readonly ok: true; readonly n: number } | { readonly ok: false; readonly n: number };
+export function f(u: U, b: boolean): U | null { return u.ok ? (b ? u : null) : (b ? u : null); }
+`);
+    expect(m2.outside).toEqual([]);
+  });
+
+  test("a spec arrow's tag test narrows too, and renaming keeps the narrowed name", () => {
+    const scope = new Map<string, SubsetType>([
+      ["r", { kind: "union", name: "Result<number, Locked>" }],
+    ]);
+    const read = readArrowBody(
+      { params: ["r"], body: "r.ok ? r.value >= 0 : r.error.until >= 0", block: false, line: 1 },
+      scope,
+      m,
+      new Map([["valueOr", "valueOr"]]),
+    );
+    expect(read).toMatchObject({
+      kind: "cond",
+      ifTrue: { kind: "narrowTag", name: "r", member: "Result<number, Locked>.true" },
+    });
+    const renamed = renameVars(read, new Map([["r", "res"]]));
+    expect(renamed).toMatchObject({
+      ifTrue: {
+        kind: "narrowTag",
+        name: "res",
+        body: { left: { object: { kind: "var", name: "res" } } },
+      },
+    });
+    expect(
+      typeOf(
+        renamed,
+        new Map([["res", { kind: "union", name: "Result<number, Locked>" }]]),
+        {
+          records: new Map(m.records.map((r) => [r.name, r])),
+          signatures: new Map(),
+        },
+        (msg) => {
+          throw new Error(msg);
+        },
+      ),
+    ).toEqual({ kind: "bool" });
   });
 });

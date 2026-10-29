@@ -29,6 +29,7 @@ export {
   type SubsetModule,
   type SubsetType,
   type TypeContext,
+  tagNarrowsOf,
   typeOf,
   type UnionType,
 } from "./subset.ts";

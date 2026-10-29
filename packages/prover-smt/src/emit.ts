@@ -231,15 +231,25 @@ export function term(
   };
   // A value where `want` is expected: a conditional, a let or a narrowing produce the expected sort
   // themselves; anything else is wrapped in `some` when a nullable is wanted and the value is not one.
-  const coerce = (x: Expr, want: SubsetType): string => {
-    if (x.kind === "cond" || x.kind === "let" || x.kind === "narrow" || x.kind === "null")
-      return t(x, want);
-    const actual = typed(x);
-    const inner = t(x, want);
+  const coerceIn = (x: Expr, want: SubsetType, sc: ReadonlyMap<string, SubsetType>): string => {
+    if (
+      x.kind === "cond" ||
+      x.kind === "let" ||
+      x.kind === "narrow" ||
+      x.kind === "narrowTag" ||
+      x.kind === "null"
+    )
+      return term(x, sc, env, want);
+    const actual = sc === scope ? typed(x) : typeOf(x, sc, env.ctx, fail);
+    const inner = term(x, sc, env, want);
     if (want.kind === "nullable" && actual.kind !== "nullable" && actual.kind !== "null")
       return `(${ident.some(sortName(want.inner, env.module))} ${inner})`;
     return inner;
   };
+  const coerce = (x: Expr, want: SubsetType): string => coerceIn(x, want, scope);
+  // A narrowed body is a value where the narrowing stands: coerced to what is expected there.
+  const narrowed = (body: Expr, inner: ReadonlyMap<string, SubsetType>): string =>
+    expected ? coerceIn(body, expected, inner) : term(body, inner, env);
   switch (e.kind) {
     case "int":
       return numberTerm(Number(e.value));
@@ -258,7 +268,16 @@ export function term(
       const base = sortName(nt.inner, env.module);
       const inner = new Map(scope);
       inner.set(e.name, nt.inner);
-      return `(let ((${ident.variable(e.name)} (${ident.val(base)} ${ident.variable(e.name)}))) ${term(e.body, inner, env, expected)})`;
+      return `(let ((${ident.variable(e.name)} (${ident.val(base)} ${ident.variable(e.name)}))) ${narrowed(e.body, inner)})`;
+    }
+    case "narrowTag": {
+      // A member is of its union's sort: the term is the body's, typed with the name as the member,
+      // so its selectors apply (the guard the node sits under makes the constructor the right one).
+      const nt = scope.get(e.name);
+      if (nt?.kind !== "union") fail(`${e.name} is narrowed by a tag but is not a union`);
+      const inner = new Map(scope);
+      inner.set(e.name, { kind: "record", name: e.member });
+      return narrowed(e.body, inner);
     }
     case "neg":
       return `(fp.neg ${t(e.operand)})`;
@@ -371,7 +390,13 @@ export function emitFunction(f: SubsetFunction, module: SubsetModule): string {
   // The body as a value of the declared return type (`coerce` is local to `term`; the rule is repeated).
   const body = (() => {
     const b = f.body;
-    if (b.kind === "cond" || b.kind === "let" || b.kind === "narrow" || b.kind === "null")
+    if (
+      b.kind === "cond" ||
+      b.kind === "let" ||
+      b.kind === "narrow" ||
+      b.kind === "narrowTag" ||
+      b.kind === "null"
+    )
       return term(b, scope, e, f.returns);
     const actual = typeOf(b, scope, e.ctx, fail);
     const inner = term(b, scope, e, f.returns);

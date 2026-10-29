@@ -92,6 +92,13 @@ export type Expr =
   | { readonly kind: "var"; readonly name: string }
   /** In `body`, `name` (a nullable in scope) stands for its non-null value: inserted where a null check guards. */
   | { readonly kind: "narrow"; readonly name: string; readonly body: Expr }
+  /** In `body`, `name` (a union in scope) is its member `member`: inserted where a test of the union's tag guards. */
+  | {
+      readonly kind: "narrowTag";
+      readonly name: string;
+      readonly member: string;
+      readonly body: Expr;
+    }
   | { readonly kind: "neg"; readonly operand: Expr }
   | { readonly kind: "not"; readonly operand: Expr }
   /** `Number.isInteger(e)`: always true of an integer in the engines' integer model, the real predicate on doubles. */
@@ -237,6 +244,10 @@ function join(a: SubsetType, b: SubsetType, ctx: TypeContext): SubsetType | unde
     if (ua !== undefined && ua === ctx.records.get(b.name)?.union)
       return { kind: "union", name: ua };
   }
+  if (a.kind === "nullable" && b.kind === "nullable") {
+    const inner = join(a.inner, b.inner, ctx);
+    return inner && { kind: "nullable", inner };
+  }
   if (a.kind === "null" && b.kind !== "null") return { kind: "nullable", inner: b };
   if (b.kind === "null" && a.kind !== "null") return { kind: "nullable", inner: a };
   if (a.kind === "nullable" && b.kind !== "null" && b.kind !== "nullable") {
@@ -268,6 +279,8 @@ const isReference = (t: SubsetType): boolean =>
  * (failing).
  */
 export function narrowsOf(test: Expr, holds: boolean): string[] {
+  // A narrowing already inserted around an operand (the right side of `&&`) hides nothing.
+  if (test.kind === "narrow" || test.kind === "narrowTag") return narrowsOf(test.body, holds);
   const isNull = (e: Expr) => e.kind === "null";
   if (test.kind === "binary" && (test.op === "===" || test.op === "!==")) {
     const other = isNull(test.right) ? test.left : isNull(test.left) ? test.right : undefined;
@@ -282,10 +295,94 @@ export function narrowsOf(test: Expr, holds: boolean): string[] {
   return [];
 }
 
+/** The field that tells a union's members apart: literal-typed in every member, with a different literal in each. */
+function tagOf(union: string, ctx: TypeContext): string | undefined {
+  const members = [...ctx.records.values()].filter((rec) => rec.union === union);
+  const first = members[0];
+  if (!first) return undefined;
+  return first.fields
+    .filter((f) => f.literal !== undefined)
+    .map((f) => f.name)
+    .find((name) => {
+      const values = members.map((m) => m.fields.find((f) => f.name === name)?.literal);
+      return (
+        values.every((v) => v !== undefined) &&
+        new Set(values.map((v) => JSON.stringify(v))).size === values.length
+      );
+    });
+}
+
 /**
- * `narrow` nodes inserted where a null check guards: in a conditional's
- * branches, and in the right operand of `&&` and `||`, for each nullable
- * name the test shows to be non-null there.
+ * The names a test, holding or failing, shows to be one member of their
+ * union, with that member: `x.tag === "a"` holding (or `!==` failing)
+ * names the member tagged `"a"`; failing, the other member when the
+ * union has two; `x.ok` alone is the test of a boolean tag; through `!`,
+ * `&&` (holding) and `||` (failing) as null checks are.
+ */
+export function tagNarrowsOf(
+  test: Expr,
+  holds: boolean,
+  scope: ReadonlyMap<string, SubsetType>,
+  ctx: TypeContext,
+): { name: string; member: string }[] {
+  // The union a `x.tag` read is the tag of, with its members by tag value.
+  const tagged = (e: Expr): { name: string; members: readonly RecordType[] } | undefined => {
+    if (e.kind !== "field" || e.object.kind !== "var") return undefined;
+    const t = scope.get(e.object.name);
+    if (t?.kind !== "union" || tagOf(t.name, ctx) !== e.field) return undefined;
+    return {
+      name: e.object.name,
+      members: [...ctx.records.values()].filter((rec) => rec.union === t.name),
+    };
+  };
+  const byTag = (
+    read: { name: string; members: readonly RecordType[] },
+    tag: string,
+    value: string | boolean,
+    isIt: boolean,
+  ): { name: string; member: string }[] => {
+    const same = read.members.filter(
+      (m) => m.fields.find((f) => f.name === tag)?.literal === value,
+    );
+    const chosen = isIt ? same : read.members.filter((m) => !same.includes(m));
+    return chosen.length === 1 ? [{ name: read.name, member: (chosen[0] as RecordType).name }] : [];
+  };
+  if (test.kind === "narrow" || test.kind === "narrowTag")
+    return tagNarrowsOf(test.body, holds, scope, ctx);
+  if (test.kind === "binary" && (test.op === "===" || test.op === "!==")) {
+    const literal = (e: Expr) => (e.kind === "string" || e.kind === "bool" ? e.value : undefined);
+    const [field, value] =
+      literal(test.right) !== undefined
+        ? [test.left, literal(test.right)]
+        : [test.right, literal(test.left)];
+    if (value === undefined || field.kind !== "field") return [];
+    const read = tagged(field);
+    if (!read) return [];
+    return byTag(read, field.field, value, (test.op === "===") === holds);
+  }
+  if (test.kind === "field") {
+    const read = tagged(test);
+    return read ? byTag(read, test.field, holds, true) : [];
+  }
+  if (test.kind === "not") return tagNarrowsOf(test.operand, !holds, scope, ctx);
+  if (test.kind === "binary" && test.op === "&&" && holds)
+    return [
+      ...tagNarrowsOf(test.left, true, scope, ctx),
+      ...tagNarrowsOf(test.right, true, scope, ctx),
+    ];
+  if (test.kind === "binary" && test.op === "||" && !holds)
+    return [
+      ...tagNarrowsOf(test.left, false, scope, ctx),
+      ...tagNarrowsOf(test.right, false, scope, ctx),
+    ];
+  return [];
+}
+
+/**
+ * `narrow` and `narrowTag` nodes inserted where a test guards: in a
+ * conditional's branches, and in the right operand of `&&` and `||`, for
+ * each nullable name the test shows to be non-null there and each union
+ * name it shows to be one member there.
  */
 export function insertNarrows(
   e: Expr,
@@ -297,14 +394,26 @@ export function insertNarrows(
     insertNarrows(x, sc, ctx, fail);
   const wrap = (
     body: Expr,
-    names: readonly string[],
+    test: Expr,
+    holds: boolean,
     sc: ReadonlyMap<string, SubsetType>,
   ): Expr => {
     const inner = new Map(sc);
     let out = body;
-    const nullable = [...new Set(names)].filter((n) => sc.get(n)?.kind === "nullable");
+    const nullable = [...new Set(narrowsOf(test, holds))].filter(
+      (n) => sc.get(n)?.kind === "nullable",
+    );
     for (const n of nullable) inner.set(n, (sc.get(n) as { inner: SubsetType }).inner);
+    // Tag tests are read in the scope null checks leave: `x !== null && x.ok` narrows x twice.
+    const tags: { name: string; member: string }[] = [];
+    for (const t of tagNarrowsOf(test, holds, inner, ctx))
+      if (!tags.some((x) => x.name === t.name)) {
+        tags.push(t);
+        inner.set(t.name, { kind: "record", name: t.member });
+      }
     out = go(out, inner);
+    for (const t of tags.reverse())
+      out = { kind: "narrowTag", name: t.name, member: t.member, body: out };
     for (const n of nullable.reverse()) out = { kind: "narrow", name: n, body: out };
     return out;
   };
@@ -320,23 +429,14 @@ export function insertNarrows(
     case "isInteger":
       return { kind: e.kind, operand: go(e.operand, scope) };
     case "narrow":
+    case "narrowTag":
       return e;
     case "binary": {
       const left = go(e.left, scope);
       if (e.op === "&&")
-        return {
-          kind: "binary",
-          op: e.op,
-          left,
-          right: wrap(e.right, narrowsOf(left, true), scope),
-        };
+        return { kind: "binary", op: e.op, left, right: wrap(e.right, left, true, scope) };
       if (e.op === "||")
-        return {
-          kind: "binary",
-          op: e.op,
-          left,
-          right: wrap(e.right, narrowsOf(left, false), scope),
-        };
+        return { kind: "binary", op: e.op, left, right: wrap(e.right, left, false, scope) };
       return { kind: "binary", op: e.op, left, right: go(e.right, scope) };
     }
     case "cond": {
@@ -344,8 +444,8 @@ export function insertNarrows(
       return {
         kind: "cond",
         test,
-        ifTrue: wrap(e.ifTrue, narrowsOf(test, true), scope),
-        ifFalse: wrap(e.ifFalse, narrowsOf(test, false), scope),
+        ifTrue: wrap(e.ifTrue, test, true, scope),
+        ifFalse: wrap(e.ifFalse, test, false, scope),
       };
     }
     case "call":
@@ -486,6 +586,20 @@ export function typeOf(
         fail(`${e.name} is narrowed but is a ${describe(t)}, not a nullable`);
       return typeOf(e.body, new Map([...scope, [e.name, t.inner]]), ctx, fail);
     }
+    case "narrowTag": {
+      const t = scope.get(e.name);
+      if (!t) fail(`${e.name} is not in scope`);
+      if (t.kind !== "union")
+        fail(`${e.name} is narrowed by a tag but is a ${describe(t)}, not a union`);
+      if (ctx.records.get(e.member)?.union !== t.name)
+        fail(`${e.member} is not a member of ${t.name}`);
+      return typeOf(
+        e.body,
+        new Map([...scope, [e.name, { kind: "record", name: e.member }]]),
+        ctx,
+        fail,
+      );
+    }
     case "binary": {
       const l = typeOf(e.left, scope, ctx, fail);
       const r = typeOf(e.right, scope, ctx, fail);
@@ -583,7 +697,7 @@ export function typeOf(
         const types = members.map((rec) => rec.fields.find((x) => x.name === e.field)?.type);
         if (types.some((t) => t === undefined))
           fail(
-            `field ${e.field} is not on every member of ${o.name} (narrowing by the tag is not in the subset yet)`,
+            `field ${e.field} is not on every member of ${o.name} (test the tag first, which narrows it)`,
           );
         const first = types[0] as SubsetType;
         if (!types.every((t) => sameType(t as SubsetType, first)))
@@ -698,6 +812,7 @@ function boundNames(e: Expr, out = new Set<string>()): Set<string> {
       out.add(e.name);
       return out;
     case "narrow":
+    case "narrowTag":
       out.add(e.name);
       return boundNames(e.body, out);
     case "neg":
@@ -774,6 +889,8 @@ export function renameVars(
       return { kind: "var", name: names.get(e.name) ?? e.name };
     case "narrow":
       return { kind: "narrow", name: names.get(e.name) ?? e.name, body: go(e.body) };
+    case "narrowTag":
+      return { ...e, name: names.get(e.name) ?? e.name, body: go(e.body) };
     case "neg":
     case "not":
     case "isInteger":
@@ -872,6 +989,7 @@ function callees(e: Expr, out = new Set<string>()): Set<string> {
     case "var":
       return out;
     case "narrow":
+    case "narrowTag":
       return callees(e.body, out);
     case "neg":
     case "not":
@@ -1494,6 +1612,7 @@ export function children(e: Expr): Expr[] {
     case "var":
       return [];
     case "narrow":
+    case "narrowTag":
       return [e.body];
     case "neg":
     case "not":
@@ -1535,6 +1654,7 @@ function hasNode(e: Expr, kinds: ReadonlySet<Expr["kind"]>): boolean {
     case "var":
       return false;
     case "narrow":
+    case "narrowTag":
       return hasNode(e.body, kinds);
     case "neg":
     case "not":
@@ -1576,8 +1696,8 @@ export function restrictModule(
   module: SubsetModule,
   takes: (t: SubsetType) => boolean,
   reason: string,
-  /** Expression kinds a function's body may not hold here: by default what nullable types bring. */
-  bodies: ReadonlySet<Expr["kind"]> = new Set(["null", "narrow"]),
+  /** Expression kinds a function's body may not hold here: by default what nullable types and unions bring. */
+  bodies: ReadonlySet<Expr["kind"]> = new Set(["null", "narrow", "narrowTag"]),
 ): SubsetModule {
   // A record with a field the engine does not take is out, and so is a union with such a member, and
   // so, in turn, is a record with a field of that union: to a fixed point.

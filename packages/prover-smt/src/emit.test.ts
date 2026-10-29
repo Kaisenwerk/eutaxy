@@ -387,3 +387,18 @@ describe("symbol", () => {
     expect(symbol("a%7cb")).not.toBe(symbol("a|b"));
   });
 });
+
+describe("narrowed branches where a nullable is expected", () => {
+  test("a value returned under a tag test or a null check is wrapped in the option's constructor", () => {
+    const module = readSubset(`
+export type U = { readonly ok: true; readonly value: number } | { readonly ok: false; readonly value: number };
+export function f(u: U): number | null { return u.ok ? u.value : null; }
+export function g(x: number | null): number | null { if (x !== null) return x; return null; }
+`);
+    expect(module.outside).toEqual([]);
+    const text = prelude(module);
+    const f = text.slice(text.indexOf("f_f"));
+    expect(f.slice(0, f.indexOf("f_g"))).toContain("(some.F64 ");
+    expect(f.slice(f.indexOf("f_g"))).toContain("(some.F64 ");
+  });
+});

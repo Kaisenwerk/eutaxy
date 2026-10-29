@@ -16,3 +16,9 @@ export function judge(attempts: number, matches: boolean): Result<number, Locked
   if (!matches) return { ok: false, error: { type: "locked", until: attempts + 1 } };
   return { ok: true, value: attempts };
 }
+
+/** The tag test narrows `r` to the member it names, so its own fields can be read there. */
+export function valueOr(r: Result<number, Locked>, fallback: number): number {
+  if (r.ok) return r.value;
+  return r.error.until + fallback;
+}
