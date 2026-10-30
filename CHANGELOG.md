@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.9.1](https://github.com/Kaisenwerk/eutaxy/compare/v0.9.0...v0.9.1) (2026-10-30)
+
+
+### Features
+
+* **prover-smt:** a record may be a member of several unions ([facb5c1](https://github.com/Kaisenwerk/eutaxy/commit/facb5c12ba6553beb4a099cc08831a574e5e9e13))
+* **prover:** conditional tags in literals, and truthiness of nullable records ([f09ef37](https://github.com/Kaisenwerk/eutaxy/commit/f09ef37345ca7e5590a02a3c06864e88a359ec95))
+* **prover:** functions written as arrows that a module-level const holds ([ad8f9a5](https://github.com/Kaisenwerk/eutaxy/commit/ad8f9a5cdc7a959f2b014c291740bd4c7fb135a5))
+* **prover:** generic and imported functions, read at each call ([84bc33f](https://github.com/Kaisenwerk/eutaxy/commit/84bc33fc0cdd371c98ec7ea52739e56e1c4370cc))
+* **prover:** module constants, Math.floor and division ([be0e79f](https://github.com/Kaisenwerk/eutaxy/commit/be0e79fd4e65381266d4c299b6bf7db736b296a4))
+
+
+### Bug Fixes
+
+* **cli:** report runs each module in a child process, not a worker thread ([f50051e](https://github.com/Kaisenwerk/eutaxy/commit/f50051e46ea56530d919d49a2cb46ec9397a3d73))
+* **prover:** built-ins resolved by the compiler, not by name ([f79392c](https://github.com/Kaisenwerk/eutaxy/commit/f79392c86a1c9c97a6c20318b896bf2c5546cbfc))
+
+
+### Performance Improvements
+
+* **engine:** one event-loop turn per decision in the concurrent scheduler ([d0e3b1d](https://github.com/Kaisenwerk/eutaxy/commit/d0e3b1db45c042df4472864ebf2d8997f137892b))
+
 ## [0.9.0](https://github.com/Kaisenwerk/eutaxy/compare/v0.8.0...v0.9.0) (2026-10-29)
 
 
