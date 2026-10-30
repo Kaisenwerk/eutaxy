@@ -148,8 +148,8 @@ npx eutaxy report ./src --prover smt
 ```
 
 `report` finds every `*.props.ts` under the directory, imports each module
-and its spec file in a worker thread of its own, runs `TESTED` and, with
+and its spec file in a Node process of its own, runs `TESTED` and, with
 `--prover`, `PROVEN`. No scenario runs, so nothing is `CHECKED`. A module
-that does not load in Node, or whose properties do not finish within 60
-seconds, stays `UNKNOWN`. It exits 1 for a `REFUTED` or `CONFLICT` spec and
+that does not load in Node, that ends its process, or whose properties do
+not finish within 60 seconds, stays `UNKNOWN`. It exits 1 for a `REFUTED` or `CONFLICT` spec and
 0 otherwise.

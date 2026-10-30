@@ -156,6 +156,39 @@ describe("eutaxy report", () => {
     expect(specs[1]?.reason).toContain("did not finish within 2000 ms");
   });
 
+  test("each module runs in a process of its own: one that kills it ends only itself", async () => {
+    const dir = join(scratch, "processes");
+    for (const [sub, source] of [
+      // A worker thread would see isMainThread false and refute this.
+      [
+        "own",
+        'import { isMainThread } from "node:worker_threads";\nexport function f(x: boolean): boolean {\n  return isMainThread ? x : !x;\n}\n',
+      ],
+      // Its own messages to the parent are not taken for verdicts.
+      ["talks", "process.send?.([]);\nexport function f(x: boolean): boolean {\n  return x;\n}\n"],
+      [
+        "dies",
+        'process.kill(process.pid, "SIGKILL");\nexport function f(x: boolean): boolean {\n  return x;\n}\n',
+      ],
+    ] as const) {
+      mkdirSync(join(dir, sub), { recursive: true });
+      writeFileSync(join(dir, sub, "domain.ts"), source);
+      writeFileSync(
+        join(dir, sub, "domain.props.ts"),
+        'import { forall } from "eutaxy/spec";\nimport { f } from "./domain.ts";\nexport const same = forall(f, { ensures: (x) => f(x) === x });\n',
+      );
+    }
+    const r = await report(dir);
+    expect(r.code, r.stderr).toBe(0);
+    const specs = (JSON.parse(r.stdout) as Json).specs;
+    expect(specs.map((s) => [s.module, s.kind])).toEqual([
+      ["./dies/domain.ts", "UNKNOWN"],
+      ["./own/domain.ts", "TESTED"],
+      ["./talks/domain.ts", "TESTED"],
+    ]);
+    expect(specs[0]?.reason).toContain("exited (SIGKILL) before reporting");
+  });
+
   test("a module's own output goes to stderr, and its state starts fresh each run", async () => {
     const dir = join(scratch, "noisy");
     mkdirSync(dir, { recursive: true });

@@ -2,17 +2,21 @@
  * `eutaxy report [dir]`: every spec file under a directory through the
  * ladder, on the Node side. No scenario runs, so the ladder starts at
  * `TESTED` (inputs drawn from the parameter types); `--prover` adds the
- * `PROVEN` rung. Each module runs in a worker thread of its own, started
+ * `PROVEN` rung. Each module runs in a child process of its own, started
  * on this file: what the module prints goes to stderr, its state starts
  * fresh, and a property that never returns ends with the module's budget.
+ * A process, not a worker thread: Node strips types with WebAssembly, and
+ * V8 shares compiled wasm code between the threads of a process; V8 on
+ * Node 24 can abort while one thread frees that code as another uses it
+ * (seen as SIGSEGV, SIGBUS or SIGTRAP of the whole process).
  * A module that only loads inside workerd gets `UNKNOWN` until an engine
  * reads it.
  */
 
+import { fork } from "node:child_process";
 import { registerHooks } from "node:module";
 import { resolve } from "node:path";
-import { pathToFileURL } from "node:url";
-import { isMainThread, parentPort, Worker, workerData } from "node:worker_threads";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import type { SpecVerdict } from "@eutaxy/core";
 import { checkSpecModule, type Prover } from "@eutaxy/prover";
 import { renderSpecReport, renderSpecReportJson } from "@eutaxy/report";
@@ -34,10 +38,18 @@ export interface ReportOptions {
   readonly stderr: (text: string) => void;
 }
 
-interface WorkerInput {
-  readonly kind: "eutaxy-report-module";
+/** The argument a module's process is started with, so this file knows to run it. */
+const moduleFlag = "--eutaxy-report-module";
+
+interface ModuleInput {
   readonly module: SpecModule;
   readonly seed: string;
+}
+
+/** What a module's process sends back; tagged, since the module itself may call `process.send`. */
+interface ModuleOutput {
+  readonly kind: "eutaxy-report-verdicts";
+  readonly verdicts: SpecVerdict[];
 }
 
 function unknownAll(
@@ -62,7 +74,7 @@ function unknownAll(
 }
 
 /**
- * Inside the worker: a relative import from a `.ts` file that Node cannot
+ * Inside the module's process: a relative import from a `.ts` file that Node cannot
  * resolve is tried as TypeScript resolves it, so `./domain.js` and
  * `./domain` find `domain.ts` (or `domain/index.ts`), as `tsc` would.
  */
@@ -86,7 +98,7 @@ function resolveAsTypeScript(): void {
   });
 }
 
-/** Inside the worker: load the module and its spec file, run the `TESTED` rung. */
+/** Inside the module's process: load the module and its spec file, run the `TESTED` rung. */
 async function testHere(m: SpecModule, seed: string): Promise<SpecVerdict[]> {
   resolveAsTypeScript();
   let namespace: Readonly<Record<string, unknown>>;
@@ -111,12 +123,20 @@ async function testHere(m: SpecModule, seed: string): Promise<SpecVerdict[]> {
   );
 }
 
-const input = isMainThread ? undefined : (workerData as Partial<WorkerInput> | null);
-if (input?.kind === "eutaxy-report-module" && input.module && input.seed !== undefined)
-  parentPort?.postMessage(await testHere(input.module, input.seed));
+const send = process.send?.bind(process);
+if (process.argv[2] === moduleFlag && send) {
+  process.once("disconnect", () => process.exit(0));
+  process.once("message", async (input: ModuleInput) => {
+    const verdicts = await testHere(input.module, input.seed);
+    // Exit once the verdicts and everything the module wrote are out, whatever timers it left.
+    send({ kind: "eutaxy-report-verdicts", verdicts } satisfies ModuleOutput, () =>
+      process.stdout.write("", () => process.stderr.write("", () => process.exit(0))),
+    );
+  });
+}
 
 /**
- * One module's verdicts at the `TESTED` rung, from a worker thread. What
+ * One module's verdicts at the `TESTED` rung, from a child process. What
  * the module writes goes to `stderr`; a module that does not load, or does
  * not finish within the budget, leaves each property `UNKNOWN`.
  */
@@ -127,39 +147,56 @@ export function testModule(
   stderr: (text: string) => void,
 ): Promise<SpecVerdict[]> {
   return new Promise((done) => {
-    const worker = new Worker(new URL(import.meta.url), {
-      workerData: { kind: "eutaxy-report-module", module: m, seed } satisfies WorkerInput,
-      stdout: true,
-      stderr: true,
+    const child = fork(fileURLToPath(import.meta.url), [moduleFlag], {
+      stdio: ["ignore", "pipe", "pipe", "ipc"],
+      serialization: "advanced",
     });
-    worker.stdout.on("data", (d: Buffer) => stderr(d.toString()));
-    worker.stderr.on("data", (d: Buffer) => stderr(d.toString()));
+    child.stdout?.on("data", (d: Buffer) => stderr(d.toString()));
+    child.stderr?.on("data", (d: Buffer) => stderr(d.toString()));
+    // Settled on `close`, once the process has exited and all it wrote is read; `reported` holds
+    // its verdicts if it sent them, and `ended` why it stopped otherwise.
+    let reported: SpecVerdict[] | undefined;
+    let ended: SpecVerdict[] | undefined;
     let settled = false;
-    const finish = (verdicts: SpecVerdict[]) => {
+    const settle = (verdicts: SpecVerdict[]) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      void worker.terminate();
       done(verdicts);
     };
-    const timer = setTimeout(
-      () =>
-        finish(
+    const timer = setTimeout(() => {
+      ended = unknownAll(
+        m,
+        "gave_up",
+        `the module's properties did not finish within ${budgetMs} ms on generated inputs (one may never return)`,
+      );
+      child.kill("SIGKILL");
+      // A process the module started may still hold the pipes open.
+      child.stdout?.destroy();
+      child.stderr?.destroy();
+    }, budgetMs);
+    child.on("message", (message: Partial<ModuleOutput> | null) => {
+      if (message?.kind === "eutaxy-report-verdicts" && Array.isArray(message.verdicts))
+        reported ??= message.verdicts;
+    });
+    child.once("error", (err) => {
+      ended ??= unknownAll(m, "unavailable", `the module's process failed: ${err.message}`);
+      // A process that never started (no pid) emits no `close`.
+      if (child.pid === undefined) settle(ended);
+      else child.kill("SIGKILL");
+    });
+    child.once("close", (code, signal) => {
+      settle(
+        reported ??
+          ended ??
           unknownAll(
             m,
-            "gave_up",
-            `the module's properties did not finish within ${budgetMs} ms on generated inputs (one may never return)`,
+            "unavailable",
+            `the module's process exited (${signal ?? code}) before reporting`,
           ),
-        ),
-      budgetMs,
-    );
-    worker.once("message", (verdicts: SpecVerdict[]) => finish(verdicts));
-    worker.once("error", (err) =>
-      finish(unknownAll(m, "unavailable", `the module's worker failed: ${err.message}`)),
-    );
-    worker.once("exit", (code) =>
-      finish(unknownAll(m, "unavailable", `the module's worker exited (${code}) before reporting`)),
-    );
+      );
+    });
+    child.send({ module: m, seed } satisfies ModuleInput);
   });
 }
 

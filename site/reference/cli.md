@@ -58,11 +58,11 @@ one, with no scenario.
 | `--seed <seed>`    | The seed for generated inputs (default: `report`)        |
 | `--json`           | Print the versioned JSON report instead of text          |
 
-Each module and its spec file are imported in a worker thread of their
+Each module and its spec file are imported in a Node process of their
 own, where a relative import from a `.ts` file resolves as TypeScript
 resolves it. Properties start at `TESTED`, since no scenario ran. A module
-that does not load in Node, or whose properties do not finish within 60
-seconds, leaves its properties `UNKNOWN`.
+that does not load in Node, that ends its process, or whose properties do
+not finish within 60 seconds, leaves its properties `UNKNOWN`.
 
 ## Exit codes
 

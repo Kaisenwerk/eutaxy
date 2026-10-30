@@ -44,8 +44,8 @@ describe("published package", () => {
       true,
     );
     expect(run(process.execPath, [join(dist, "bin.mjs"), "help"], root)).toContain("Usage:");
-    // report runs each module in a worker started on the bundled chunk that holds it; the bin must
-    // not be that chunk, or the worker would run the command again.
+    // report runs each module in a process started on the bundled chunk that holds it; the bin must
+    // not be that chunk, or the process would run the command again.
     let out = "";
     try {
       run(
