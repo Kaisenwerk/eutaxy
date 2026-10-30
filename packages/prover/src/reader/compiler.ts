@@ -20,7 +20,7 @@ import {
   type VariableDeclarationList,
 } from "typescript/ast";
 import { createFileSystemLayer } from "typescript/fs";
-import { API, type Checker, type Program } from "typescript/sync";
+import { API, type Checker, DiagnosticCategory, type Program } from "typescript/sync";
 
 let api: API | undefined;
 
@@ -69,6 +69,8 @@ export interface Opened {
   readonly file: (path: string) => SourceFile;
   /** The first parse error of an input file, if any. */
   readonly parseError: (path: string) => { line: number; message: string } | undefined;
+  /** The compiler's errors in a file of the program, as text ranges (offsets into the file). */
+  readonly typeErrors: (path: string) => readonly { pos: number; end: number }[];
 }
 
 /** Run `fn` over a program whose root files are the inputs, released afterwards. */
@@ -91,7 +93,19 @@ export function withProgram<T>(files: readonly InputFile[], fn: (opened: Opened)
         ? { line: (first.startPosition?.line ?? 0) + 1, message: first.text }
         : undefined;
     };
-    return fn({ program, checker, file, parseError });
+    const errors = new Map<string, readonly { pos: number; end: number }[]>();
+    const typeErrors = (path: string) => {
+      let found = errors.get(path);
+      if (!found) {
+        found = program
+          .getSemanticDiagnostics(path)
+          .filter((d) => d.category === DiagnosticCategory.Error)
+          .map((d) => ({ pos: d.pos, end: d.end }));
+        errors.set(path, found);
+      }
+      return found;
+    };
+    return fn({ program, checker, file, parseError, typeErrors });
   } finally {
     snapshot.dispose();
   }

@@ -60,7 +60,9 @@ the conditional operator,
 typed by its context where the compiler gives one, so the declared return
 type picks between aliases of one shape), field reads (on a union, the
 tag, or any field once the tag is tested),
-list methods and calls to the module's own functions; a function outside
+list methods and calls to the module's own functions (a generic or
+imported function is read inlined at each call, instantiated by the
+call's context); a function outside
 it, or calling one, is reported with the construct and the line, and the
 rest of the module still goes through. A function the module assigns to,
 or any direct `eval`, puts what it may rebind outside. `fits` is the

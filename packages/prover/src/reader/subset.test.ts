@@ -1068,3 +1068,185 @@ export function f(u: U, b: boolean): U | null { return u.ok ? (b ? u : null) : (
     ).toEqual({ kind: "bool" });
   });
 });
+
+/** The module read beside other files, all held in memory under one directory. */
+function readWith(files: Record<string, string>, module: string): ReturnType<typeof readSubset> {
+  return readSubset(module, undefined, {
+    path: "/virtual/domain.ts",
+    files: Object.entries(files).map(([name, text]) => ({ path: `/virtual/${name}`, text })),
+  });
+}
+
+const kit = `
+export type Ok<T> = { readonly ok: true; readonly value: T };
+export type Err<E> = { readonly ok: false; readonly error: E };
+export type Result<T, E> = Ok<T> | Err<E>;
+export const ok = <T>(value: T): Ok<T> => ({ ok: true, value });
+export const err = <E>(error: E): Err<E> => ({ ok: false, error });
+const twice = (n: number): number => n + n;
+export const doubled = (n: number): number => twice(n);
+`;
+
+/** The calls an expression still makes, by callee, at any depth. */
+function callsIn(e: Expr, out: string[] = []): string[] {
+  if (e.kind === "call") out.push(e.callee);
+  const visit = (v: unknown): void => {
+    if (Array.isArray(v)) for (const x of v) visit(x);
+    else if (v && typeof v === "object") {
+      if ("kind" in v) callsIn(v as Expr, out);
+      else for (const x of Object.values(v)) visit(x);
+    }
+  };
+  for (const [k, v] of Object.entries(e)) if (k !== "type") visit(v);
+  return out;
+}
+
+describe("generic and imported functions, inlined at the call", () => {
+  test("a generic helper of the module is inlined where it is called, at the call's instantiation", () => {
+    const m = readSubset(`${kit}
+export interface Locked { readonly type: "locked"; readonly until: number }
+export const judge = (attempts: number, matches: boolean): Result<number, Locked> => {
+  if (!matches) return err<Locked>({ type: "locked", until: attempts + 1 });
+  return ok(attempts);
+};
+`);
+    expect(m.functions.map((f) => f.name)).toContain("judge");
+    const judge = m.functions.find((f) => f.name === "judge");
+    expect(callsIn(judge?.body as Expr)).toEqual([]);
+    // The helpers themselves are generic: no engine states a claim over a type parameter.
+    const why = Object.fromEntries(m.outside.map((o) => [o.name, o.message]));
+    expect(why["ok"]).toMatch(/type parameters/);
+    expect(why["judge"]).toBeUndefined();
+  });
+
+  test("a function imported from another file is inlined, with its own module's helpers", () => {
+    const m = readWith(
+      { "kit.ts": kit },
+      `import { type Result, ok, err, doubled } from "./kit.ts";
+export const grow = (n: number): Result<number, string> =>
+  n < 0 ? err("negative") : ok(doubled(n));
+`,
+    );
+    expect(m.outside).toEqual([]);
+    const grow = m.functions.find((f) => f.name === "grow");
+    expect(callsIn(grow?.body as Expr)).toEqual([]);
+  });
+
+  test("an inlined body's names never capture the caller's", () => {
+    const m = readWith(
+      { "kit.ts": kit },
+      `import { doubled } from "./kit.ts";
+export const shift = (n: number, twice: number): number => {
+  const value = doubled(twice + n);
+  return value + twice;
+};
+`,
+    );
+    expect(m.outside).toEqual([]);
+    const body = m.functions.find((f) => f.name === "shift")?.body as Expr;
+    // The caller's own names stay bound once each: the inlined lets were renamed away from them.
+    const lets: string[] = [];
+    const walk = (e: Expr): void => {
+      if (e.kind === "let") lets.push(e.name);
+      for (const v of Object.values(e))
+        if (v && typeof v === "object" && "kind" in v) walk(v as Expr);
+    };
+    walk(body);
+    expect(lets.filter((n) => n === "twice" || n === "n")).toEqual([]);
+    expect(new Set(lets).size).toBe(lets.length);
+  });
+
+  test("review: an unused parameter's name is never reused for another's fresh name", () => {
+    const m = readWith(
+      { "kit.ts": "export const first = (a: number, a_: number): number => a;\n" },
+      `import { first } from "./kit.ts";
+export const pick = (a: number): number => first(1, 2);
+`,
+    );
+    const body = m.functions.find((f) => f.name === "pick")?.body as Expr;
+    const lets: string[] = [];
+    const walk = (e: Expr): void => {
+      if (e.kind === "let") lets.push(e.name);
+      for (const v of Object.values(e))
+        if (v && typeof v === "object" && "kind" in v) walk(v as Expr);
+    };
+    walk(body);
+    expect(new Set(lets).size).toBe(lets.length);
+    // The first parameter's value is what the body returns.
+    expect(body).toMatchObject({ kind: "let", value: { kind: "int", value: "1" } });
+    const firstName = (body as Extract<Expr, { kind: "let" }>).name;
+    let inner: Expr = body;
+    while (inner.kind === "let") inner = inner.body;
+    expect(inner).toEqual({ kind: "var", name: firstName });
+  });
+
+  test("review: a generic helper calling another is read at the outer call's types", () => {
+    const m = readWith(
+      {
+        "kit.ts": `export const id = <T>(x: T): T => x;
+export const wrap = <T>(x: T): T => id(x);
+`,
+      },
+      `import { wrap } from "./kit.ts";
+export const same = (n: number): number => wrap(n);
+`,
+    );
+    expect(m.outside).toEqual([]);
+    expect(m.functions.map((f) => f.name)).toEqual(["same"]);
+  });
+
+  test("review: callsIn sees calls at any depth", () => {
+    const m = readSubset(`
+export const inc = (n: number): number => n + 1;
+export const f = (n: number): number => {
+  const a = n > 0 ? inc(n) : 0;
+  return a;
+};
+`);
+    expect(callsIn(m.functions.find((f) => f.name === "f")?.body as Expr)).toEqual(["inc"]);
+  });
+
+  test("review: a call the compiler rejects is not read (a type-only import does not exist at run time)", () => {
+    const m = readWith(
+      { "kit.ts": kit },
+      `import type { ok, Ok } from "./kit.ts";
+export const f = (n: number): Ok<number> => ok(n);
+`,
+    );
+    expect(m.functions).toEqual([]);
+    expect(m.outside.find((o) => o.name === "f")?.message).toMatch(/compiler reports an error/);
+  });
+
+  test("review: a default-exported function is found by its declaration", () => {
+    const m = readWith(
+      { "twice.ts": "export default function twice(n: number): number { return n + n; }\n" },
+      `import twice from "./twice.ts";
+export const four = (n: number): number => twice(twice(n));
+`,
+    );
+    expect(m.outside).toEqual([]);
+    expect(m.functions.map((f) => f.name)).toEqual(["four"]);
+  });
+
+  test("what cannot be inlined is outside with why: no body, recursion, a rebindable binding", () => {
+    const m = readWith(
+      {
+        "kit.ts": `export let loose = (n: number): number => n;
+export const loop = (n: number): number => (n > 0 ? loop(n - 1) : 0);
+`,
+        "decl.d.ts": "export declare function hidden(n: number): number;",
+      },
+      `import { loose, loop } from "./kit.ts";
+import { hidden } from "./decl";
+export const a = (n: number): number => loose(n);
+export const b = (n: number): number => loop(n);
+export const c = (n: number): number => hidden(n);
+`,
+    );
+    const why = Object.fromEntries(m.outside.map((o) => [o.name, o.message]));
+    expect(why["a"]).toMatch(/let or var/);
+    expect(why["b"]).toMatch(/recursi/);
+    expect(why["c"]).toMatch(/no body|declaration file/);
+    expect(m.functions).toEqual([]);
+  });
+});

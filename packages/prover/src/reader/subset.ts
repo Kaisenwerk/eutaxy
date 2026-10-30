@@ -34,8 +34,9 @@ import {
   SyntaxKind,
 } from "typescript/ast";
 import * as is from "typescript/ast/is";
-import type { Checker, Type } from "typescript/sync";
+import { type Checker, SymbolFlags, type Type } from "typescript/sync";
 import {
+  type InputFile,
   isAsync,
   isConst,
   lineAt,
@@ -44,7 +45,14 @@ import {
   withProgram,
   withSourceFile,
 } from "./compiler.ts";
-import { blockOf, ExprReader, type Names, syntacticType, type TypeSource } from "./expressions.ts";
+import {
+  blockOf,
+  ExprReader,
+  type Inline,
+  type Names,
+  syntacticType,
+  type TypeSource,
+} from "./expressions.ts";
 import { SubsetTypes } from "./types.ts";
 
 export class OutsideSubset extends Error {
@@ -888,8 +896,10 @@ export function renameVars(
   e: Expr,
   names: ReadonlyMap<string, string>,
   taken: ReadonlySet<string> = new Set([...names.keys(), ...names.values(), ...boundNames(e)]),
+  /** Names no binder in `e` may keep (the scope `e` is inlined into): such a binder moves to a fresh name. */
+  avoid: ReadonlySet<string> = new Set(),
 ): Expr {
-  const go = (x: Expr): Expr => renameVars(x, names, taken);
+  const go = (x: Expr): Expr => renameVars(x, names, taken, avoid);
   switch (e.kind) {
     case "int":
     case "bool":
@@ -921,7 +931,7 @@ export function renameVars(
       const inner = new Map(names);
       inner.delete(e.name);
       let bound = e.name;
-      const targets = new Set(names.values());
+      const targets = new Set([...names.values(), ...avoid]);
       if (targets.has(e.name)) {
         // The let would capture a renamed reference: the let itself moves out of the way, to a name
         // nothing in the expression uses (another let may already be spelled with the underscore).
@@ -932,7 +942,7 @@ export function renameVars(
         ...e,
         name: bound,
         value: go(e.value),
-        body: renameVars(e.body, inner, new Set([...taken, bound])),
+        body: renameVars(e.body, inner, new Set([...taken, bound]), avoid),
       };
     }
     case "list":
@@ -943,24 +953,24 @@ export function renameVars(
       return { kind: "headOr", list: go(e.list), fallback: go(e.fallback) };
     case "iterate": {
       const own = [e.item, ...(e.index === undefined ? [] : [e.index])];
-      const { inner, bound, scoped } = bindAll(own, names, taken);
+      const { inner, bound, scoped } = bindAll(own, names, taken, avoid);
       return {
         ...e,
         list: go(e.list),
         item: bound[0] as string,
         ...(e.index === undefined ? {} : { index: bound[1] as string }),
-        body: renameVars(e.body, inner, scoped),
+        body: renameVars(e.body, inner, scoped, avoid),
       };
     }
     case "fold": {
-      const { inner, bound, scoped } = bindAll([e.acc, e.item], names, taken);
+      const { inner, bound, scoped } = bindAll([e.acc, e.item], names, taken, avoid);
       return {
         ...e,
         list: go(e.list),
         init: go(e.init),
         acc: bound[0] as string,
         item: bound[1] as string,
-        body: renameVars(e.body, inner, scoped),
+        body: renameVars(e.body, inner, scoped, avoid),
       };
     }
   }
@@ -975,9 +985,10 @@ function bindAll(
   own: readonly string[],
   names: ReadonlyMap<string, string>,
   taken: ReadonlySet<string>,
+  avoid: ReadonlySet<string>,
 ): { inner: Map<string, string>; bound: string[]; scoped: Set<string> } {
   const inner = new Map(names);
-  const targets = new Set(names.values());
+  const targets = new Set([...names.values(), ...avoid]);
   const scoped = new Set(taken);
   const bound = own.map((n) => {
     inner.delete(n);
@@ -1052,6 +1063,8 @@ const virtualModulePath = "/eutaxy/reader/module.ts";
 export interface ReadSubsetOptions {
   /** The module's path on disk, under which its imports resolve. Without it the module stands alone. */
   readonly path?: string;
+  /** Other files the read sees in place of (or beside) the files on disk, by path. */
+  readonly files?: readonly InputFile[];
 }
 
 /** What typing a module's expressions needs, shared by every function read. */
@@ -1220,29 +1233,37 @@ interface Head {
   readonly offset: number;
 }
 
-/** `export function name(params): Type {` or `export const name = (params): Type => …` read, the types through the compiler. */
-function head(reader: ExprReader, types: SubsetTypes, checker: Checker, d: Declared): Head {
-  const sf = reader.sf;
-  const decl = d.node;
-  const name = d.name.text;
+/** The parameter names of a function the subset can take at all: synchronous, no generator, plain parameters. */
+function shape(reader: ExprReader, decl: FunctionNode): string[] {
   if (isAsync(decl)) reader.fail("an async function (core functions are synchronous)", decl);
   if (!is.isArrowFunction(decl) && decl.asteriskToken) reader.fail("a generator function", decl);
-  if (decl.typeParameters) reader.fail("type parameters", decl.typeParameters[0] ?? decl);
-  const params: Param[] = [];
-  for (const p of decl.parameters) {
+  return decl.parameters.map((p) => {
     if (!is.isIdentifier(p.name)) reader.fail("a destructured parameter", p);
     const pname = p.name.text;
     if (p.dotDotDotToken) reader.fail("a rest parameter", p);
     // `this: T` annotates the receiver and is erased; it is no argument the function is called with.
     if (pname === "this") reader.fail("a this parameter (the receiver is not modelled)", p);
     if (p.questionToken) reader.fail(`optional parameter ${pname}`, p);
-    if (!p.type) reader.fail(`parameter ${pname} without a type`, p);
     if (p.initializer) reader.fail(`a default value for ${pname}`, p);
-    params.push({
+    return pname;
+  });
+}
+
+/** `export function name(params): Type {` or `export const name = (params): Type => …` read, the types through the compiler. */
+function head(reader: ExprReader, types: SubsetTypes, checker: Checker, d: Declared): Head {
+  const sf = reader.sf;
+  const decl = d.node;
+  const name = d.name.text;
+  const pnames = shape(reader, decl);
+  if (decl.typeParameters) reader.fail("type parameters", decl.typeParameters[0] ?? decl);
+  const params: Param[] = decl.parameters.map((p, i) => {
+    const pname = pnames[i] as string;
+    if (!p.type) reader.fail(`parameter ${pname} without a type`, p);
+    return {
       name: pname,
       type: types.of(checker.getTypeAtLocation(p.type), reader.refuseAt(p.type)),
-    });
-  }
+    };
+  });
   if (!decl.type)
     reader.fail(
       `${name} without a return type (the subset needs it to name the record returned)`,
@@ -1283,6 +1304,326 @@ function declaration(reader: ExprReader, h: Head): SubsetFunction {
   };
 }
 
+/** A file's top-level functions, and the ones whose name may run something else, with why. */
+interface FileFunctions {
+  readonly declarations: ReadonlyMap<string, Declared>;
+  readonly overloaded: ReadonlySet<string>;
+  readonly untrusted: ReadonlyMap<string, OutsideFunction>;
+}
+
+/**
+ * A file's top-level functions: declarations, and the arrows module-level
+ * consts hold. A binding that may be reassigned (let, var) or holds a
+ * function expression is listed, for its callers' typing, and untrusted;
+ * so is every function of a file mentioning eval directly, and a function
+ * the file assigns to.
+ */
+function fileFunctions(sf: SourceFile, checker: Checker): FileFunctions {
+  const declarations = new Map<string, Declared>();
+  const overloaded = new Set<string>();
+  const untrusted = new Map<string, OutsideFunction>();
+  const declare = (name: Identifier, node: FunctionNode, statement: Node): void => {
+    if (declarations.has(name.text)) overloaded.add(name.text);
+    else declarations.set(name.text, { name, node, statement });
+  };
+  for (const st of sf.statements) {
+    if (is.isFunctionDeclaration(st)) {
+      if (st.name) declare(st.name, st, st);
+      continue;
+    }
+    if (!is.isVariableStatement(st)) continue;
+    for (const d of st.declarationList.declarations) {
+      if (!is.isIdentifier(d.name) || !d.initializer) continue;
+      let init: Expression = d.initializer;
+      while (is.isParenthesizedExpression(init)) init = init.expression;
+      if (!is.isArrowFunction(init) && !is.isFunctionExpression(init)) continue;
+      const name = d.name.text;
+      declare(d.name, init, st);
+      if (!isConst(st.declarationList))
+        untrusted.set(name, {
+          name,
+          line: lineAt(sf, st),
+          message: `${name} is declared with let or var, so what runs under its name may be another function`,
+        });
+      else if (is.isFunctionExpression(init))
+        untrusted.set(name, {
+          name,
+          line: lineAt(sf, st),
+          message: `${name} holds a function expression (write a function declaration or an arrow)`,
+        });
+    }
+  }
+  // A direct eval can rebind any declaration of the file without naming it, so any mention of `eval`
+  // that is not a property of something else (`globalThis.eval` is indirect, and cannot) puts every
+  // function outside: `eval(…)`, `(eval)(…)`, inside a template substitution alike.
+  const evalLine = directEval(sf);
+  if (evalLine !== undefined)
+    for (const name of declarations.keys())
+      untrusted.set(name, {
+        name,
+        line: evalLine,
+        message: "the module mentions eval directly, which can rebind any of its declarations",
+      });
+  for (const [name, line] of assigned(sf, checker, declarations))
+    if (!untrusted.has(name))
+      untrusted.set(name, {
+        name,
+        line,
+        message: `${name} is assigned in the module, so what runs under its name may not be its declaration`,
+      });
+  return { declarations, overloaded, untrusted };
+}
+
+/** What inlining a module's calls needs from the read it belongs to. */
+interface InlinerContext {
+  readonly checker: Checker;
+  readonly types: SubsetTypes;
+  readonly typeSource: TypeSource;
+  readonly ctx: TypeContext;
+  /** The module being read, and its functions. */
+  readonly module: SourceFile;
+  readonly own: FileFunctions;
+  readonly parseError: (path: string) => { line: number; message: string } | undefined;
+  readonly typeErrors: (path: string) => readonly { pos: number; end: number }[];
+}
+
+/**
+ * Bind the type parameters in `declared` so that it is `expected`, or a
+ * member of `expected` when that is a union: a parameter binds to what it
+ * meets, and two instantiations of one alias match argument by argument.
+ * Returns the type matched (the union member, say), or undefined, with
+ * `bound` unchanged by a member that did not match.
+ */
+function match(declared: Type, expected: Type, bound: Map<number, Type>): Type | undefined {
+  if (declared.isTypeParameter()) {
+    const had = bound.get(declared.id);
+    if (had && had.id !== expected.id) return undefined;
+    bound.set(declared.id, expected);
+    return expected;
+  }
+  const alias = declared.getAliasSymbol();
+  const other = expected.getAliasSymbol();
+  if (alias && other && alias.id === other.id) {
+    const xs = declared.getAliasTypeArguments();
+    const ys = expected.getAliasTypeArguments();
+    if (xs.length !== ys.length) return undefined;
+    const trial = new Map(bound);
+    for (let i = 0; i < xs.length; i++)
+      if (!match(xs[i] as Type, ys[i] as Type, trial)) return undefined;
+    for (const [k, v] of trial) bound.set(k, v);
+    return expected;
+  }
+  if (expected.isUnionType())
+    for (const member of expected.getTypes()) {
+      const trial = new Map(bound);
+      if (match(declared, member, trial)) {
+        for (const [k, v] of trial) bound.set(k, v);
+        return member;
+      }
+    }
+  return undefined;
+}
+
+/**
+ * Calls to functions the module cannot name as its own, read inlined: a
+ * generic function (of the module or not) at the call's instantiation,
+ * and a function of another file, as the compiler resolves the import.
+ * The callee's body is read in its own file under the parameter types the
+ * call's resolved signature gives, its literals typed by the resolved
+ * return type, its names moved away from the caller's, and bound by `let`
+ * to the arguments in order: a pure function called by value computes
+ * exactly that. The callee's own calls inline the same way, so the
+ * helpers of its file come with it. A callee with no body here (a
+ * declaration file), one its file may rebind, or one reached again while
+ * it is being inlined (recursion) is outside the subset, with why.
+ */
+function inliner(c: InlinerContext): Inline {
+  const files = new Map<SourceFile, FileFunctions>([[c.module, c.own]]);
+  const functionsOf = (file: SourceFile): FileFunctions => {
+    let found = files.get(file);
+    if (!found) {
+      found = fileFunctions(file, c.checker);
+      files.set(file, found);
+    }
+    return found;
+  };
+  const inlining: string[] = [];
+  // The type parameters of the functions being read, bound to the types their calls give them,
+  // innermost last: a generic function read inside another sees the outer one's as concrete types.
+  const substitutions: Map<number, Type>[] = [];
+  const concrete = (t: Type): Type => {
+    const top = substitutions[substitutions.length - 1];
+    return top && t.isTypeParameter() ? (top.get(t.id) ?? t) : t;
+  };
+  // `fail` is annotated so that the compiler narrows after a call to it.
+  const inline: Inline = (call, callee, scope, readArgs, fail: (what: string) => never) => {
+    // A call the compiler rejects (a name imported with `import type`, which does not exist when the
+    // code runs; arguments that do not fit) is no call the reader may stand in for.
+    const caller = call.getSourceFile();
+    const start = call.getStart(caller);
+    if (c.typeErrors(caller.fileName).some((e) => e.pos < call.end && e.end > start))
+      fail(`the compiler reports an error on this call to ${callee.text}`);
+    let symbol = c.checker.getSymbolAtLocation(callee);
+    if (!symbol) return undefined;
+    if (symbol.flags & SymbolFlags.Alias) symbol = c.checker.getAliasedSymbol(symbol);
+    const decl = symbol.valueDeclaration?.resolve();
+    if (!decl || !(is.isFunctionDeclaration(decl) || is.isVariableDeclaration(decl)))
+      return undefined;
+    const file = decl.getSourceFile();
+    // The declaration's own name: a default export's symbol is named `default`.
+    const name = decl.name && is.isIdentifier(decl.name) ? decl.name.text : symbol.name;
+    const where = file === c.module ? name : `${name} (from ${file.fileName})`;
+    if (file.isDeclarationFile)
+      fail(`${where} has no body to read: it is declared in a declaration file`);
+    const fns = functionsOf(file);
+    const d = fns.declarations.get(name);
+    // Only a top-level function of its file is read; anything else is refused by the usual message.
+    if (!d || !decl.name || d.name.pos !== decl.name.pos) return undefined;
+    if (c.parseError(file.fileName)) fail(`${where} is in a file the compiler cannot parse`);
+    const untrusted = fns.untrusted.get(name);
+    if (untrusted) fail(`${where} is outside the subset: ${untrusted.message}`);
+    if (fns.overloaded.has(name)) fail(`${where} is declared more than once (overloads)`);
+    const body = d.node.body;
+    if (!body) fail(`${where} has no body to read`);
+    const signature = c.checker.getResolvedSignature(call);
+    if (c.checker.isUnknownSignature(signature)) fail(`the call to ${where} does not resolve`);
+    const fileNames: Names = {
+      callable: () => false,
+      target: (n) => n,
+      declared: (n) => fns.declarations.has(n),
+      spec: false,
+    };
+    const typeSource: TypeSource = {
+      annotation: (node, refuse) => c.types.of(concrete(c.checker.getTypeAtLocation(node)), refuse),
+      contextual: c.typeSource.contextual,
+    };
+    const reader = new ExprReader(file, fileNames, typeSource, c.ctx, undefined, inline);
+    const params = shape(reader, d.node);
+    const symbols = signature.getParameters();
+    if (symbols.length !== params.length || call.arguments.length !== params.length)
+      fail(`${where} takes ${params.length} argument(s), called with ${call.arguments.length}`);
+    // A generic callee is instantiated by where its value goes first: the compiler infers `E` in
+    // `err({ type: "locked" })` from the argument alone, a record of its own, where the caller's
+    // declared result names the error union the literal belongs to. What the context leaves open
+    // is the compiler's instantiation.
+    const bound = new Map<number, Type>();
+    const declared = c.checker.getSignatureFromDeclaration(d.node);
+    const generalReturn = c.checker.getReturnTypeOfSignature(declared);
+    const context = d.node.typeParameters ? c.checker.getContextualType(call) : undefined;
+    const matched = context ? match(generalReturn, concrete(context), bound) : undefined;
+    const declaredParams = declared.getParameters();
+    const generalParams = symbols.map((_, i) => {
+      const own = declaredParams[i];
+      return own ? c.checker.getTypeOfSymbol(own) : undefined;
+    });
+    const resolvedParams = symbols.map((p) => concrete(c.checker.getTypeOfSymbol(p)));
+    const resolvedReturn = concrete(c.checker.getReturnTypeOfSignature(signature));
+    // The callee's own type parameters, for its body: the context's first, the compiler's after.
+    generalParams.forEach((g, i) => {
+      if (g) match(g, resolvedParams[i] as Type, bound);
+    });
+    match(generalReturn, resolvedReturn, bound);
+    const types = symbols.map((_, i) => {
+      const g = generalParams[i];
+      const type =
+        g?.isTypeParameter() && bound.has(g.id)
+          ? concrete(bound.get(g.id) as Type)
+          : (resolvedParams[i] as Type);
+      return c.types.of(type, (what) =>
+        fail(`${where}, parameter ${params[i]} at this call: ${what}`),
+      );
+    });
+    const returns = c.types.of(matched ?? resolvedReturn, (what) =>
+      fail(`${where} returns, at this call, ${what}`),
+    );
+    const own = new Map([...bound].map(([k, v]) => [k, concrete(v)]));
+    // The arguments in the caller's scope, before this callee is marked as being read: a nested call
+    // to the same function is no recursion.
+    const args = readArgs(types);
+    const key = `${file.fileName}#${name}`;
+    if (inlining.includes(key))
+      fail(
+        `${where} is recursive, which a function read at its calls cannot be (recursion is in the subset only as a module's own structural recursion)`,
+      );
+    inlining.push(key);
+    substitutions.push(own);
+    try {
+      const inner = new Map(params.map((p, i) => [p, types[i] as SubsetType]));
+      const readBody = (): Expr => {
+        const read = returning(
+          is.isBlock(body)
+            ? reader.block(body.statements, inner, body)
+            : reader.expression(body, inner),
+          returns,
+        );
+        const actual = reader.typeOfExpr(reader.narrowed(read, inner, body), inner, body);
+        if (!fits(actual, returns, c.ctx))
+          reader.fail(
+            `returns a ${describe(actual)}, not the ${describe(returns)} called for`,
+            body,
+          );
+        return read;
+      };
+      let read: Expr;
+      try {
+        read = readBody();
+      } catch (err) {
+        if (!(err instanceof OutsideSubset)) throw err;
+        fail(
+          `${where}, read at this call, is outside the subset: ${err.message} (line ${err.line} of its file)`,
+        );
+      }
+      // Its parameters and its own names move away from every name the caller has here.
+      const callerNames = new Set([...scope.keys(), ...args.flatMap((a) => [...boundNames(a)])]);
+      // Every parameter name is reserved, used or not, so no fresh name repeats one.
+      const taken = new Set([...callerNames, ...boundNames(read), ...params]);
+      const renames = new Map<string, string>();
+      for (const p of params) {
+        const to = callerNames.has(p) ? fresh(p, taken) : p;
+        taken.add(to);
+        renames.set(p, to);
+      }
+      const renamed = renameVars(read, renames, taken, callerNames);
+      return params.reduceRight<Expr>(
+        (rest, p, i) => ({
+          kind: "let",
+          name: renames.get(p) as string,
+          value: args[i] as Expr,
+          body: rest,
+          type: types[i] as SubsetType,
+        }),
+        renamed,
+      );
+    } finally {
+      substitutions.pop();
+      inlining.pop();
+    }
+  };
+  return inline;
+}
+
+/**
+ * The expression with the record literals it returns typed `t`, where
+ * they have no type of their own: a function inlined at a call returns
+ * its instantiated type, which a literal in a generic body cannot name.
+ */
+function returning(e: Expr, t: SubsetType): Expr {
+  const target = t.kind === "nullable" ? t.inner : t;
+  if (target.kind !== "record" && target.kind !== "union") return e;
+  switch (e.kind) {
+    case "record":
+      return e.type ? e : { ...e, type: target };
+    case "let":
+    case "narrow":
+    case "narrowTag":
+      return { ...e, body: returning(e.body, t) };
+    case "cond":
+      return { ...e, ifTrue: returning(e.ifTrue, t), ifFalse: returning(e.ifFalse, t) };
+    default:
+      return e;
+  }
+}
+
 /**
  * Read a module: every function the subset takes (in source order, so
  * callees come before callers), the record types and unions they use,
@@ -1297,188 +1638,156 @@ export function readSubset(
   options: ReadSubsetOptions = {},
 ): SubsetModule {
   const path = options.path ?? virtualModulePath;
-  return withProgram([{ path, text: source }], ({ checker, file, parseError }) => {
-    const sf = file(path);
-    // Pass 1: the module's top-level functions, and what makes them untrustworthy. A function is a
-    // declaration or the arrow a module-level const holds; a binding that may be reassigned (let, var)
-    // or holds a function expression is read for its callers' typing, and is outside itself.
-    const declarations = new Map<string, Declared>();
-    const overloaded = new Set<string>();
-    const rebindable = new Map<string, OutsideFunction>();
-    const declare = (name: Identifier, node: FunctionNode, statement: Node): void => {
-      if (declarations.has(name.text)) overloaded.add(name.text);
-      else declarations.set(name.text, { name, node, statement });
-    };
-    for (const st of sf.statements) {
-      if (is.isFunctionDeclaration(st)) {
-        if (st.name) declare(st.name, st, st);
-        continue;
-      }
-      if (!is.isVariableStatement(st)) continue;
-      for (const d of st.declarationList.declarations) {
-        if (!is.isIdentifier(d.name) || !d.initializer) continue;
-        let init: Expression = d.initializer;
-        while (is.isParenthesizedExpression(init)) init = init.expression;
-        if (!is.isArrowFunction(init) && !is.isFunctionExpression(init)) continue;
-        const name = d.name.text;
-        declare(d.name, init, st);
-        if (!isConst(st.declarationList))
-          rebindable.set(name, {
+  return withProgram(
+    [{ path, text: source }, ...(options.files ?? [])],
+    ({ checker, file, parseError, typeErrors }) => {
+      const sf = file(path);
+      // Pass 1: the module's top-level functions, and what makes them untrustworthy. A generic one is
+      // no function of the subset (no claim is stated over a type parameter); its callers read it inlined.
+      const own = fileFunctions(sf, checker);
+      const { declarations, overloaded } = own;
+      const declared = new Set(declarations.keys());
+      const generic = new Set(
+        [...declarations].filter(([, d]) => d.node.typeParameters).map(([name]) => name),
+      );
+      const outside = new Map<string, OutsideFunction>();
+      const error = parseError(path);
+      // Source the compiler cannot parse is source the reader cannot trust: every function is outside.
+      if (error) {
+        for (const name of new Set([...declared, ...(functions ?? [])]))
+          outside.set(name, {
             name,
-            line: lineAt(sf, st),
-            message: `${name} is declared with let or var, so what runs under its name may be another function`,
+            line: 0,
+            message: `the module could not be parsed: ${error.message} (line ${error.line})`,
           });
-        else if (is.isFunctionExpression(init))
-          rebindable.set(name, {
+        return { records: [], unions: [], functions: [], outside: [...outside.values()] };
+      }
+      // A name asked for that is no module-level declaration (inside a namespace, say) is reported, not thrown.
+      for (const name of functions ?? [])
+        if (!declared.has(name))
+          outside.set(name, {
             name,
-            line: lineAt(sf, st),
-            message: `${name} holds a function expression (write a function declaration or an arrow)`,
+            line: 0,
+            message: `the module declares no function ${name} at its top level`,
           });
-      }
-    }
-    const declared = new Set(declarations.keys());
-    const outside = new Map<string, OutsideFunction>();
-    const error = parseError(path);
-    // Source the compiler cannot parse is source the reader cannot trust: every function is outside.
-    if (error) {
-      for (const name of new Set([...declared, ...(functions ?? [])]))
-        outside.set(name, {
-          name,
-          line: 0,
-          message: `the module could not be parsed: ${error.message} (line ${error.line})`,
-        });
-      return { records: [], unions: [], functions: [], outside: [...outside.values()] };
-    }
-    // A name asked for that is no module-level declaration (inside a namespace, say) is reported, not thrown.
-    for (const name of functions ?? [])
-      if (!declared.has(name))
-        outside.set(name, {
-          name,
-          line: 0,
-          message: `the module declares no function ${name} at its top level`,
-        });
-    // A direct eval can rebind any declaration of the module without naming it, so any mention of `eval`
-    // that is not a property of something else (`globalThis.eval` is indirect, and cannot) puts the whole
-    // module outside: `eval(…)`, `(eval)(…)`, inside a template substitution alike.
-    const evalLine = directEval(sf);
-    if (evalLine !== undefined)
-      for (const name of declared)
-        outside.set(name, {
-          name,
-          line: evalLine,
-          message: "the module mentions eval directly, which can rebind any of its declarations",
-        });
-    for (const [name, why] of rebindable) if (!outside.has(name)) outside.set(name, why);
-    for (const [name, line] of assigned(sf, checker, declarations))
-      if (!outside.has(name))
-        outside.set(name, {
-          name,
-          line,
-          message: `${name} is assigned in the module, so what runs under its name may not be its declaration`,
-        });
-    // The module's own declared types first, in their order, so a record literal of no declared type
-    // is matched against every record the module declares, and a record belongs to the union declared
-    // first. A declared type the subset does not take is left out here; a function using it says why.
-    const types = new SubsetTypes(checker);
-    const skip = Symbol("outside");
-    for (const st of sf.statements) {
-      if (!is.isInterfaceDeclaration(st) && !is.isTypeAliasDeclaration(st)) continue;
-      if (st.typeParameters) continue; // a generic alias is read where it is instantiated
-      const symbol = checker.getSymbolAtLocation(st.name);
-      if (!symbol) continue;
-      try {
-        types.of(checker.getDeclaredTypeOfSymbol(symbol), () => {
-          throw skip;
-        });
-      } catch (err) {
-        if (err !== skip) throw err;
-      }
-    }
-    // Pass 2: signatures, so every function's return type is known before any body is read.
-    const { ctx, signatures } = moduleContext(types.records);
-    const names: Names = {
-      callable: (n) => declared.has(n),
-      target: (n) => n,
-      declared: (n) => declared.has(n),
-      spec: false,
-    };
-    const typeSource: TypeSource = {
-      annotation: (node, refuse) => types.of(checker.getTypeAtLocation(node), refuse),
-      contextual: (node) => contextualType(checker, types, node),
-    };
-    const reader = new ExprReader(sf, names, typeSource, ctx);
-    const heads: Head[] = [];
-    for (const [name, decl] of declarations) {
-      try {
-        if (overloaded.has(name))
-          reader.fail(`${name} is declared more than once (overloads)`, decl.statement);
-        const h = head(reader, types, checker, decl);
-        // Callers of an assigned function still type-check against its declaration; they are then outside with it.
-        signatures.set(name, { params: h.params, returns: h.returns });
-        if (!outside.has(name)) heads.push(h);
-      } catch (err) {
-        if (!(err instanceof OutsideSubset)) throw err;
-        if (!outside.has(name)) outside.set(name, { name, line: err.line, message: err.message });
-      }
-    }
-    // Pass 3: bodies.
-    const read = new Map<string, SubsetFunction>();
-    for (const h of heads) {
-      try {
-        read.set(h.name, declaration(reader, h));
-      } catch (err) {
-        if (!(err instanceof OutsideSubset)) throw err;
-        outside.set(h.name, { name: h.name, line: err.line, message: err.message });
-      }
-    }
-    closeOverCallees(read, outside);
-    // Recursion is in the subset as structural recursion on a list (`structuralOn`), a function calling
-    // itself directly; any other recursion is outside, and so are its callers.
-    const reaches = (from: string, target: string, seen = new Set<string>()): boolean => {
-      const fn = read.get(from);
-      if (!fn) return false;
-      for (const c of callees(fn.body)) {
-        if (c === target) return true;
-        if (!seen.has(c)) {
-          seen.add(c);
-          if (reaches(c, target, seen)) return true;
+      for (const [name, why] of own.untrusted) if (!outside.has(name)) outside.set(name, why);
+      // The module's own declared types first, in their order, so a record literal of no declared type
+      // is matched against every record the module declares, and a record belongs to the union declared
+      // first. A declared type the subset does not take is left out here; a function using it says why.
+      const types = new SubsetTypes(checker);
+      const skip = Symbol("outside");
+      for (const st of sf.statements) {
+        if (!is.isInterfaceDeclaration(st) && !is.isTypeAliasDeclaration(st)) continue;
+        if (st.typeParameters) continue; // a generic alias is read where it is instantiated
+        const symbol = checker.getSymbolAtLocation(st.name);
+        if (!symbol) continue;
+        try {
+          types.of(checker.getDeclaredTypeOfSymbol(symbol), () => {
+            throw skip;
+          });
+        } catch (err) {
+          if (err !== skip) throw err;
         }
       }
-      return false;
-    };
-    for (const [name, fn] of [...read])
-      if (reaches(name, name)) {
-        const direct = [...callees(fn.body)].every((c) => c === name || !reaches(c, name));
-        const on = direct ? structuralOn(fn) : undefined;
-        if (on !== undefined) {
-          read.set(name, { ...fn, structural: on });
-          continue;
+      // Pass 2: signatures, so every function's return type is known before any body is read.
+      const { ctx, signatures } = moduleContext(types.records);
+      const names: Names = {
+        callable: (n) => declared.has(n) && !generic.has(n),
+        target: (n) => n,
+        declared: (n) => declared.has(n),
+        spec: false,
+      };
+      const typeSource: TypeSource = {
+        annotation: (node, refuse) => types.of(checker.getTypeAtLocation(node), refuse),
+        contextual: (node) => contextualType(checker, types, node),
+      };
+      const inline = inliner({
+        checker,
+        types,
+        typeSource,
+        ctx,
+        module: sf,
+        own,
+        parseError,
+        typeErrors,
+      });
+      const reader = new ExprReader(sf, names, typeSource, ctx, undefined, inline);
+      const heads: Head[] = [];
+      for (const [name, decl] of declarations) {
+        try {
+          if (overloaded.has(name))
+            reader.fail(`${name} is declared more than once (overloads)`, decl.statement);
+          const h = head(reader, types, checker, decl);
+          // Callers of an assigned function still type-check against its declaration; they are then outside with it.
+          signatures.set(name, { params: h.params, returns: h.returns });
+          if (!outside.has(name)) heads.push(h);
+        } catch (err) {
+          if (!(err instanceof OutsideSubset)) throw err;
+          if (!outside.has(name)) outside.set(name, { name, line: err.line, message: err.message });
         }
-        read.delete(name);
-        outside.set(name, {
-          name,
-          line: fn.line,
-          message: `${name} is recursive in a way the subset does not take: it takes a function calling itself on a list parameter's slice(1), after a first test of that list's length against 0 (if (xs.length === 0) return …)`,
-        });
       }
-    closeOverCallees(read, outside);
-    // Callees before callers, whatever the source order: Lean needs a definition before its use.
-    const ordered: SubsetFunction[] = [];
-    const placed = new Set<string>();
-    while (ordered.length < read.size)
-      // A structurally recursive function calls itself: that callee needs no placing first.
-      for (const [name, fn] of read)
-        if (!placed.has(name) && [...callees(fn.body)].every((c) => c === name || placed.has(c))) {
-          ordered.push(fn);
-          placed.add(name);
+      // Pass 3: bodies.
+      const read = new Map<string, SubsetFunction>();
+      for (const h of heads) {
+        try {
+          read.set(h.name, declaration(reader, h));
+        } catch (err) {
+          if (!(err instanceof OutsideSubset)) throw err;
+          outside.set(h.name, { name: h.name, line: err.line, message: err.message });
         }
-    return {
-      records: [...types.records.values()],
-      unions: types.unions,
-      functions: ordered,
-      outside: [...outside.values()],
-    };
-  });
+      }
+      closeOverCallees(read, outside);
+      // Recursion is in the subset as structural recursion on a list (`structuralOn`), a function calling
+      // itself directly; any other recursion is outside, and so are its callers.
+      const reaches = (from: string, target: string, seen = new Set<string>()): boolean => {
+        const fn = read.get(from);
+        if (!fn) return false;
+        for (const c of callees(fn.body)) {
+          if (c === target) return true;
+          if (!seen.has(c)) {
+            seen.add(c);
+            if (reaches(c, target, seen)) return true;
+          }
+        }
+        return false;
+      };
+      for (const [name, fn] of [...read])
+        if (reaches(name, name)) {
+          const direct = [...callees(fn.body)].every((c) => c === name || !reaches(c, name));
+          const on = direct ? structuralOn(fn) : undefined;
+          if (on !== undefined) {
+            read.set(name, { ...fn, structural: on });
+            continue;
+          }
+          read.delete(name);
+          outside.set(name, {
+            name,
+            line: fn.line,
+            message: `${name} is recursive in a way the subset does not take: it takes a function calling itself on a list parameter's slice(1), after a first test of that list's length against 0 (if (xs.length === 0) return …)`,
+          });
+        }
+      closeOverCallees(read, outside);
+      // Callees before callers, whatever the source order: Lean needs a definition before its use.
+      const ordered: SubsetFunction[] = [];
+      const placed = new Set<string>();
+      while (ordered.length < read.size)
+        // A structurally recursive function calls itself: that callee needs no placing first.
+        for (const [name, fn] of read)
+          if (
+            !placed.has(name) &&
+            [...callees(fn.body)].every((c) => c === name || placed.has(c))
+          ) {
+            ordered.push(fn);
+            placed.add(name);
+          }
+      return {
+        records: [...types.records.values()],
+        unions: types.unions,
+        functions: ordered,
+        outside: [...outside.values()],
+      };
+    },
+  );
 }
 
 /** A caller of a function outside the subset is outside it too, however many steps away. */

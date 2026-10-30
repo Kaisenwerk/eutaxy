@@ -63,7 +63,7 @@ export interface SmtModuleProofs extends ModuleProofs {
 export const engineAssumptions: readonly string[] = [
   "number is modelled as the IEEE double (the floating-point theory): NaN, the infinities and -0 are in every binder's domain, and === is fp.eq",
   "string is modelled as a sequence of 16-bit code units, as JavaScript holds it",
-  "the function and its callees are the module's own, pure and total; nothing outside the module is modelled",
+  "the function and its callees are pure and total: the module's own, or generic or imported ones read at each call from their own files; nothing else is modelled",
   `Z3 ${z3Version} found the claim's negation unsatisfiable under a resource limit; no proof object was checked by a kernel`,
 ];
 

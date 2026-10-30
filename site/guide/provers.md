@@ -126,7 +126,10 @@ Today it covers:
 - **Expressions**: `+ - *` on numbers, `+` on strings, comparisons,
   `===`/`!==` on primitives and against `null`, `&& || !`, the conditional
   operator, string and record literals, field reads, `Number.isInteger`,
-  and calls to the module's own functions.
+  and calls to the module's own functions. A generic function, or one
+  imported from another file of the project, is read at each call, at
+  the types that call gives it, so a result kit shared across modules
+  works as written.
 - **Narrowing**: a null check narrows a nullable in the branch it guards; a
   test of a union's tag narrows the union, in functions and in claims.
 - **Lists** (Lean): array literals with a trailing spread, `length`,

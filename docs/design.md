@@ -911,7 +911,26 @@ guards, so a field read on a nullable is in the subset only there),
 lone surrogate has no Lean character and is refused), record literals
 (a union member's by its tag), field reads (on a union, a field every
 member has: its tag), `Number.isInteger`, and calls to the module's own
-functions. Arrays are in it as lists (`readonly T[]` or `T[]`, Lean's
+functions. A generic function, and a function imported from another file
+of the project, is read at each call instead: the compiler resolves the
+callee, the call's types instantiate it (from the type the call's value
+is expected to have where that decides its type parameters, since the
+compiler infers them from the arguments alone, and `err({ type: "locked"
+})` would otherwise be an error type of its own rather than a member of
+the union the caller declares), its body is read in its own file under
+those types, its names are moved clear of the caller's, and it is bound
+to the arguments by `let`, which for a pure function called by value is
+exactly the call. Its own calls are read the same way, so the helpers of
+its file come with it; an outer generic function's type parameters reach
+the calls it makes where they stand alone (`id(x)` with `x: T`), not yet
+inside compound types (`Ok<T>`), which leave such a call outside. A call
+the compiler reports an error on (a name imported with `import type`,
+which does not exist when the code runs), a callee without a body (a
+declaration file), one its file may rebind, or one reached again while
+it is being read (recursion) is outside the subset. A record is a member of one union at
+most, so two instantiations of one generic union that share a member
+(`Err<E>` in `Result<A, E>` and `Result<B, E>`) cannot both be used in
+one module yet. Arrays are in it as lists (`readonly T[]` or `T[]`, Lean's
 `List`): literals with a trailing spread (`[i, ...s]`), `length`,
 `xs[0] ?? fallback` (the only index, since any other may be past the
 end, and not on a list of a nullable type, where `??` replaces a `null`

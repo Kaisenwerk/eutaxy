@@ -1,0 +1,26 @@
+{
+  "description": "Generic helpers imported from a result kit in another file are read at each call, at the instantiation the compiler infers there; the SMT engine proves the decisions over the union they return and refutes a planted claim; the Lean engine reports unions unsupported.",
+  "expect": {
+    "tested": {
+      "judge": {
+        "okIffMatches": "TESTED",
+        "lockedFromFive": "TESTED",
+        "alwaysOk": "REFUTED"
+      }
+    },
+    "lean": {
+      "judge": {
+        "okIffMatches": "unsupported",
+        "lockedFromFive": "unsupported",
+        "alwaysOk": "unsupported"
+      }
+    },
+    "smt": {
+      "judge": {
+        "okIffMatches": "PROVEN",
+        "lockedFromFive": "PROVEN",
+        "alwaysOk": "REFUTED"
+      }
+    }
+  }
+}

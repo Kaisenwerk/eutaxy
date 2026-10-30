@@ -39,6 +39,22 @@ import {
 } from "./subset.ts";
 import type { Refuse } from "./types.ts";
 
+/**
+ * A call to a function the text cannot call by name (a generic one, or one
+ * imported from another file) read as that function's body, bound to the
+ * arguments: undefined when the callee is no such function, so the call is
+ * refused as before. `readArgs` reads the arguments in the caller's scope,
+ * a record literal argument typed as the parameter it is passed for when
+ * that type is given; `fail` refuses at the call.
+ */
+export type Inline = (
+  call: CallExpression,
+  callee: Identifier,
+  scope: Scope,
+  readArgs: (types: readonly (SubsetType | undefined)[]) => Expr[],
+  fail: (what: string) => never,
+) => Expr | undefined;
+
 /** What the bare names of the text being read stand for, outside any local scope. */
 export interface Names {
   /** A function the subset may call under this name. */
@@ -85,6 +101,9 @@ export class ExprReader {
   readonly ctx: TypeContext;
   /** The line a refusal reports for a node: the file's, or none for text whose position the caller knows. */
   private readonly lineOf: (node: Node) => number;
+  private readonly inline: Inline | undefined;
+  /** Record literals typed by the call they are passed to, in place of the compiler's contextual type. */
+  private readonly typedAs = new Map<Node, SubsetType>();
 
   constructor(
     sf: SourceFile,
@@ -92,12 +111,14 @@ export class ExprReader {
     types: TypeSource,
     ctx: TypeContext,
     lineOf: (node: Node) => number = (node) => lineAt(sf, node),
+    inline?: Inline,
   ) {
     this.sf = sf;
     this.names = names;
     this.types = types;
     this.ctx = ctx;
     this.lineOf = lineOf;
+    this.inline = inline;
   }
 
   fail(what: string, at: Node): never {
@@ -404,6 +425,32 @@ export class ExprReader {
     // A binder or local named like a function shadows it: the call is to a number, which throws.
     if (scope.has(name))
       this.fail(`a call to ${name}, which names a value here, not the module's function`, callee);
+    if (!this.names.callable(name) && this.inline) {
+      const readArgs = (types: readonly (SubsetType | undefined)[]): Expr[] =>
+        node.arguments.map((a, i) => {
+          if (is.isSpreadElement(a)) this.fail("a spread argument", a);
+          const type = types[i];
+          if (!type) return this.expression(a, scope);
+          // The literals the argument evaluates to: itself, or a conditional's branches.
+          const literals: Node[] = [];
+          const collect = (e: Expression): void => {
+            if (is.isParenthesizedExpression(e)) collect(e.expression);
+            else if (is.isConditionalExpression(e)) {
+              collect(e.whenTrue);
+              collect(e.whenFalse);
+            } else if (is.isObjectLiteralExpression(e)) literals.push(e);
+          };
+          collect(a);
+          for (const l of literals) this.typedAs.set(l, type);
+          try {
+            return this.expression(a, scope);
+          } finally {
+            for (const l of literals) this.typedAs.delete(l);
+          }
+        });
+      const inlined = this.inline(node, callee, scope, readArgs, (what) => this.fail(what, node));
+      if (inlined) return inlined;
+    }
     if (!this.names.declared(name)) this.identifier(callee, scope); // names nothing here: its message
     if (!this.names.callable(name))
       this.fail(`a call to ${name}, which is outside the subset`, callee);
@@ -511,7 +558,7 @@ export class ExprReader {
         this.fail("a __proto__ key, which sets the prototype, not a field", p.name);
       fields.push({ name: p.name.text, value: this.expression(p.initializer, scope) });
     }
-    const type = this.types.contextual(node);
+    const type = this.typedAs.get(node) ?? this.types.contextual(node);
     return { kind: "record", fields, ...(type ? { type } : {}) };
   }
 }
