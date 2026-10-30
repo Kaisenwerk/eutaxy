@@ -4,7 +4,10 @@
  * NaN, the infinities and -0 are in every binder's domain and `===` is
  * `fp.eq`, as in JavaScript), `string` a sequence of 16-bit code units,
  * `boolean` Bool, a record a datatype with one constructor, a tagged
- * union a datatype with one constructor per member, a nullable type an
+ * union a datatype with one constructor per member holding that member's
+ * record (so a record may be a member of several unions: a member is
+ * wrapped where one of its unions is expected, and unwrapped where a test
+ * of the tag narrows the union to it), a nullable type an
  * option datatype (`none`, `some`), with a name narrowed by a null check
  * bound to its value in the branch the check guards. Each property is one
  * script: the definitions, the binders as constants with what their
@@ -48,9 +51,12 @@ export function symbol(name: string): string {
 /** TypeScript names as SMT symbols that cannot clash with each other or with the theories' names. */
 export const ident = {
   fn: (name: string) => symbol(`f_${name}`),
-  /** The datatype of a record that is no union member, or of a union. */
+  /** The datatype of a record, or of a union. */
   record: (name: string) => symbol(`R_${name}`),
   constructor: (name: string) => symbol(`mk_${name}`),
+  /** A union's constructor for one member, holding the member's record, and its selector. */
+  inject: (union: string, member: string) => symbol(`in.${union}.${member}`),
+  project: (union: string, member: string) => symbol(`out.${union}.${member}`),
   // A dot, which no TypeScript identifier holds, so selectors of different records never coincide.
   field: (record: string, field: string) => symbol(`fld.${record}.${field}`),
   variable: (name: string) => symbol(`v_${name}`),
@@ -72,7 +78,6 @@ export function sortName(t: SubsetType, module: SubsetModule): string {
     case "string":
       return "Str";
     case "record":
-      return ident.record(unionOf(t.name, module) ?? t.name);
     case "union":
       return ident.record(t.name);
     case "nullable":
@@ -80,11 +85,6 @@ export function sortName(t: SubsetType, module: SubsetModule): string {
     case "null":
       return fail("null has no sort of its own");
   }
-}
-
-/** The union a record is a member of, by the record's name. */
-function unionOf(record: string, module: SubsetModule): string | undefined {
-  return module.records.find((r) => r.name === record)?.union;
 }
 
 export function sort(t: SubsetType, module: SubsetModule): string {
@@ -202,9 +202,29 @@ function sameAs(a: string, b: string, t: SubsetType, env: Env): string {
 }
 
 /**
+ * A term of type `actual` as a value of type `want`: a member record
+ * wrapped in the union's constructor for it, a value wrapped in `some`
+ * where a nullable is wanted, a nullable member mapped into the nullable
+ * union. Anything else is already of the sort wanted.
+ */
+function lift(inner: string, actual: SubsetType, want: SubsetType, module: SubsetModule): string {
+  if (want.kind === "union" && actual.kind === "record")
+    return `(${ident.inject(want.name, actual.name)} ${inner})`;
+  if (want.kind !== "nullable") return inner;
+  if (actual.kind === "null") return inner;
+  if (actual.kind === "nullable") {
+    if (want.inner.kind !== "union" || actual.inner.kind !== "record") return inner;
+    const from = sortName(actual.inner, module);
+    const to = sortName(want.inner, module);
+    return `(ite (${tester(ident.none(from))} ${inner}) ${ident.none(to)} (${ident.some(to)} ${lift(`(${ident.val(from)} ${inner})`, actual.inner, want.inner, module)}))`;
+  }
+  return `(${ident.some(sortName(want.inner, module))} ${lift(inner, actual, want.inner, module)})`;
+}
+
+/**
  * A term of the expression's type, or of `expected` where one is given:
  * `null` and a non-null value become the option's constructors where a
- * nullable is expected, and a member record is already of its union's sort.
+ * nullable is expected, and a member record its union's where the union is.
  */
 export function term(
   e: Expr,
@@ -230,7 +250,7 @@ export function term(
     return found;
   };
   // A value where `want` is expected: a conditional, a let or a narrowing produce the expected sort
-  // themselves; anything else is wrapped in `some` when a nullable is wanted and the value is not one.
+  // themselves; anything else is lifted to it (`lift`).
   const coerceIn = (x: Expr, want: SubsetType, sc: ReadonlyMap<string, SubsetType>): string => {
     if (
       x.kind === "cond" ||
@@ -241,10 +261,7 @@ export function term(
     )
       return term(x, sc, env, want);
     const actual = sc === scope ? typed(x) : typeOf(x, sc, env.ctx, fail);
-    const inner = term(x, sc, env, want);
-    if (want.kind === "nullable" && actual.kind !== "nullable" && actual.kind !== "null")
-      return `(${ident.some(sortName(want.inner, env.module))} ${inner})`;
-    return inner;
+    return lift(term(x, sc, env, want), actual, want, env.module);
   };
   const coerce = (x: Expr, want: SubsetType): string => coerceIn(x, want, scope);
   // A narrowed body is a value where the narrowing stands: coerced to what is expected there.
@@ -271,13 +288,14 @@ export function term(
       return `(let ((${ident.variable(e.name)} (${ident.val(base)} ${ident.variable(e.name)}))) ${narrowed(e.body, inner)})`;
     }
     case "narrowTag": {
-      // A member is of its union's sort: the term is the body's, typed with the name as the member,
-      // so its selectors apply (the guard the node sits under makes the constructor the right one).
+      // The name is bound to the member's record inside the union's value (the guard the node sits
+      // under makes the constructor the right one), typed as the member in the body.
       const nt = scope.get(e.name);
       if (nt?.kind !== "union") fail(`${e.name} is narrowed by a tag but is not a union`);
       const inner = new Map(scope);
       inner.set(e.name, { kind: "record", name: e.member });
-      return narrowed(e.body, inner);
+      const v = ident.variable(e.name);
+      return `(let ((${v} (${ident.project(nt.name, e.member)} ${v}))) ${narrowed(e.body, inner)})`;
     }
     case "neg":
       return `(fp.neg ${t(e.operand)})`;
@@ -350,10 +368,10 @@ export function term(
         // The field every member has: read from whichever member the value is.
         const members = membersOf(o.name, env);
         return members.reduceRight<string | undefined>((rest, m) => {
-          const read = `(${ident.field(m.name, e.field)} ${obj})`;
+          const read = `(${ident.field(m.name, e.field)} (${ident.project(o.name, m.name)} ${obj}))`;
           return rest === undefined
             ? read
-            : `(ite (${tester(ident.constructor(m.name))} ${obj}) ${read} ${rest})`;
+            : `(ite (${tester(ident.inject(o.name, m.name))} ${obj}) ${read} ${rest})`;
         }, undefined) as string;
       }
       if (o.kind !== "record") fail(`field ${e.field} read from a ${o.kind}`);
@@ -376,7 +394,8 @@ export function term(
       const bound = e.type ?? typed(e.value);
       inner.set(e.name, bound);
       const value = e.type ? coerce(e.value, e.type) : t(e.value);
-      return `(let ((${ident.variable(e.name)} ${value})) ${term(e.body, inner, env, expected)})`;
+      // The body is the let's value: lifted to what is expected where the let stands.
+      return `(let ((${ident.variable(e.name)} ${value})) ${narrowed(e.body, inner)})`;
     }
   }
 }
@@ -398,18 +417,14 @@ export function emitFunction(f: SubsetFunction, module: SubsetModule): string {
       b.kind === "null"
     )
       return term(b, scope, e, f.returns);
-    const actual = typeOf(b, scope, e.ctx, fail);
-    const inner = term(b, scope, e, f.returns);
-    return f.returns.kind === "nullable" && actual.kind !== "nullable" && actual.kind !== "null"
-      ? `(${ident.some(sortName(f.returns.inner, module))} ${inner})`
-      : inner;
+    return lift(term(b, scope, e, f.returns), typeOf(b, scope, e.ctx, fail), f.returns, module);
   })();
   return `(define-fun ${ident.fn(f.name)} (${params}) ${sort(f.returns, module)}\n  ${body})`;
 }
 
 /**
  * An option sort over every sort the module could mention: the primitives,
- * every record that is no union member, every union. A body may join a
+ * every record, every union. A body may join a
  * value with `null` in a `const` that no signature shows, so nothing is
  * left to discovery.
  */
@@ -419,9 +434,7 @@ function optionSorts(module: SubsetModule): Map<string, SubsetType> {
     { kind: "int" },
     { kind: "bool" },
     { kind: "string" },
-    ...module.records
-      .filter((r) => r.union === undefined)
-      .map((r): SubsetType => ({ kind: "record", name: r.name })),
+    ...module.records.map((r): SubsetType => ({ kind: "record", name: r.name })),
     ...module.unions.map((u): SubsetType => ({ kind: "union", name: u.name })),
   ];
   for (const b of bases) out.set(sortName(b, module), b);
@@ -431,10 +444,11 @@ function optionSorts(module: SubsetModule): Map<string, SubsetType> {
 /**
  * Every datatype in one declaration, so records, unions and options may
  * refer to one another in any order: a record is one constructor, a union
- * one per member, an option `none` and `some` over its base sort.
+ * one per member holding its record, an option `none` and `some` over its
+ * base sort.
  */
 export function emitDatatypes(module: SubsetModule): string {
-  const plain = module.records.filter((r) => r.union === undefined);
+  const plain = module.records;
   const unions = module.unions;
   const options = optionSorts(module);
   const names = [
@@ -449,7 +463,7 @@ export function emitDatatypes(module: SubsetModule): string {
     ...plain.map((r) => `(${constructorOf(r)})`),
     ...unions.map(
       (u) =>
-        `(${u.members.map((m) => constructorOf(module.records.find((r) => r.name === m.record) as RecordType)).join(" ")})`,
+        `(${u.members.map((m) => `(${ident.inject(u.name, m.record)} (${ident.project(u.name, m.record)} ${ident.record(m.record)}))`).join(" ")})`,
     ),
     ...[...options].map(
       ([base, inner]) =>
@@ -497,7 +511,7 @@ export function binderType(name: string, t: SpecType, module: SubsetModule): Sub
         const union = findUnion(rest as readonly Extract<SpecType, { kind: "record" }>[], module);
         if (!union)
           fail(
-            `binder ${name} over ${describeType(t)}: no union the module declares has these members`,
+            `binder ${name} over ${describeType(t)}: no one union the module declares has exactly these members`,
           );
         inner = { kind: "union", name: union.name };
       } else fail(`binder ${name} over ${describeType(t)}: a union the subset does not read`);
@@ -522,31 +536,73 @@ export function binderType(name: string, t: SpecType, module: SubsetModule): Sub
   }
 }
 
-/** The declared union whose members carry these tags with these fields, if any. */
+/**
+ * The one declared union these member types are, compared field by field
+ * and type by type: a field holding one literal is that literal in the
+ * union's member, a union of literals is a field of no literal, and
+ * everything else reads to the field's own type. A record may be a member
+ * of several unions, so tags and field names alone could name the wrong
+ * one; when more than one union fits, none is chosen.
+ */
 function findUnion(
   members: readonly Extract<SpecType, { kind: "record" }>[],
   module: SubsetModule,
 ): UnionType | undefined {
-  return module.unions.find((u) => {
+  const recordOf = (name: string) => module.records.find((r) => r.name === name);
+  // A nested record is compared by its fields, not its name: the spec reader and the subset reader
+  // may name one inline type differently (`Extract<U, …>` against `U.a`).
+  const recordFits = (sm: Extract<SpecType, { kind: "record" }>, rec: RecordType): boolean =>
+    sm.fields.length === rec.fields.length &&
+    rec.fields.every((f) => {
+      const sf = sm.fields.find((x) => x.name === f.name);
+      return sf !== undefined && fieldFits(sf.type, f);
+    });
+  const typeFits = (sf: SpecType, t: SubsetType): boolean => {
+    if (t.kind === "record") {
+      const rec = recordOf(t.name);
+      return sf.kind === "record" && rec !== undefined && recordFits(sf, rec);
+    }
+    if (t.kind === "nullable" && sf.kind === "union" && sf.members.some((m) => m.kind === "null")) {
+      const rest = sf.members.filter((m) => m.kind !== "null");
+      const inner: SpecType =
+        rest.length === 1 ? (rest[0] as SpecType) : { kind: "union", members: rest };
+      return typeFits(inner, t.inner);
+    }
+    if (t.kind === "union") {
+      const u = module.unions.find((x) => x.name === t.name);
+      if (!u || sf.kind !== "union" || sf.members.length !== u.members.length) return false;
+      return u.members.every((m) => {
+        const rec = recordOf(m.record);
+        return (
+          rec !== undefined && sf.members.some((sm) => sm.kind === "record" && recordFits(sm, rec))
+        );
+      });
+    }
+    try {
+      return JSON.stringify(binderType("field", sf, module)) === JSON.stringify(t);
+    } catch (err) {
+      if (err instanceof OutsideSubset) return false;
+      throw err;
+    }
+  };
+  function fieldFits(sf: SpecType, f: RecordType["fields"][number]): boolean {
+    if (f.literal !== undefined) return sf.kind === "literal" && sf.value === f.literal;
+    if (sf.kind === "literal") return false;
+    return typeFits(sf, f.type);
+  }
+  const fitting = module.unions.filter((u) => {
     if (u.members.length !== members.length) return false;
     return u.members.every((m) => {
-      const rec = module.records.find((r) => r.name === m.record);
-      if (!rec) return false;
-      return members.some(
-        (sm) =>
-          sm.fields.length === rec.fields.length &&
-          sm.fields.every((f) => rec.fields.some((rf) => rf.name === f.name)) &&
-          sm.fields.some(
-            (f) => f.name === u.tag && f.type.kind === "literal" && f.type.value === m.tag,
-          ),
-      );
+      const rec = recordOf(m.record);
+      return rec !== undefined && members.some((sm) => recordFits(sm, rec));
     });
   });
+  return fitting.length === 1 ? fitting[0] : undefined;
 }
 
 /**
- * What a binder's subset type says that its sort does not: a member record
- * is its own constructor, a union's members carry their tags, and so on
+ * What a binder's subset type says that its sort does not: a union's
+ * members carry their tags, and so on
  * into fields and under an option. Undefined when the sort says it all.
  */
 export function wellFormed(
@@ -571,7 +627,6 @@ export function wellFormed(
       const rec = module.records.find((r) => r.name === t.name);
       if (!rec) return undefined;
       const parts: string[] = [];
-      if (rec.union !== undefined) parts.push(`(${tester(ident.constructor(rec.name))} ${target})`);
       for (const f of rec.fields) {
         const read = `(${ident.field(rec.name, f.name)} ${target})`;
         if (f.literal !== undefined)
@@ -593,8 +648,13 @@ export function wellFormed(
       const u = module.unions.find((x) => x.name === t.name);
       if (!u) return undefined;
       const cases = u.members.map((m) => {
-        const inner = wellFormed(target, { kind: "record", name: m.record }, module);
-        return inner ?? `(${tester(ident.constructor(m.record))} ${target})`;
+        const is = `(${tester(ident.inject(u.name, m.record))} ${target})`;
+        const inner = wellFormed(
+          `(${ident.project(u.name, m.record)} ${target})`,
+          { kind: "record", name: m.record },
+          module,
+        );
+        return inner === undefined ? is : `(and ${is} ${inner})`;
       });
       return `(or ${cases.join(" ")})`;
     }
@@ -762,7 +822,7 @@ export function value(v: unknown, t: SubsetType, module: SubsetModule): string {
       const tag = (v as Record<string, unknown>)[u.tag];
       const member =
         u.members.find((m) => m.tag === tag) ?? fail(`${t.name} value with tag ${String(tag)}`);
-      return value(v, { kind: "record", name: member.record }, module);
+      return `(${ident.inject(u.name, member.record)} ${value(v, { kind: "record", name: member.record }, module)})`;
     }
     case "record": {
       const rec = module.records.find((r) => r.name === t.name) ?? fail(`no record ${t.name}`);
@@ -795,10 +855,11 @@ export function equal(a: string, b: string, t: SubsetType, module: SubsetModule)
     }
     case "union": {
       const u = module.unions.find((x) => x.name === t.name) ?? fail(`no union ${t.name}`);
-      const cases = u.members.map(
-        (m) =>
-          `(and (${tester(ident.constructor(m.record))} ${a}) (${tester(ident.constructor(m.record))} ${b}) ${equal(a, b, { kind: "record", name: m.record }, module)})`,
-      );
+      const cases = u.members.map((m) => {
+        const is = tester(ident.inject(u.name, m.record));
+        const out = ident.project(u.name, m.record);
+        return `(and (${is} ${a}) (${is} ${b}) ${equal(`(${out} ${a})`, `(${out} ${b})`, { kind: "record", name: m.record }, module)})`;
+      });
       return `(or ${cases.join(" ")})`;
     }
     case "record": {
@@ -932,9 +993,10 @@ export function decode(x: SExpr, t: SubsetType, module: SubsetModule): unknown {
       const u = module.unions.find((y) => y.name === t.name);
       if (!u) throw new UnreadableModel(`no union ${t.name}`);
       const head = Array.isArray(x) ? x[0] : x;
-      const member = u.members.find((m) => ident.constructor(m.record) === head);
-      if (!member) throw new UnreadableModel(`not a ${t.name}: ${show(x)}`);
-      return decode(x, { kind: "record", name: member.record }, module);
+      const member = u.members.find((m) => ident.inject(u.name, m.record) === head);
+      if (!member || !Array.isArray(x) || x.length !== 2)
+        throw new UnreadableModel(`not a ${t.name}: ${show(x)}`);
+      return decode(x[1] as SExpr, { kind: "record", name: member.record }, module);
     }
     case "record": {
       const rec = module.records.find((r) => r.name === t.name);

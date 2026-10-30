@@ -89,8 +89,22 @@ export interface Field {
 export interface RecordType {
   readonly name: string;
   readonly fields: readonly Field[];
-  /** The tagged union this record is a member of, when it is one; its name is then `<union>.<tag>`. */
-  readonly union?: string;
+  /**
+   * The tagged unions this record is a member of, in the order they were
+   * read: `Err<E>` is one in `Result<A, E>` and in `Result<B, E>`. A member
+   * written inline in a union is named `<union>.<tag>` after the first.
+   */
+  readonly unions?: readonly string[];
+}
+
+/** Whether a record is a member of a union. */
+export function isMember(record: RecordType | undefined, union: string): boolean {
+  return record?.unions?.includes(union) ?? false;
+}
+
+/** A union's members among the records known, in the order they were read. */
+function membersIn(union: string, ctx: TypeContext): RecordType[] {
+  return [...ctx.records.values()].filter((rec) => isMember(rec, union));
 }
 
 /** A tagged union: records told apart by one field, the tag, which holds a different literal in each. */
@@ -239,7 +253,7 @@ export function fits(actual: SubsetType, expected: SubsetType, ctx: TypeContext)
   if (actual.kind === "list" && expected.kind === "list")
     return fits(actual.element, expected.element, ctx);
   if (expected.kind === "union")
-    return actual.kind === "record" && ctx.records.get(actual.name)?.union === expected.name;
+    return actual.kind === "record" && isMember(ctx.records.get(actual.name), expected.name);
   if (expected.kind === "nullable")
     return (
       actual.kind === "null" ||
@@ -259,9 +273,11 @@ function join(a: SubsetType, b: SubsetType, ctx: TypeContext): SubsetType | unde
     return element && { kind: "list", element };
   }
   if (a.kind === "record" && b.kind === "record") {
-    const ua = ctx.records.get(a.name)?.union;
-    if (ua !== undefined && ua === ctx.records.get(b.name)?.union)
-      return { kind: "union", name: ua };
+    // Two members of one union join to it; members of several unions in common join to none,
+    // since nothing says which (an expected type, where one is given, decides instead).
+    const ub = ctx.records.get(b.name)?.unions ?? [];
+    const common = (ctx.records.get(a.name)?.unions ?? []).filter((u) => ub.includes(u));
+    if (common.length === 1) return { kind: "union", name: common[0] as string };
   }
   if (a.kind === "nullable" && b.kind === "nullable") {
     const inner = join(a.inner, b.inner, ctx);
@@ -316,7 +332,7 @@ export function narrowsOf(test: Expr, holds: boolean): string[] {
 
 /** The field that tells a union's members apart: literal-typed in every member, with a different literal in each. */
 function tagOf(union: string, ctx: TypeContext): string | undefined {
-  const members = [...ctx.records.values()].filter((rec) => rec.union === union);
+  const members = membersIn(union, ctx);
   const first = members[0];
   if (!first) return undefined;
   return first.fields
@@ -351,7 +367,7 @@ export function tagNarrowsOf(
     if (t?.kind !== "union" || tagOf(t.name, ctx) !== e.field) return undefined;
     return {
       name: e.object.name,
-      members: [...ctx.records.values()].filter((rec) => rec.union === t.name),
+      members: membersIn(t.name, ctx),
     };
   };
   const byTag = (
@@ -583,6 +599,12 @@ export function typeOf(
   scope: ReadonlyMap<string, SubsetType>,
   ctx: TypeContext,
   fail: (message: string) => never,
+  /**
+   * The type the context declares for `e` (a return type, a const's
+   * annotation, a parameter): it decides a conditional whose branches are
+   * members of several unions in common, where they alone join to none.
+   */
+  expected?: SubsetType,
 ): SubsetType {
   switch (e.kind) {
     case "int":
@@ -603,20 +625,21 @@ export function typeOf(
       if (!t) fail(`${e.name} is not in scope`);
       if (t.kind !== "nullable")
         fail(`${e.name} is narrowed but is a ${describe(t)}, not a nullable`);
-      return typeOf(e.body, new Map([...scope, [e.name, t.inner]]), ctx, fail);
+      return typeOf(e.body, new Map([...scope, [e.name, t.inner]]), ctx, fail, expected);
     }
     case "narrowTag": {
       const t = scope.get(e.name);
       if (!t) fail(`${e.name} is not in scope`);
       if (t.kind !== "union")
         fail(`${e.name} is narrowed by a tag but is a ${describe(t)}, not a union`);
-      if (ctx.records.get(e.member)?.union !== t.name)
+      if (!isMember(ctx.records.get(e.member), t.name))
         fail(`${e.member} is not a member of ${t.name}`);
       return typeOf(
         e.body,
         new Map([...scope, [e.name, { kind: "record", name: e.member }]]),
         ctx,
         fail,
+        expected,
       );
     }
     case "binary": {
@@ -665,24 +688,24 @@ export function typeOf(
         fail(
           `a condition that is a ${describe(test)} (truthiness is not in the subset; compare it)`,
         );
-      const a = typeOf(e.ifTrue, scope, ctx, fail);
-      const b = typeOf(e.ifFalse, scope, ctx, fail);
+      const a = typeOf(e.ifTrue, scope, ctx, fail, expected);
+      const b = typeOf(e.ifFalse, scope, ctx, fail, expected);
       const joined = join(a, b, ctx);
-      if (!joined)
-        fail(
-          `the branches of a conditional have different types (${describe(a)} and ${describe(b)})`,
-        );
-      return joined;
+      if (joined) return joined;
+      if (expected && fits(a, expected, ctx) && fits(b, expected, ctx)) return expected;
+      return fail(
+        `the branches of a conditional have different types (${describe(a)} and ${describe(b)})`,
+      );
     }
     case "let": {
-      const inferred = typeOf(e.value, scope, ctx, fail);
+      const inferred = typeOf(e.value, scope, ctx, fail, e.type);
       if (e.type && !fits(inferred, e.type, ctx))
         fail(`const ${e.name} is annotated ${describe(e.type)} but holds a ${describe(inferred)}`);
       if (!e.type && holdsNothing(inferred))
         fail(
           `const ${e.name} holds an empty array of no declared type (annotate it: const ${e.name}: T[] = [])`,
         );
-      return typeOf(e.body, new Map([...scope, [e.name, e.type ?? inferred]]), ctx, fail);
+      return typeOf(e.body, new Map([...scope, [e.name, e.type ?? inferred]]), ctx, fail, expected);
     }
     case "call": {
       const sig = ctx.signatures.get(e.callee);
@@ -691,7 +714,7 @@ export function typeOf(
         fail(`${e.callee} takes ${sig.params.length} argument(s), called with ${e.args.length}`);
       e.args.forEach((a, i) => {
         const want = sig.params[i]?.type as SubsetType;
-        const got = typeOf(a, scope, ctx, fail);
+        const got = typeOf(a, scope, ctx, fail, want);
         if (!fits(got, want, ctx))
           fail(
             `argument ${i + 1} of ${e.callee} is a ${describe(got)}, not the ${describe(want)} it takes`,
@@ -712,7 +735,7 @@ export function typeOf(
         );
       if (o.kind === "union") {
         // Only a field every member has, with one type: the tag, typically. Narrowing by the tag is not in the subset yet.
-        const members = [...ctx.records.values()].filter((rec) => rec.union === o.name);
+        const members = membersIn(o.name, ctx);
         const types = members.map((rec) => rec.fields.find((x) => x.name === e.field)?.type);
         if (types.some((t) => t === undefined))
           fail(
@@ -740,7 +763,7 @@ export function typeOf(
         context?.kind === "record"
           ? [...ctx.records.values()].filter((rec) => rec.name === context.name)
           : context?.kind === "union"
-            ? [...ctx.records.values()].filter((rec) => rec.union === context.name)
+            ? membersIn(context.name, ctx)
             : [...ctx.records.values()];
       const byNames = candidates.filter(
         (rec) =>
@@ -1288,7 +1311,7 @@ function declaration(reader: ExprReader, h: Head): SubsetFunction {
   const read = reader.narrowed(statements, scope, body);
   // Typing the whole body here: a record literal of no declared type, a field read on an integer or
   // a body of another type than declared are all outside the subset, found now rather than by an engine.
-  const actual = reader.typeOfExpr(read, scope, body);
+  const actual = reader.typeOfExpr(read, scope, body, h.returns);
   if (!fits(actual, h.returns, reader.ctx))
     reader.fail(
       `${h.name} returns a ${describe(actual)} but declares ${describe(h.returns)}`,
@@ -1556,7 +1579,7 @@ function inliner(c: InlinerContext): Inline {
             : reader.expression(body, inner),
           returns,
         );
-        const actual = reader.typeOfExpr(reader.narrowed(read, inner, body), inner, body);
+        const actual = reader.typeOfExpr(reader.narrowed(read, inner, body), inner, body, returns);
         if (!fits(actual, returns, c.ctx))
           reader.fail(
             `returns a ${describe(actual)}, not the ${describe(returns)} called for`,
@@ -2079,14 +2102,8 @@ export function restrictModule(
         badRecords.add(`union:${u.name}`);
         changed = true;
       }
-      // A member of a union the engine models but has dropped goes with it: its sort is the union's.
-      // An engine that takes no unions keeps the members as records of their own.
-      if (takes({ kind: "union", name: u.name }) && badRecords.has(`union:${u.name}`))
-        for (const m of u.members)
-          if (!badRecords.has(m.record)) {
-            badRecords.add(m.record);
-            changed = true;
-          }
+      // A member of a dropped union stays a record of its own: every record has its own sort, so a
+      // member of several unions does not go with one of them.
     }
   }
   const outside = new Map(module.outside.map((o) => [o.name, o]));
@@ -2116,7 +2133,15 @@ export function restrictModule(
     }
   }
   return {
-    records: module.records.filter((r) => !badRecords.has(r.name)),
+    // A kept record names only the unions kept with it.
+    records: module.records
+      .filter((r) => !badRecords.has(r.name))
+      .map((r) => {
+        const unions = r.unions?.filter((u) => !badRecords.has(`union:${u}`));
+        if (unions === r.unions) return r;
+        const { unions: _, ...rest } = r;
+        return unions && unions.length > 0 ? { ...rest, unions } : rest;
+      }),
     unions: module.unions.filter((u) => !badRecords.has(`union:${u.name}`)),
     functions: module.functions.filter((f) => kept.has(f.name)),
     outside: [...outside.values()],

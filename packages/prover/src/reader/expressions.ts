@@ -139,8 +139,8 @@ export class ExprReader {
     return insertNarrows(e, scope, this.ctx, (m) => this.fail(m, at));
   }
 
-  typeOfExpr(e: Expr, scope: Scope, at: Node): SubsetType {
-    return typeOf(e, scope, this.ctx, (m) => this.fail(m, at));
+  typeOfExpr(e: Expr, scope: Scope, at: Node, expected?: SubsetType): SubsetType {
+    return typeOf(e, scope, this.ctx, (m) => this.fail(m, at), expected);
   }
 
   /**

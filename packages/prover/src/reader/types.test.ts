@@ -263,7 +263,7 @@ export type Outcome =
     ]);
     expect(types.records.get("Outcome.false")).toEqual({
       name: "Outcome.false",
-      union: "Outcome",
+      unions: ["Outcome"],
       fields: [
         { name: "ok", type: { kind: "bool" }, literal: false },
         { name: "error", type: { kind: "record", name: '{ readonly type: "locked"; }' } },
@@ -295,7 +295,7 @@ export type Door = Locked | Open;
     });
     expect(door.types.records.get("Open")).toEqual({
       name: "Open",
-      union: "Door",
+      unions: ["Door"],
       fields: [{ name: "type", type: { kind: "string" }, literal: "open" }],
     });
   });
@@ -497,7 +497,7 @@ export type Door = Locked | Open;
     expect([...r.records.keys()]).toEqual(["Result.a", "Result.b"]);
   });
 
-  test("a record belongs to one union; a second type of a taken name is refused", () => {
+  test("a record may be a member of several unions, and lists them", () => {
     const decls = `
 export interface A { readonly t: "a" }
 export interface B { readonly t: "b" }
@@ -523,12 +523,11 @@ export type U2 = A | C;
           return types.of(checker.getTypeAtLocation(param.type), refuse);
         };
         expect(of("__1")).toEqual({ kind: "union", name: "U1" });
-        expect(() => of("__2")).toThrow(
-          "A is already a member of U1; a record belongs to one union",
-        );
+        expect(of("__2")).toEqual({ kind: "union", name: "U2" });
         return types;
       },
     );
-    expect(r.unions.map((u) => u.name)).toEqual(["U1"]);
+    expect(r.unions.map((u) => u.name)).toEqual(["U1", "U2"]);
+    expect(r.records.get("A")?.unions).toEqual(["U1", "U2"]);
   });
 });

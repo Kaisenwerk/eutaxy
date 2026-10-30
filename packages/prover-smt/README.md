@@ -6,7 +6,9 @@ through the spec file before it is called a counterexample. It models what
 the Lean engine assumes away: `number` is the IEEE double (NaN, the
 infinities and `-0` are in every binder's domain, `===` is `fp.eq`),
 `string` a sequence of 16-bit code units, a record a datatype, a tagged
-union a datatype with a constructor per member, a nullable type an option
+union a datatype with a constructor per member holding that member's
+record (wrapped where the union is expected, unwrapped where a tag test
+narrows to it, so a record can be a member of several unions), a nullable type an option
 datatype (`none` for `null`), a name narrowed by a null check bound to the
 option's value in the branch the check guards. Lists (arrays) and the
 operations on them are not taken here: a function or property using one is

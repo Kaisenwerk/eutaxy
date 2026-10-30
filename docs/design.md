@@ -927,10 +927,12 @@ inside compound types (`Ok<T>`), which leave such a call outside. A call
 the compiler reports an error on (a name imported with `import type`,
 which does not exist when the code runs), a callee without a body (a
 declaration file), one its file may rebind, or one reached again while
-it is being read (recursion) is outside the subset. A record is a member of one union at
-most, so two instantiations of one generic union that share a member
-(`Err<E>` in `Result<A, E>` and `Result<B, E>`) cannot both be used in
-one module yet. Arrays are in it as lists (`readonly T[]` or `T[]`, Lean's
+it is being read (recursion) is outside the subset. A record may be a
+member of several unions: `Err<E>` is one of `Result<A, E>` and of
+`Result<B, E>`, so decisions sharing an error type share its record, and
+an error returned from one result as the other is the same value. Two
+members of several unions in common join to no union by themselves; the
+declared type where they meet decides. Arrays are in it as lists (`readonly T[]` or `T[]`, Lean's
 `List`): literals with a trailing spread (`[i, ...s]`), `length`,
 `xs[0] ?? fallback` (the only index, since any other may be past the
 end, and not on a list of a nullable type, where `??` replaces a `null`
@@ -1009,8 +1011,15 @@ like Lean. It models what the Lean engine assumes away: `number` is the
 IEEE double (the floating-point theory, so `NaN`, the infinities, `-0` and
 the integers past 2^53 are in every binder's domain), `string` is a
 sequence of 16-bit code units (so `length` and ordering are JavaScript's),
-records and tagged unions are algebraic datatypes (a constructor per
-member), a nullable type an option datatype with `null` its `none`, and a
+records and tagged unions are algebraic datatypes: a record one
+constructor, a union one constructor per member holding that member's
+record, so a record that is a member of several unions keeps one sort, is
+wrapped in a union's constructor where that union is expected, and is
+unwrapped where a test of the tag narrows the union to it (an error moving
+from `Result<A, E>` to `Result<B, E>` is unwrapped from one and wrapped
+in the other; a binder of a union type is the one declared union its
+members match field for field and type for type, and a binder two unions
+match alike is outside rather than guessed), a nullable type an option datatype with `null` its `none`, and a
 name narrowed by a null check is bound to the option's value in the branch
 the check guards. Budgets are the solver's resource limit, never wall-clock
 time, so the same input gives the same outcome on every machine, and

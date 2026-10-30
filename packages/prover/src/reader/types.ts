@@ -324,7 +324,7 @@ export class SubsetTypes {
    * A union of records, told apart by a tag: a literal-typed field every
    * member has, holding a different literal in each. Members declared
    * inline are named by the union and their tag (`Outcome.true`); a
-   * record declared on its own keeps its name and belongs to one union.
+   * record declared on its own keeps its name, and may be a member of several unions.
    */
   private taggedUnion(type: Type, members: readonly Type[], refuse: Refuse): SubsetType {
     const cached = this.byId.get(type.id);
@@ -386,18 +386,18 @@ export class SubsetTypes {
       this.byId.set(type.id, { kind: "record", name });
     }
     if (known) {
-      if (union !== undefined && known.union !== union) {
-        if (known.union !== undefined)
-          return refuse(
-            `${name} is already a member of ${known.union}; a record belongs to one union`,
-          );
-        known = { ...known, union };
+      if (union !== undefined && !known.unions?.includes(union)) {
+        known = { ...known, unions: [...(known.unions ?? []), union] };
         this.records.set(name, known);
       }
       return known;
     }
     const fields = this.fieldsOf(type, name, refuse);
-    const record: RecordType = { name, fields, ...(union === undefined ? {} : { union }) };
+    const record: RecordType = {
+      name,
+      fields,
+      ...(union === undefined ? {} : { unions: [union] }),
+    };
     this.records.set(name, record);
     this.idOfName.set(name, type.id);
     this.byId.set(type.id, { kind: "record", name });

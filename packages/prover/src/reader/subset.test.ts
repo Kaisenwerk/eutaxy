@@ -309,7 +309,7 @@ export function plain(b: boolean): boolean { return b; }
     );
     expect(noListsU.unions).toEqual([]);
     expect(noListsU.functions.map((f) => f.name)).toEqual(["plain"]);
-    // Its other members go with it, and what takes them: their sort was the union's.
+    // Its other members stay records of their own (every record has its own sort), no longer naming it.
     const v = readSubset(`
 export type V = { readonly kind: "a"; readonly n: number } | { readonly kind: "b"; readonly ps: number[] };
 export interface A { readonly kind: "a"; readonly n: number }
@@ -322,7 +322,15 @@ export function plain(b: boolean): boolean { return b; }
       "no lists",
       listKinds,
     );
-    expect(noListsV.records.filter((r) => r.union === "V")).toEqual([]);
+    expect(noListsV.unions).toEqual([]);
+    expect(noListsV.records.find((r) => r.name === "V.a")).toEqual({
+      name: "V.a",
+      fields: [
+        { name: "kind", type: { kind: "string" }, literal: "a" },
+        { name: "n", type: { kind: "int" } },
+      ],
+    });
+    expect(noListsV.records.some((r) => r.unions?.includes("V"))).toBe(false);
     // A local annotation of a type the engine does not take puts its function outside too.
     const local = readSubset(
       "export function f(): number { const xs: (number | null)[] = []; return xs.length; }\nexport function g(b: boolean): boolean { return b; }",
@@ -812,7 +820,7 @@ export function compare(a: Challenge | null, b: Challenge | null): boolean { ret
         { name: "ok", type: { kind: "bool" }, literal: false },
         { name: "error", type: { kind: "union", name: "Refused" } },
       ],
-      union: "Outcome",
+      unions: ["Outcome"],
     });
     const admit = module.functions.find((f) => f.name === "admit");
     expect(admit?.params[0]?.type).toEqual({
@@ -921,7 +929,7 @@ export function wrongAnnotation(x: number): number {
     );
   });
 
-  test("a field typed with a union of literals is no tag; a record in two unions is refused", () => {
+  test("a field typed with a union of literals is no tag; a record may be in two unions", () => {
     const m = readSubset(`
 export type Ev = { readonly kind: "a" | "b"; readonly x: number } | { readonly kind: "c"; readonly y: number };
 export interface A { readonly t: "a" }
@@ -933,8 +941,29 @@ export function f(e: Ev): number { return 1; }
 export function g(x: boolean): U2 { return x ? { t: "a" } : { t: "c" }; }
 `);
     expect(m.outside.find((o) => o.name === "f")?.message).toContain("without a tag");
-    expect(m.unions.map((u) => u.name)).toEqual(["U1"]);
-    expect(m.outside.find((o) => o.name === "g")?.message).toContain("already a member of U1");
+    expect(m.unions.map((u) => u.name)).toEqual(["U1", "U2"]);
+    expect(m.records.find((r) => r.name === "A")?.unions).toEqual(["U1", "U2"]);
+    expect(m.functions.map((f) => f.name)).toContain("g");
+  });
+});
+
+describe("records in several unions, after review", () => {
+  test("a conditional over members of several unions takes the declared type where it stands", () => {
+    const m = readSubset(`
+export interface A { readonly tag: "a" }
+export interface B { readonly tag: "b" }
+export interface C { readonly tag: "c" }
+export type U1 = A | B;
+export type U2 = A | B | C;
+export function choose(b: boolean): U1 { return b ? { tag: "a" } : { tag: "b" }; }
+export function bound(b: boolean, a: A, bb: B): U1 {
+  const r: U1 = b ? a : bb;
+  return r;
+}
+export function wide(b: boolean, a: A, bb: B): U2 { return b ? a : bb; }
+`);
+    expect(m.outside).toEqual([]);
+    expect(m.functions.map((f) => f.name)).toEqual(["choose", "bound", "wide"]);
   });
 });
 

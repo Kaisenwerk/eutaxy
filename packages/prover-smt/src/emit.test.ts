@@ -230,23 +230,27 @@ export function decideAccess(status: "invited" | "active" | "disabled" | null): 
   const m = readSubset(src);
   const pre = prelude(m);
 
-  test("one datatypes block: records, unions with a constructor per member, options over the sorts used", () => {
+  test("one datatypes block: records, unions with a constructor per member holding its record, options over the sorts used", () => {
     expect(pre).toContain(
-      "(declare-datatypes ((R_Challenge 0) (R_Refused 0) (R_Outcome 0) (Opt.F64 0) (Opt.Bool 0) (Opt.Str 0) (Opt.R_Challenge 0) (Opt.R_Refused 0) (Opt.R_Outcome 0))",
+      "(declare-datatypes ((R_Challenge 0) (R_Refused.invalid_code 0) (R_Refused.code_locked 0) (R_Outcome.true 0) (R_Outcome.false 0) (R_Refused 0) (R_Outcome 0) (Opt.F64 0)",
     );
     expect(pre).toContain(
-      "((mk_Refused.invalid_code (fld.Refused.invalid_code.type (Seq (_ BitVec 16)))) (mk_Refused.code_locked",
+      "((mk_Refused.invalid_code (fld.Refused.invalid_code.type (Seq (_ BitVec 16)))))",
     );
     expect(pre).toContain(
-      "((mk_Outcome.true (fld.Outcome.true.ok Bool) (fld.Outcome.true.value R_Challenge)) (mk_Outcome.false",
+      "((mk_Outcome.true (fld.Outcome.true.ok Bool) (fld.Outcome.true.value R_Challenge)))",
+    );
+    expect(pre).toContain(
+      "((in.Outcome.Outcome.true (out.Outcome.Outcome.true R_Outcome.true)) (in.Outcome.Outcome.false (out.Outcome.Outcome.false R_Outcome.false)))",
     );
     expect(pre).toContain("((none.R_Challenge) (some.R_Challenge (val.R_Challenge R_Challenge)))");
     expect(pre).toContain("(define-fun f_admit ((v_c Opt.R_Challenge) (v_matches Bool)) R_Outcome");
   });
 
   test("a null check is a tester; a narrowed name is bound to its value in the branch it guards", () => {
+    // A member literal where its union is expected is wrapped in the union's constructor for it.
     expect(pre).toContain(
-      "(ite (is-none.R_Challenge v_c) (mk_Outcome.false false (mk_Refused.invalid_code (seq.++",
+      "(ite (is-none.R_Challenge v_c) (in.Outcome.Outcome.false (mk_Outcome.false false (in.Refused.Refused.invalid_code (mk_Refused.invalid_code (seq.++",
     );
     expect(pre).toContain("(let ((v_c (val.R_Challenge v_c))) (ite (fld.Challenge.locked v_c)");
   });
@@ -272,9 +276,9 @@ export const sendCode = forall(decideAccess, { ensures: (s) => decideAccess(s) =
     expect(a.script).toContain(
       "(assert (and (not (is-none.R_Challenge v_c)) (let ((v_c (val.R_Challenge v_c))) (not (fld.Challenge.locked v_c)))))",
     );
-    // The tag read on the union, from whichever member the value is.
+    // The tag read on the union, from whichever member the value holds.
     expect(a.script).toContain(
-      "(ite (is-mk_Outcome.true (f_admit v_c v_m)) (fld.Outcome.true.ok (f_admit v_c v_m)) (fld.Outcome.false.ok (f_admit v_c v_m)))",
+      "(ite (is-in.Outcome.Outcome.true (f_admit v_c v_m)) (fld.Outcome.true.ok (out.Outcome.Outcome.true (f_admit v_c v_m))) (fld.Outcome.false.ok (out.Outcome.Outcome.false (f_admit v_c v_m))))",
     );
     const s = propertyScript(sendCode, m);
     expect(s.script).toContain(
@@ -291,7 +295,7 @@ export const sendCode = forall(decideAccess, { ensures: (s) => decideAccess(s) =
       value(c, { kind: "nullable", inner: { kind: "record", name: "Challenge" } }, m),
     ).toContain("(some.R_Challenge (mk_Challenge");
     expect(value({ ok: true, value: c }, { kind: "union", name: "Outcome" }, m)).toContain(
-      "(mk_Outcome.true true (mk_Challenge",
+      "(in.Outcome.Outcome.true (mk_Outcome.true true (mk_Challenge",
     );
     expect(
       decode(
@@ -305,7 +309,7 @@ export const sendCode = forall(decideAccess, { ensures: (s) => decideAccess(s) =
       decode(some, { kind: "nullable", inner: { kind: "record", name: "Challenge" } }, m),
     ).toEqual({ attempts: Number.NaN, locked: true });
     const o = parseSExprs(
-      "(mk_Outcome.false false (mk_Refused.code_locked (seq.unit #x0061)))",
+      "(in.Outcome.Outcome.false (mk_Outcome.false false (in.Refused.Refused.code_locked (mk_Refused.code_locked (seq.unit #x0061)))))",
     )[0] as never;
     expect(decode(o, { kind: "union", name: "Outcome" }, m)).toEqual({
       ok: false,
@@ -349,13 +353,15 @@ export function tagOf(u: U): string { return u.t; }
   });
 
   test("option sorts exist for every sort, so a local join with null declares nothing new", () => {
-    expect(pre).toContain("(Opt.F64 0) (Opt.Bool 0) (Opt.Str 0) (Opt.R_Challenge 0) (Opt.R_U 0)");
+    expect(pre).toContain(
+      "(Opt.F64 0) (Opt.Bool 0) (Opt.Str 0) (Opt.R_Challenge 0) (Opt.R_A 0) (Opt.R_B 0) (Opt.R_U 0)",
+    );
     expect(pre).toContain(
       "(let ((v_d (ite (fp.gt v_x (_ +zero 11 53)) (some.R_Challenge v_c) none.R_Challenge)))",
     );
   });
 
-  test("a binder over a member record is its constructor; a union binder's members carry their tags", () => {
+  test("a binder over a member record is that record; a union binder's members carry their tags", () => {
     const sp = readSpecs({
       module: src,
       spec: `import { forall } from "eutaxy/spec";
@@ -367,12 +373,82 @@ export const tags = forall(tagOf, { ensures: (u) => tagOf(u) === "a" || tagOf(u)
     expect(sp.errors).toEqual([]);
     const [a, tags] = sp.functions.flatMap((f) => f.properties);
     if (!a || !tags) throw new Error("fixtures");
-    expect(propertyScript(a, m).script).toContain(
-      "(assert (and (is-mk_A v_x) (= (fld.A.t v_x) (seq.unit #x0061))))",
-    );
+    expect(propertyScript(a, m).script).toContain("(assert (= (fld.A.t v_x) (seq.unit #x0061)))");
     expect(propertyScript(tags, m).script).toContain(
-      "(assert (or (and (is-mk_A v_u) (= (fld.A.t v_u) (seq.unit #x0061))) (and (is-mk_B v_u) (= (fld.B.t v_u) (seq.unit #x0062)))))",
+      "(assert (or (and (is-in.U.A v_u) (= (fld.A.t (out.U.A v_u)) (seq.unit #x0061))) (and (is-in.U.B v_u) (= (fld.B.t (out.U.B v_u)) (seq.unit #x0062)))))",
     );
+  });
+});
+
+describe("records in several unions, after review", () => {
+  const src = `
+export interface A { readonly tag: "ok"; readonly data: "a" }
+export interface B { readonly tag: "ok"; readonly data: "a" | "b" }
+export interface E { readonly tag: "err" }
+export type U1 = A | E;
+export type U2 = B | E;
+export function id(x: U2): U2 { return x; }
+export function first(x: U1): U1 { return x; }
+`;
+  const m = readSubset(src);
+
+  test("a union binder is the one union whose members' fields match type for type", () => {
+    const sp = readSpecs({
+      module: src,
+      spec: `import { forall } from "eutaxy/spec";
+import { first, id } from "./m.ts";
+export const wide = forall(id, { ensures: (x) => x.tag !== "ok" || x.data === "a" });
+export const narrow = forall(first, { ensures: (x) => x.tag !== "ok" || x.data === "a" });`,
+      modulePath: "/virtual/m.ts",
+    });
+    expect(sp.errors).toEqual([]);
+    const [wide, narrow] = sp.functions.flatMap((f) => f.properties);
+    if (!wide || !narrow) throw new Error("fixtures");
+    // B's data is a union of literals, any string to the sort: x is a U2, so "b" stays possible.
+    expect(propertyScript(wide, m).script).toContain("(declare-const v_x R_U2)");
+    expect(propertyScript(narrow, m).script).toContain("(declare-const v_x R_U1)");
+  });
+
+  test("a member's field typed as another union's inline member is matched by its fields", () => {
+    const nested = `
+export type U = { readonly tag: "a"; readonly n: number } | { readonly tag: "b" };
+export type A = Extract<U, { tag: "a" }>;
+export type W = { readonly kind: "x"; readonly inner: A } | { readonly kind: "y" };
+export function f(w: W): W { return w; }
+`;
+    const mn = readSubset(nested);
+    expect(mn.outside).toEqual([]);
+    const sp = readSpecs({
+      module: nested,
+      spec: `import { forall } from "eutaxy/spec";
+import { f } from "./m.ts";
+export const p = forall(f, { ensures: (w) => w.kind === "x" || w.kind === "y" });`,
+      modulePath: "/virtual/m.ts",
+    });
+    const [p] = sp.functions.flatMap((fn) => fn.properties);
+    if (!p) throw new Error("fixtures");
+    expect(propertyScript(p, mn).script).toContain("(declare-const v_w R_W)");
+  });
+
+  test("members no one declared union matches exactly leave the binder outside", () => {
+    const twin = `
+export interface A { readonly tag: "ok"; readonly n: number }
+export interface E { readonly tag: "err" }
+export type V1 = A | E;
+export type V2 = A | E;
+export function f(x: V1): V1 { return x; }
+`;
+    const mt = readSubset(twin);
+    const sp = readSpecs({
+      module: twin,
+      spec: `import { forall } from "eutaxy/spec";
+import { f } from "./m.ts";
+export const p = forall(f, { ensures: (x) => x.tag === "ok" || x.tag === "err" });`,
+      modulePath: "/virtual/m.ts",
+    });
+    const [p] = sp.functions.flatMap((fn) => fn.properties);
+    if (!p) throw new Error("fixtures");
+    expect(() => propertyScript(p, mt)).toThrow(/no one union/);
   });
 });
 
