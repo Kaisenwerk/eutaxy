@@ -1,5 +1,5 @@
 import { type AtMostOncePerKey, digestLog, type ScenarioSpec } from "@eutaxy/core";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { explore, replayRun } from "./explore.ts";
 import { checkThenInsertConsumer, createFakePlatform, type FakeHandler } from "./fake-platform.ts";
 import { Run } from "./run.ts";
@@ -112,6 +112,102 @@ describe("concurrent invocations", () => {
       digests.add(digestLog((await replayRun(raceSpec(2), platform, verdict.schedule)).log));
     expect(digests.size).toBe(1);
   });
+
+  /** The engine loaded afresh under fake real timers, on this host or on a workerd-like one (by user agent). */
+  async function underFakeTimers<T>(
+    host: "node" | "workerd-like",
+    body: (loadEngine: () => Promise<typeof import("./explore.ts")>) => Promise<T>,
+  ): Promise<T> {
+    // Faked before the engine captures them. `setImmediate` stays real on the Node host, where it is
+    // the event-loop turn the scheduler takes; a workerd-like host has no cheap turn and uses timers.
+    const timers = ["setTimeout", "clearTimeout", "setInterval", "clearInterval"] as const;
+    vi.useFakeTimers({
+      toFake: host === "node" ? [...timers] : [...timers, "setImmediate", "clearImmediate"],
+    });
+    const navigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+    if (host === "workerd-like")
+      Object.defineProperty(globalThis, "navigator", {
+        value: { userAgent: "Cloudflare-Workers" },
+        configurable: true,
+      });
+    vi.resetModules();
+    try {
+      return await body(() => import("./explore.ts"));
+    } finally {
+      vi.useRealTimers();
+      if (navigator) Object.defineProperty(globalThis, "navigator", navigator);
+      else delete (globalThis as { navigator?: unknown }).navigator;
+      vi.resetModules();
+    }
+  }
+
+  const freshPlatform = async () => {
+    const fake = await import("./fake-platform.ts");
+    return fake.createFakePlatform(fake.checkThenInsertConsumer, { concurrent: true });
+  };
+
+  test("the scheduler is woken by progress: a run with no hosted code waits on no real timer", async () => {
+    // Frozen timers: a wait on one would hang the run, and the test.
+    const kind = await underFakeTimers("node", async (loadEngine) => {
+      const { explore } = await loadEngine();
+      const verdict = await explore(raceSpec(2), await freshPlatform(), {
+        seed: "race",
+        now: fixedClock,
+        maxRuns: 20,
+      });
+      return verdict.kind;
+    });
+    expect(kind).toBe("VIOLATED");
+  }, 10_000);
+
+  test("on a host whose only way to the event loop is a timer (workerd) a decision costs one tick and nothing else", async () => {
+    const counts = await underFakeTimers("workerd-like", async (loadEngine) => {
+      // Every way to the event loop the engine may take, counted as the engine arms it (before
+      // the engine captures the globals): zero timers, and immediates, which are timers there too.
+      const g = globalThis as unknown as Record<string, (...args: unknown[]) => unknown>;
+      let ticks = 0;
+      let immediates = 0;
+      for (const name of ["setTimeout", "setImmediate"]) {
+        const real = g[name] as (cb: unknown, ms?: unknown, ...rest: unknown[]) => unknown;
+        g[name] = (cb: unknown, ms?: unknown, ...rest: unknown[]) => {
+          if (name === "setImmediate") immediates++;
+          else if (ms === 0 || ms === undefined) ticks++;
+          return real(cb, ms, ...rest);
+        };
+      }
+      const { runOnce } = await loadEngine();
+      const { Run: FreshRun } = await import("./run.ts");
+      // A chooser sees every decision, choices or not: the first option each time. (The race
+      // scenario sets no timers and nothing in it gets stuck, so every step is such a decision.)
+      let decisions = 0;
+      const run = new FreshRun({
+        mode: "explore",
+        schedule: { seed: 7, faults: [] },
+        bounds: raceSpec(2).bounds,
+        faultProbability: 0,
+        chooser: {
+          choose: (kind) => {
+            if (kind === "turn") decisions++;
+            return 0;
+          },
+        },
+      });
+      let done = false;
+      const running = runOnce(raceSpec(2), await freshPlatform(), run).then(() => (done = true));
+      let advances = 0;
+      while (!done) {
+        await vi.advanceTimersByTimeAsync(1);
+        if (++advances > 100_000) throw new Error("the run never ends");
+      }
+      await running;
+      return { ticks, immediates, decisions, effects: run.effectPoints };
+    });
+    expect(counts.effects).toBeGreaterThan(0);
+    // The tick a wait arms is the turn that settles it: one per decision, and no immediate (the
+    // old scheduler armed both, doubling what a decision costs there).
+    expect(counts.ticks).toBe(counts.decisions);
+    expect(counts.immediates).toBe(0);
+  }, 20_000);
 
   test("the same seed explores the same interleavings", async () => {
     const run = () => explore(raceSpec(2), concurrent(), { seed: 7, now: fixedClock, maxRuns: 20 });

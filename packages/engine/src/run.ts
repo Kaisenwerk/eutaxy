@@ -34,13 +34,14 @@ import {
   seedPrng,
 } from "@eutaxy/core";
 import {
-  drainMicrotasks,
   effectLatencyMs,
+  eventLoopTurn,
   type Patched,
   patchGlobals,
   realDeadline,
   realTick,
   settleOn,
+  type VirtualClock,
 } from "./clock.ts";
 import { asyncScope } from "./context.ts";
 import { installScriptedFetch } from "./fetch.ts";
@@ -639,17 +640,26 @@ export class Run implements RunHooks {
     return { promise, invocation: () => cell.id };
   }
 
-  /** Concurrent runs: something moved (an invocation parked, a delivery ended, I/O completed). */
+  /** Concurrent runs: something moved (I/O completed, an event was queued). */
   progressed(): void {
     this.turns.progressed();
   }
 
+  /** Concurrent runs: a delivery ended. */
+  rested(): void {
+    this.turns.rested();
+  }
+
   /**
-   * Concurrent runs: wait until the running invocation has parked, finished
-   * or gone idle. Parking, a delivery ending and I/O completing wake the wait
-   * at once; then every pending microtask runs, so continuations the turn set
-   * off have run too. Code waiting on anything else gets one zero timer, the
-   * same allowance the sequential path gives, before it counts as idle.
+   * Concurrent runs: wait until what the last step set off (a turn
+   * released, an event started, a timer fired) has parked, finished or
+   * gone idle. Parking, a delivery ending and I/O completing wake the wait
+   * at once, except while a Durable Object's code runs, which cannot wake
+   * it (the wait's zero timer polls then); every continuation they set off
+   * runs before it returns (one turn of the event loop), so code another
+   * invocation's promise resumed reaches its own effect too. Code waiting
+   * on anything else gets one such turn, the same allowance the sequential
+   * path gives, before it counts as idle.
    */
   quiesce(): Promise<void> {
     return this.turns.quiesce();
@@ -668,19 +678,21 @@ export class Run implements RunHooks {
   /**
    * Let virtual time pass until `at`: timers due by then fire first, in due
    * order, as the invocations that set them, each followed by the work it
-   * sets off. No-op when `at` is not ahead.
+   * sets off. No-op when `at` is not ahead. Returns whether a timer fired.
    */
-  async advanceTo(at: number): Promise<void> {
+  async advanceTo(at: number): Promise<boolean> {
     const clock = this.patched?.clock;
-    if (!clock) return;
+    if (!clock) return false;
+    let fired = false;
     for (let due = clock.nextDue(); due !== undefined && due <= at; due = clock.nextDue()) {
-      this.runAs(clock.nextOwner() ?? null);
-      clock.fireNext();
+      this.fireNextTimer(clock);
+      fired = true;
       // What the timer set off runs at its own time, before the clock moves on.
-      do await drainMicrotasks();
+      do await eventLoopTurn();
       while (this.frames.inFlight > 0);
     }
     clock.advance(at - clock.now());
+    return fired;
   }
 
   /** When the next virtual timer is due, or undefined when none is pending. */
@@ -691,10 +703,14 @@ export class Run implements RunHooks {
   /** Concurrent runs: fire the next due timer as the invocation that set it. False when none is pending. */
   fireTimer(): boolean {
     const clock = this.patched?.clock;
-    if (!clock) return false;
-    const owner = clock.nextOwner();
-    if (owner === undefined) return false;
-    this.runAs(owner);
+    if (!clock || clock.nextOwner() === undefined) return false;
+    return this.fireNextTimer(clock);
+  }
+
+  /** Fire the next due timer as the invocation that set it (a step of a concurrent run). */
+  private fireNextTimer(clock: VirtualClock): boolean {
+    this.runAs(clock.nextOwner() ?? null);
+    if (this.concurrent) this.turns.step();
     return clock.fireNext();
   }
 

@@ -94,19 +94,21 @@ unchanged.
 
 Work toward v0.10 ships as `0.9.x`, and so does the following, each when
 a target needs it:
-- First, before the refactor, three gaps a shared result type meets in
-  real cores: generic functions (`ok<T>(value: T)`, instantiated from the
+- Done first, before the refactor: the gaps a shared result type meets in
+  real cores, generic functions (`ok<T>(value: T)`, instantiated from the
   call's resolved signature), calls to functions imported from another
-  module of the project, and `Math.floor`. With them, decision functions
-  built on such a kit reach `PROVEN` through the SMT engine, where today
-  they stop at `TESTED`. Each gets a contract entry in that shape.
-- The concurrent scheduler woken by progress rather than by real
-  zero-timers (a run with two invocations in flight costs three to four
-  times its I/O today, since a zero timer is about a millisecond in
-  workerd), first among the performance items since v0.10's scenarios
-  run concurrently; `report`'s module workers and the engines' modules run
-  in parallel, toolchain lookups once per process, one Z3 prelude per
-  module.
+  module of the project, module constants and `Math.floor`, each with a
+  contract entry in that shape, so decision functions built on such a
+  kit reach `PROVEN` through the SMT engine; and the concurrent scheduler
+  woken by progress, taking one turn of the event loop per decision
+  rather than two or three, since v0.10's scenarios run concurrently. In
+  workerd that turn is a zero timer of about a millisecond, the only way
+  to its event loop, so a run with two invocations in flight still costs
+  about a millisecond per turn beyond its I/O (the wallet entry went from
+  3.4 to 2.3 times its sequential cost per run).
+- The remaining performance items: `report`'s module workers and the
+  engines' modules run in parallel, toolchain lookups once per process,
+  one Z3 prelude per module.
 - A report path per run in `eutaxy check`, so two checks of one scenario
   running at once do not share Vitest's report file.
 - The proof cache keyed by source, spec and engine version; `eutaxy prover

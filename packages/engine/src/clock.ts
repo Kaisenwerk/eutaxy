@@ -350,20 +350,36 @@ export function realTick(): Promise<void> {
   return new Promise((resolve) => realSetTimeout(() => resolve(), 0));
 }
 
-// Not in every host's types (workerd has it only with Node compatibility), so looked up loosely.
+// Not in every host's types, so looked up loosely; captured before any patching.
 const hostSetImmediate = (globalThis as { setImmediate?: (callback: () => void) => unknown })
   .setImmediate;
-const realSetImmediate = hostSetImmediate?.bind(globalThis);
+// workerd names itself in `navigator.userAgent` (Cloudflare, Compatibility flags: Global navigator,
+// on by default since 2022-03-21) and is the host with `WebSocketPair` (Cloudflare, WebSockets).
+const hostAgent = (globalThis as { navigator?: { userAgent?: unknown } }).navigator?.userAgent;
+const inWorkerd =
+  hostAgent === "Cloudflare-Workers" ||
+  typeof (globalThis as { WebSocketPair?: unknown }).WebSocketPair === "function";
 
 /**
- * Let every pending microtask run, and I/O callbacks that are already due:
- * one turn of the real event loop without a timer's delay where the host has
- * `setImmediate`, else a zero timer.
+ * A turn of the real event loop without a timer's delay, where the host
+ * gives one cheaply: Node's `setImmediate` (microseconds), after which every
+ * pending microtask has run and I/O callbacks that were due have been
+ * delivered. Null in workerd, which has `setImmediate` too but runs it as a
+ * timer, about a millisecond like `setTimeout(0)`, and where nothing else
+ * reaches the event loop (streams, bodies, message ports, crypto and the
+ * cache all resolve without a turn of it), so a zero timer is the turn.
+ * Measured in the Cloudflare Vitest pool (workerd 1.2026-10, 2026-10-30),
+ * not documented: a workerd whose `setImmediate` became cheap would only
+ * run slower here, never wrong.
  */
-export function drainMicrotasks(): Promise<void> {
-  return realSetImmediate
-    ? new Promise((resolve) => realSetImmediate(() => resolve()))
-    : realTick();
+export const cheapEventLoopTurn: (() => Promise<void>) | null =
+  hostSetImmediate && !inWorkerd
+    ? () => new Promise((resolve) => hostSetImmediate.call(globalThis, () => resolve()))
+    : null;
+
+/** One turn of the real event loop: the cheap one where the host has it, else a zero timer. */
+export function eventLoopTurn(): Promise<void> {
+  return cheapEventLoopTurn ? cheapEventLoopTurn() : realTick();
 }
 
 export interface SettleContext {

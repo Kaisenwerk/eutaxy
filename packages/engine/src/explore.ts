@@ -160,11 +160,11 @@ async function deliverConcurrently(
       d.started.promise.then(
         (result) => {
           d.outcome = { result };
-          run.progressed();
+          run.rested();
         },
         (error: unknown) => {
           d.outcome = { error };
-          run.progressed();
+          run.rested();
         },
       );
       active.push(d);
@@ -175,8 +175,9 @@ async function deliverConcurrently(
       active.length < spec.bounds.maxConcurrentInvocations &&
       (run.nextTimerDue() ?? Number.POSITIVE_INFINITY) > (pending[next]?.at ?? 0)
     ) {
-      // Nothing can move before the next delayed event is due: let time pass until then.
-      await run.advanceTo(pending[next]?.at ?? 0);
+      // Nothing can move before the next delayed event is due: let time pass until then. With no
+      // timer fired on the way, nothing was set off that a wait could settle.
+      if (!(await run.advanceTo(pending[next]?.at ?? 0))) continue;
     } else if (turn === "none" && !run.fireTimer()) {
       const stuck = active.flatMap((d) => d.started.invocation() ?? []);
       if (run.abandon(stuck) === 0)

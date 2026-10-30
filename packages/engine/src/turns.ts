@@ -6,10 +6,20 @@
  * chooser when exploring exhaustively, else from a stream seeded by the
  * schedule's seed. It also tracks whether turns told apart by their parked
  * effects' targets may not commute, which partial-order reduction needs.
+ *
+ * Between turns the run waits for the code it released to come to rest
+ * (`quiesce`): progress (a park, a delivery's end, real I/O completing)
+ * wakes it, and before it decides every continuation that progress set off
+ * has run, which takes one turn of the host's event loop: `setImmediate`
+ * where that is cheap (Node), else the real zero timer the wait armed, which
+ * also polls for the moves of hosted code, which cannot wake it, and gives
+ * code waiting on something it cannot see its allowance. One such turn per
+ * decision is the floor in workerd, where a zero timer is the only way to
+ * the event loop and costs about a millisecond.
  */
 
 import { nextInt, type PrngState, seedPrng } from "@eutaxy/core";
-import { drainMicrotasks, realTick } from "./clock.ts";
+import { cheapEventLoopTurn, realDeadline } from "./clock.ts";
 import type { Frame, Frames } from "./frames.ts";
 import type { ChoiceOption, RunOptions } from "./run.ts";
 
@@ -50,8 +60,14 @@ export class Turns {
   /** The target of the turn running since the last decision; null for an event's start or none. */
   private turnTarget: string | null = null;
   private commuteNot = false;
-  /** Woken whenever an invocation parks, a delivery ends or I/O completes. */
+  /** Woken whenever an invocation parks, a delivery ends or I/O completes (see `progressed`). */
   private progressWaiters: (() => void)[] = [];
+  /** Times something moved, hosted code's moves included, and the count the last wait or step saw. */
+  private moves = 0;
+  private seenMoves = 0;
+  /** Parks and delivery ends so far, and the count when the current step began. */
+  private rests = 0;
+  private restsAtStep = 0;
   /** The order invocations started in, which orders the parked ones. */
   private readonly startOrder = new Map<string, number>();
   /** The picks among parked invocations, drawn apart from fault decisions. */
@@ -84,7 +100,23 @@ export class Turns {
   park(inv: Turner, target: string, go: () => void, host?: Frame): void {
     const option = { label: `${inv.id}@${inv.parks++}`, invocation: inv.id, target };
     this.parked.push({ inv, seq: this.parkSeq++, go, option, ...(host ? { host } : {}) });
+    this.rested();
+  }
+
+  /** See `Run.rested`. */
+  rested(): void {
+    this.rests++;
     this.progressed();
+  }
+
+  /**
+   * A step begins: a turn is released, an event starts or a timer fires.
+   * `quiesce` then waits for what the step set off to come to rest. Called
+   * by `takeTurn` and, for timers, by the run.
+   */
+  step(): void {
+    this.restsAtStep = this.rests;
+    this.seenMoves = this.moves;
   }
 
   /** See `Run.turnsMayNotCommute`. */
@@ -113,9 +145,11 @@ export class Turns {
 
   /** See `Run.progressed`. */
   progressed(): void {
+    this.moves++;
     // While hosted code runs (a Durable Object call), a wake could come from inside it, and the
-    // scheduler would resume in that object's I/O context, where workerd refuses other calls.
-    // The scheduler's own zero timer wakes it then instead (see quiesce).
+    // scheduler would resume in that object's I/O context, where workerd refuses other calls
+    // ("Cannot perform I/O on behalf of a different Durable Object"). The scheduler's own zero
+    // timer polls for the move then instead (see quiesce).
     if (this.frames.hostingNow > 0) return;
     const waiters = this.progressWaiters;
     this.progressWaiters = [];
@@ -125,13 +159,46 @@ export class Turns {
   /** See `Run.quiesce`. */
   async quiesce(): Promise<void> {
     for (;;) {
-      await Promise.race([
-        new Promise<void>((wake) => this.progressWaiters.push(wake)),
-        realTick(),
-      ]);
-      await drainMicrotasks();
-      if (this.frames.inFlight === 0) return;
+      const moved = await this.wait();
+      // Real I/O: its completion wakes the next wait, and hosted code's moves show at its end.
+      if (this.frames.inFlight > 0) continue;
+      // An invocation parked or a delivery ended since the step: what the step set off is at rest.
+      if (this.rests !== this.restsAtStep) return;
+      // Nothing in flight and nothing at rest: code waiting on something Eutaxy cannot see has one
+      // turn of the event loop, as the sequential path gives, before it counts as idle; a wait
+      // that saw nothing move was that turn.
+      if (!moved) return;
     }
+  }
+
+  /**
+   * Wait for a move (see `progressed`) or one real zero timer, whichever
+   * comes first (no wait when something moved since the last one), then
+   * let everything the move set off run before the caller looks: one turn
+   * of the event loop, the cheap one where the host has it, else the timer
+   * armed for the wait, after which the microtask queue is empty too.
+   * Returns whether anything moved since the last wait.
+   */
+  private async wait(): Promise<boolean> {
+    const before = this.seenMoves;
+    const racing = this.moves === before;
+    const tick = racing || !cheapEventLoopTurn ? realDeadline(0) : undefined;
+    if (racing && tick) {
+      let wake: () => void = () => {};
+      const woken = new Promise<void>((resolve) => {
+        wake = resolve;
+      });
+      this.progressWaiters.push(wake);
+      await Promise.race([woken, tick.expired]);
+      const i = this.progressWaiters.indexOf(wake);
+      if (i >= 0) this.progressWaiters.splice(i, 1);
+    }
+    if (cheapEventLoopTurn) {
+      tick?.cancel();
+      await cheapEventLoopTurn();
+    } else await tick?.expired;
+    this.seenMoves = this.moves;
+    return this.moves !== before;
   }
 
   /** See `Run.takeTurn`. */
@@ -143,6 +210,7 @@ export class Turns {
     const options = this.parked.length + (canStart ? 1 : 0);
     this.endSegment();
     this.turnTarget = null;
+    this.step();
     if (options === 0) return "none";
     let pick = 0;
     if (options > 1) {

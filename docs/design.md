@@ -721,7 +721,21 @@ invocation in flight has parked, finished or gone idle, the engine lets
 one parked invocation perform its effect and run to its next one, or,
 while a slot is free, starts the next event; timers fire only when nothing
 else can move; an invocation that waits
-on nothing Eutaxy can see makes the run `UNSUPPORTED`. The pick among
+on nothing Eutaxy can see makes the run `UNSUPPORTED`. The engine learns
+that an invocation has parked, finished or gone idle from the run itself,
+not from real time: a park, a delivery's end and real I/O completing wake
+it. Before it decides, every continuation that progress set off must have
+run, which takes one turn of the host's event loop: `setImmediate` where
+that is cheap (Node), else the real zero timer the wait armed, which also
+polls for the moves of a Durable Object's code, which cannot wake it (see
+Durable Objects above), and gives code waiting on something unseen one
+such turn before calling it idle. One turn per decision is the floor. In
+workerd a zero timer is the only way to the event loop (streams, bodies,
+message ports, crypto and the cache all resolve without one) and costs
+about a millisecond, so a concurrent run there costs about that per turn
+beyond its I/O; a bounded run of microtask hops cannot stand in for the
+turn, since a strand of the invocation midway through plain awaits would
+be cut off before its park and an interleaving lost. The pick among
 parked invocations comes from a stream seeded by the run's seed, separate
 from fault decisions, so replay makes the same picks and the schedule
 needs no record of them. Synchronous effects (an ack, the response point)
