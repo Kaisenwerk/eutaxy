@@ -3,6 +3,7 @@ export { closeCompiler } from "./compiler.ts";
 export { hintsOf, type ReadSpecsInput, readSpecs } from "./specs.ts";
 export {
   type BinaryOp,
+  builtinsAssumption,
   type CalleeSignature,
   children,
   describe,

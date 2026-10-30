@@ -23,19 +23,27 @@
 import type { Arrow } from "@eutaxy/spec";
 import {
   type ArrowFunction,
+  type AsExpression,
   type Expression,
   type FunctionDeclaration,
   type FunctionExpression,
+  forEachLeadingCommentRange,
+  forEachTrailingCommentRange,
   type Identifier,
   InternalSymbolName,
   type Node,
+  type NonNullExpression,
   type ObjectLiteralExpression,
+  type ParenthesizedExpression,
+  type SatisfiesExpression,
   type SourceFile,
   SyntaxKind,
+  type TypeAssertion,
 } from "typescript/ast";
 import * as is from "typescript/ast/is";
 import { type Checker, SymbolFlags, type Type } from "typescript/sync";
 import {
+  type CompilerError,
   type InputFile,
   isAsync,
   isConst,
@@ -1192,21 +1200,31 @@ function directEval(sf: SourceFile): number | undefined {
   return line;
 }
 
-/** Whether an identifier is written to: assigned, updated, or bound by a destructuring or a `for` head. */
+/** An expression TypeScript lets wrap another without changing what it names: parentheses and assertions. */
+type Wrapper =
+  | ParenthesizedExpression
+  | NonNullExpression
+  | AsExpression
+  | SatisfiesExpression
+  | TypeAssertion;
+
+function isWrapper(n: Node): n is Wrapper {
+  return (
+    is.isParenthesizedExpression(n) ||
+    is.isNonNullExpression(n) ||
+    is.isAsExpression(n) ||
+    is.isSatisfiesExpression(n) ||
+    is.isTypeAssertion(n)
+  );
+}
+
+/** Whether a node is written to: assigned, updated, or bound by a destructuring or a `for` head. */
 function isWritten(node: Node): boolean {
   let n: Node = node;
   for (;;) {
     const p: Node = n.parent;
     if (!p) return false;
-    // The outer expressions TypeScript lets wrap an assignment target: parentheses and assertions.
-    if (
-      (is.isParenthesizedExpression(p) ||
-        is.isNonNullExpression(p) ||
-        is.isAsExpression(p) ||
-        is.isSatisfiesExpression(p) ||
-        is.isTypeAssertion(p)) &&
-      p.expression === n
-    ) {
+    if (isWrapper(p) && p.expression === n) {
       n = p;
       continue;
     }
@@ -1238,6 +1256,173 @@ function isWritten(node: Node): boolean {
     }
     return false;
   }
+}
+
+/** What every PROVEN rests on besides the engine's model: the reader's assumption about the built-ins. */
+export const builtinsAssumption =
+  "the built-ins the subset reads (Math, Number and the array methods) are the standard ones: a direct assignment to a global of the standard library or to a property of one, or through globalThis, self or window, in a read file is refused, but one made another way (Object.defineProperty, through an alias) or elsewhere (a polyfill, another module) is not seen";
+
+/** Names a file reaches the globals through that the library the reads compile against does not declare. */
+const globalObjects = new Set(["globalThis", "self", "window", "global"]);
+
+/**
+ * The first direct assignment (or `delete`) in a file whose target is a
+ * global of the compiler's standard library or a property of one, at any
+ * depth (`Math.floor = …`, `Number["isInteger"] = …`, `Array.prototype.map
+ * = …`, `Math = …`), or anything under `globalThis`, `self`, `window` or
+ * `global`, with its line; inside a function or not. The chain's root is
+ * resolved by the compiler, so a local's `prototype` field is the local's.
+ * What reaches a built-in another way (`Object.defineProperty`, an alias)
+ * is not seen: `builtinsAssumption` says so.
+ */
+export function rebound(
+  sf: SourceFile,
+  checker: Checker,
+  standardGlobal: (id: Identifier) => boolean,
+): { line: number; target: string } | undefined {
+  let found: { line: number; target: string } | undefined;
+  // `window` and its kin, by name, unless the name is a parameter or a local of some function here.
+  const globalObject = (r: Identifier): boolean => {
+    if (!globalObjects.has(r.text)) return false;
+    const decl = checker.getSymbolAtLocation(r)?.valueDeclaration?.resolve();
+    if (!decl) return true;
+    if (decl.kind === SyntaxKind.Parameter) return false;
+    return !(is.isVariableDeclaration(decl) && decl.parent.parent.parent !== decl.getSourceFile());
+  };
+  // The node a `delete` would take: the target with the wrappers around it.
+  const outermost = (node: Node): Node => {
+    let out: Node = node;
+    for (let p: Node = out.parent; p && isWrapper(p) && p.expression === out; p = p.parent) out = p;
+    return out;
+  };
+  const root = (node: Node): Node => {
+    let n: Node = node;
+    while (is.isPropertyAccessExpression(n) || is.isElementAccessExpression(n) || isWrapper(n))
+      n = n.expression;
+    return n;
+  };
+  const builtin = (node: Node): boolean => {
+    const r = root(node);
+    return is.isIdentifier(r) && (globalObject(r) || standardGlobal(r));
+  };
+  const visit = (node: Node): void => {
+    if (found) return;
+    if (
+      (is.isPropertyAccessExpression(node) ||
+        is.isElementAccessExpression(node) ||
+        is.isIdentifier(node)) &&
+      (isWritten(node) || is.isDeleteExpression(outermost(node).parent)) &&
+      builtin(node)
+    ) {
+      found = { line: lineAt(sf, node), target: textOf(sf, node) };
+      return;
+    }
+    node.forEachChild(visit);
+  };
+  visit(sf);
+  return found;
+}
+
+/**
+ * The first `@ts-ignore` or `@ts-expect-error` directive in a range of a
+ * file, with its position: a comment shaped as the compiler reads one (the
+ * directive opens a `//` comment, or the last line of a block comment),
+ * found as the compiler finds comments, leading or trailing a node's
+ * text, so the words in prose or in a string are not one. A comment
+ * before a closing token alone (`/* … *\/ }`) is not seen; what it could
+ * hide is on that token's line.
+ */
+function directiveIn(
+  sf: SourceFile,
+  start: number,
+  end: number,
+): { text: string; pos: number } | undefined {
+  const text = sf.text;
+  const singleLine = /^\/\/\/?\s*@ts-(ignore|expect-error)/;
+  const lastLine = /^(?:\/|\*)*\s*@ts-(ignore|expect-error)/;
+  let found: { text: string; pos: number } | undefined;
+  const check = (pos: number, commentEnd: number): void => {
+    if (found || pos < start || commentEnd > end) return;
+    const comment = text.slice(pos, commentEnd);
+    const m = comment.startsWith("//")
+      ? singleLine.exec(comment)
+      : lastLine.exec(comment.slice(comment.lastIndexOf("\n") + 1));
+    if (m) found = { text: `@ts-${m[1]}`, pos };
+  };
+  const visit = (node: Node): void => {
+    if (found || node.end < start || node.pos > end) return;
+    forEachLeadingCommentRange(text, node.pos, check);
+    forEachTrailingCommentRange(text, node.end, check);
+    node.forEachChild(visit);
+  };
+  visit(sf);
+  return found;
+}
+
+/**
+ * The line of a `@ts-nocheck` directive at the top of a file, which turns
+ * the compiler's checks off for all of it: as the compiler reads it, a
+ * `//` comment opening with it, the last of it and `@ts-check` deciding.
+ */
+function noCheckDirective(sf: SourceFile): number | undefined {
+  const text = sf.text;
+  const from = text.startsWith("#!") ? Math.max(0, text.indexOf("\n")) : 0;
+  let line: number | undefined;
+  forEachLeadingCommentRange(text, from, (pos, end) => {
+    const m = /^\/\/\/?\s*@ts-(check|nocheck)\b/.exec(text.slice(pos, end));
+    if (m) line = m[1] === "nocheck" ? sf.getLineAndCharacterOfPosition(pos).line + 1 : undefined;
+  });
+  return line;
+}
+
+/** A declaration's text, and the statement's leading comments, where a directive reaches its first line. */
+interface DeclaredRange {
+  readonly start: number;
+  readonly end: number;
+  readonly lead?: { readonly start: number; readonly end: number };
+}
+
+/**
+ * Why a range of a file is not read: the first error the compiler reports
+ * inside it, or a `@ts-ignore` or `@ts-expect-error` directive in it or
+ * in the leading comments (where a directive reaches the first line),
+ * which hides one from the reader. Undefined when the range is clean.
+ */
+function notCompiled(
+  sf: SourceFile,
+  typeErrors: (path: string) => readonly CompilerError[],
+  { start, end, lead }: DeclaredRange,
+): { message: string; line: number } | undefined {
+  const error = typeErrors(sf.fileName).find((e) => e.pos < end && e.end > start);
+  if (error)
+    return { message: `the compiler reports an error: ${error.message}`, line: error.line };
+  const silenced =
+    (lead ? directiveIn(sf, lead.start, lead.end) : undefined) ?? directiveIn(sf, start, end);
+  if (silenced)
+    return {
+      message: `a ${silenced.text} comment, which hides a compiler error from the reader`,
+      line: sf.getLineAndCharacterOfPosition(silenced.pos).line + 1,
+    };
+  return undefined;
+}
+
+/**
+ * Where a declared function's errors are looked for: its own declaration
+ * (in a `const` list, a sibling's error, or a directive in a sibling's
+ * body, is the sibling's), and for directives the statement's leading
+ * comments too, since a directive above the statement reaches its first
+ * line, siblings included.
+ */
+function rangeOf(d: Declared): DeclaredRange {
+  let declaration: Node = d.node;
+  while (!is.isFunctionDeclaration(declaration) && !is.isVariableDeclaration(declaration))
+    declaration = declaration.parent;
+  const sf = d.statement.getSourceFile();
+  return {
+    start: declaration.pos,
+    end: declaration.end,
+    lead: { start: d.statement.pos, end: d.statement.getStart(sf) },
+  };
 }
 
 /**
@@ -1378,16 +1563,22 @@ interface FileFunctions {
   readonly declarations: ReadonlyMap<string, Declared>;
   readonly overloaded: ReadonlySet<string>;
   readonly untrusted: ReadonlyMap<string, OutsideFunction>;
+  /** What puts the whole file outside, functions and constants alike: eval, a built-in assigned to, or the compiler's checks turned off. */
+  readonly tainted?: { readonly line: number; readonly message: string };
 }
 
 /**
  * A file's top-level functions: declarations, and the arrows module-level
  * consts hold. A binding that may be reassigned (let, var) or holds a
  * function expression is listed, for its callers' typing, and untrusted;
- * so is every function of a file mentioning eval directly, and a function
- * the file assigns to.
+ * so is every function of a file mentioning eval directly or assigning to
+ * a built-in, and a function the file assigns to.
  */
-function fileFunctions(sf: SourceFile, checker: Checker): FileFunctions {
+function fileFunctions(
+  sf: SourceFile,
+  checker: Checker,
+  standardGlobal: (id: Identifier) => boolean,
+): FileFunctions {
   const declarations = new Map<string, Declared>();
   const overloaded = new Set<string>();
   const untrusted = new Map<string, OutsideFunction>();
@@ -1424,15 +1615,33 @@ function fileFunctions(sf: SourceFile, checker: Checker): FileFunctions {
   }
   // A direct eval can rebind any declaration of the file without naming it, so any mention of `eval`
   // that is not a property of something else (`globalThis.eval` is indirect, and cannot) puts every
-  // function outside: `eval(…)`, `(eval)(…)`, inside a template substitution alike.
+  // function outside: `eval(…)`, `(eval)(…)`, inside a template substitution alike. So does a
+  // `@ts-nocheck` comment, which turns off the compiler's checks the reader relies on, and a direct
+  // assignment to a built-in the subset reads as standard (`Math.floor = …`, `Array.prototype.map =
+  // …`), wherever it is in the file: once it has run, the file's functions compute something else.
+  // The engines state the assumption that nothing the reader does not see does this.
   const evalLine = directEval(sf);
-  if (evalLine !== undefined)
-    for (const name of declarations.keys())
-      untrusted.set(name, {
-        name,
-        line: evalLine,
-        message: "the module mentions eval directly, which can rebind any of its declarations",
-      });
+  const noCheck = noCheckDirective(sf);
+  const patched = rebound(sf, checker, standardGlobal);
+  const tainted =
+    evalLine !== undefined
+      ? {
+          line: evalLine,
+          message: "the module mentions eval directly, which can rebind any of its declarations",
+        }
+      : noCheck !== undefined
+        ? {
+            line: noCheck,
+            message:
+              "its file has a @ts-nocheck comment, which turns off the compiler's checks the reader relies on",
+          }
+        : patched !== undefined
+          ? {
+              line: patched.line,
+              message: `its file assigns to ${patched.target} (line ${patched.line}), so the built-ins its functions use may not be the standard ones`,
+            }
+          : undefined;
+  if (tainted) for (const name of declarations.keys()) untrusted.set(name, { name, ...tainted });
   for (const [name, line] of assigned(sf, checker, declarations))
     if (!untrusted.has(name))
       untrusted.set(name, {
@@ -1440,7 +1649,7 @@ function fileFunctions(sf: SourceFile, checker: Checker): FileFunctions {
         line,
         message: `${name} is assigned in the module, so what runs under its name may not be its declaration`,
       });
-  return { declarations, overloaded, untrusted };
+  return { declarations, overloaded, untrusted, ...(tainted ? { tainted } : {}) };
 }
 
 /** What inlining a module's calls needs from the read it belongs to. */
@@ -1453,7 +1662,9 @@ interface InlinerContext {
   readonly module: SourceFile;
   readonly own: FileFunctions;
   readonly parseError: (path: string) => { line: number; message: string } | undefined;
-  readonly typeErrors: (path: string) => readonly { pos: number; end: number }[];
+  readonly typeErrors: (path: string) => readonly CompilerError[];
+  /** Whether an identifier names the global of its name (`Math`): the compiler resolves it to its standard library. */
+  readonly standardGlobal: (id: Identifier) => boolean;
 }
 
 /**
@@ -1511,10 +1722,20 @@ function inliner(c: InlinerContext): { inline: Inline; constant: Constant } {
   const functionsOf = (file: SourceFile): FileFunctions => {
     let found = files.get(file);
     if (!found) {
-      found = fileFunctions(file, c.checker);
+      found = fileFunctions(file, c.checker, c.standardGlobal);
       files.set(file, found);
     }
     return found;
+  };
+  // Whether a declaration's text compiles, once per declaration however often it is read.
+  const vetted = new Map<Node, { message: string; line: number } | undefined>();
+  const vet = (
+    file: SourceFile,
+    key: Node,
+    range: DeclaredRange,
+  ): { message: string; line: number } | undefined => {
+    if (!vetted.has(key)) vetted.set(key, notCompiled(file, c.typeErrors, range));
+    return vetted.get(key);
   };
   const inlining: string[] = [];
   // The type parameters of the functions being read, bound to the types their calls give them,
@@ -1554,6 +1775,12 @@ function inliner(c: InlinerContext): { inline: Inline; constant: Constant } {
     if (fns.overloaded.has(name)) fail(`${where} is declared more than once (overloads)`);
     const body = d.node.body;
     if (!body) fail(`${where} has no body to read`);
+    // A callee the compiler reports an error in computes something its text does not say.
+    const bad = vet(file, d.node, rangeOf(d));
+    if (bad)
+      fail(
+        `${where} is outside the subset: ${bad.message} (line ${bad.line}${file === c.module ? "" : " of its file"})`,
+      );
     const signature = c.checker.getResolvedSignature(call);
     if (c.checker.isUnknownSignature(signature)) fail(`the call to ${where} does not resolve`);
     const fileNames: Names = {
@@ -1561,6 +1788,7 @@ function inliner(c: InlinerContext): { inline: Inline; constant: Constant } {
       target: (n) => n,
       declared: (n) => fns.declarations.has(n),
       spec: false,
+      global: c.standardGlobal,
     };
     const typeSource: TypeSource = {
       annotation: (node, refuse) => c.types.of(concrete(c.checker.getTypeAtLocation(node)), refuse),
@@ -1682,7 +1910,10 @@ function inliner(c: InlinerContext): { inline: Inline; constant: Constant } {
     const file = decl.getSourceFile();
     // A module-level `const` only: a `let` or `var` may be rebound, a local is not this name.
     if (!is.isVariableDeclarationList(list) || !is.isVariableStatement(statement)) return undefined;
-    if (statement.parent !== file) return undefined;
+    // A local the compiler resolves the name to, which the reader has not bound, is declared later in
+    // its block: a const there throws when used before its line, a var reads undefined.
+    if (statement.parent !== file)
+      fail(`${name.text}, which is declared after this use in its block`);
     const where = file === c.module ? decl.name.text : `${decl.name.text} (from ${file.fileName})`;
     // A global (Math, say) is declared in the compiler's own declaration files: no constant here.
     if (file.isDeclarationFile && !imported) return undefined;
@@ -1698,14 +1929,27 @@ function inliner(c: InlinerContext): { inline: Inline; constant: Constant } {
     const init = decl.initializer;
     if (!init) fail(`${where} has no initializer`);
     if (is.isArrowFunction(init) || is.isFunctionExpression(init)) return undefined;
+    // The declaration as a whole: a declared type the value does not fit is reported on the name.
+    const bad = vet(file, decl, {
+      start: decl.pos,
+      end: decl.end,
+      lead: { start: statement.pos, end: statement.getStart(file) },
+    });
+    if (bad)
+      fail(
+        `${where} is outside the subset: ${bad.message} (line ${bad.line}${file === c.module ? "" : " of its file"})`,
+      );
     const key = `${file.fileName}#${decl.name.text}`;
     if (reading.includes(key)) fail(`${where} is defined in terms of itself`);
     const fns = functionsOf(file);
+    // A constant of a file that may rebind a built-in, or whose checks are off, is no value to trust.
+    if (fns.tainted) fail(`${where} is outside the subset: ${fns.tainted.message}`);
     const fileNames: Names = {
       callable: () => false,
       target: (n) => n,
       declared: (n) => fns.declarations.has(n),
       spec: false,
+      global: c.standardGlobal,
     };
     const reader = new ExprReader(
       file,
@@ -1799,11 +2043,11 @@ export function readSubset(
   const path = options.path ?? virtualModulePath;
   return withProgram(
     [{ path, text: source }, ...(options.files ?? [])],
-    ({ checker, file, parseError, typeErrors }) => {
+    ({ checker, file, parseError, typeErrors, standardGlobal }) => {
       const sf = file(path);
       // Pass 1: the module's top-level functions, and what makes them untrustworthy. A generic one is
       // no function of the subset (no claim is stated over a type parameter); its callers read it inlined.
-      const own = fileFunctions(sf, checker);
+      const own = fileFunctions(sf, checker, standardGlobal);
       const { declarations, overloaded } = own;
       const declared = new Set(declarations.keys());
       const generic = new Set(
@@ -1855,6 +2099,7 @@ export function readSubset(
         target: (n) => n,
         declared: (n) => declared.has(n),
         spec: false,
+        global: standardGlobal,
       };
       const typeSource: TypeSource = {
         annotation: (node, refuse) => types.of(checker.getTypeAtLocation(node), refuse),
@@ -1869,6 +2114,7 @@ export function readSubset(
         own,
         parseError,
         typeErrors,
+        standardGlobal,
       });
       const reader = new ExprReader(sf, names, typeSource, ctx, undefined, inline, constant);
       const heads: Head[] = [];
@@ -1885,11 +2131,16 @@ export function readSubset(
           if (!outside.has(name)) outside.set(name, { name, line: err.line, message: err.message });
         }
       }
-      // Pass 3: bodies.
+      // Pass 3: bodies. Text the compiler rejects (a const used before its declaration, which
+      // throws where the reader sees a value) may compute something other than what it says: a
+      // function read fine is still outside, with the compiler's message, when it has such an error.
       const read = new Map<string, SubsetFunction>();
       for (const h of heads) {
         try {
-          read.set(h.name, declaration(reader, h));
+          const fn = declaration(reader, h);
+          const bad = notCompiled(sf, typeErrors, rangeOf(declarations.get(h.name) as Declared));
+          if (bad) throw new OutsideSubset(bad.message, bad.line);
+          read.set(h.name, fn);
         } catch (err) {
           if (!(err instanceof OutsideSubset)) throw err;
           outside.set(h.name, { name: h.name, line: err.line, message: err.message });
@@ -1998,6 +2249,7 @@ function arrowReader(
       target: (n) => aliases.get(n) ?? n,
       declared: (n) => declared.has(n),
       spec: true,
+      global: () => true,
     };
   } else {
     const declared = new Set([...inSubset, ...module.outside.map((o) => o.name)]);
@@ -2006,6 +2258,7 @@ function arrowReader(
       target: (n) => n,
       declared: (n) => declared.has(n),
       spec: false,
+      global: () => true,
     };
   }
   const recordNames = new Set(records.keys());
@@ -2061,7 +2314,10 @@ export function readExpression(
  * The scope maps the arrow's own parameter names to the binders' types;
  * `aliases` maps the spec file's local names to the module's functions,
  * and a free name that is neither is outside the subset: the spec file's
- * scope is its imports, never the module's.
+ * scope is its imports, never the module's. `Math` and `Number` are the
+ * globals wherever the arrow's own scope does not bind them: `readSpecs`
+ * has checked that every built-in a claim names resolves to the standard
+ * library in the spec file.
  */
 export function readArrowBody(
   arrow: Arrow,

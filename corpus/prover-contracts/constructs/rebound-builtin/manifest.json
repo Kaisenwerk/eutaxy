@@ -1,0 +1,21 @@
+{
+  "description": "A file that assigns to a built-in (Math.floor, in a function nothing here calls) has every function outside the subset: the claim is unsupported on both engines, never proved on a Math.floor that may not be the standard one, while the TESTED rung, which runs the code as it is, holds.",
+  "covers": ["rebound-builtin", "math-floor"],
+  "expect": {
+    "tested": {
+      "floorOf": {
+        "fixesIntegers": "TESTED"
+      }
+    },
+    "lean": {
+      "floorOf": {
+        "fixesIntegers": "unsupported"
+      }
+    },
+    "smt": {
+      "floorOf": {
+        "fixesIntegers": "unsupported"
+      }
+    }
+  }
+}

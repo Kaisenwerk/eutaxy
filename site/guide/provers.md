@@ -141,7 +141,11 @@ Today it covers:
 
 A function outside the subset, or one calling such a function, is
 `UNKNOWN` (`unsupported`) with the construct and its line, and the rest of
-the module still goes through. The [design document](/reference/design#provers)
+the module still goes through. So is a function the compiler reports an
+error in, with the compiler's message, and every function of a file that
+assigns to a built-in (`Math.floor = …`): `Math` and `Number` are the
+built-ins only where the compiler resolves them to its standard library,
+and every proof states the assumption that they are the standard ones. The [design document](/reference/design#provers)
 has the exact boundary, and the corpus vocabulary,
 [`constructs.json`](https://github.com/Kaisenwerk/eutaxy/blob/main/corpus/prover-contracts/constructs.json),
 lists every construct with whether each engine takes it; each has an

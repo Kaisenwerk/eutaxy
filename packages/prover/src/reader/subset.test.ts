@@ -365,8 +365,10 @@ export function h(n: number): number { const v = { kind: "b" }; return n; }
   });
 
   test("a reduce callback's null check narrows, as in map", () => {
+    // The accumulator is nullable too: with a number initial value the compiler picks reduce's
+    // first overload, where the accumulator has the element type, and rejects the addition.
     const m = readSubset(
-      "export function f(xs: readonly (number | null)[]): number { return xs.reduce((acc, x) => acc + (x === null ? 0 : x), 0); }",
+      "export function f(xs: readonly (number | null)[], seed: number | null): number | null { return xs.reduce((acc, x) => (x === null ? acc : acc === null ? x : acc + x), seed); }",
     );
     expect(m.outside).toEqual([]);
   });
@@ -910,7 +912,7 @@ export function early(c: C | null): number {
   return n;
 }
 export function annotated(x: number): number {
-  const c: C | null = null;
+  const c: C | null = x > 0 ? { n: x } : null;
   return c === null ? x : c.n;
 }
 export function wrongAnnotation(x: number): number {
@@ -1406,7 +1408,7 @@ export const e = (n: number): number => n + CALLED;
     expect(m.functions.map((f) => f.name)).toEqual(["twice"]);
   });
 
-  test("Math.floor and Number.isInteger are the globals only where nothing in the file binds the name", () => {
+  test("Math and Number are the built-ins where the compiler resolves them to its standard library", () => {
     expect(
       readSubset("export function f(x: number): number { return Math.floor(x); }\n").outside,
     ).toEqual([]);
@@ -1425,6 +1427,200 @@ export function g(x: number): boolean { return Number.isInteger(x); }
       const read = m.functions.map((f) => f.name);
       expect(read, shadow).not.toContain(shadow.includes("Number") ? "g" : "f");
     }
+    // A type-only import binds no value: the compiler resolves `Number` past it to the global.
+    const typed = readWith(
+      { "types.ts": "export type Number = { readonly n: number };\n" },
+      `import type { Number } from "./types.ts";
+export function g(x: number): boolean { return Number.isInteger(x); }
+`,
+    );
+    expect(typed.outside).toEqual([]);
+    expect(typed.functions[0]?.body).toEqual({
+      kind: "isInteger",
+      operand: { kind: "var", name: "x" },
+    });
+  });
+
+  test("review: a const Math after its use shadows the global for the whole block (a throw at run time): outside", () => {
+    for (const [name, body] of [
+      ["Math", "const y = Math.floor(x); const Math = 1; return y;"],
+      ["K", "const y = Math.floor(x) + K; const K = 1; return y;"],
+    ]) {
+      const m = readSubset(`export function f(x: number): number { ${body} }\n`);
+      expect(m.functions, name).toEqual([]);
+      expect(m.outside[0], name).toMatchObject({ name: "f", line: 1 });
+      expect(m.outside[0]?.message, name).toMatch(new RegExp(`${name}.*after this use`));
+    }
+  });
+
+  test("review: an assignment to a built-in anywhere in a read file puts the file's functions outside", () => {
+    for (const patch of [
+      "Math.floor = (x: number): number => 42;",
+      'Number["isInteger"] = (x: number): boolean => true;',
+      "export function install(): void { Array.prototype.map = Array.prototype.map; }",
+      "delete (globalThis as { hook?: unknown }).hook;",
+      "delete ((globalThis as { hook?: unknown }).hook);",
+      "(globalThis as { hook?: number }).hook = 1;",
+      "Math = { floor: (x: number): number => 42 } as unknown as Math;",
+      "Array.isArray = Array.isArray;",
+      "declare const window: { Math: Math };\nwindow.Math.floor = (x: number): number => 42;",
+    ]) {
+      const m = readSubset(`${patch}
+export function f(): number { return Math.floor(0); }
+export function g(x: number): number { return x + 1; }
+`);
+      expect(m.functions, patch).toEqual([]);
+      expect(m.outside.map((o) => o.message).join("\n"), patch).toContain(
+        "may not be the standard ones",
+      );
+    }
+    // An inlined callee's file is read under the same rule: its assignment puts the caller outside.
+    const inlined = readWith(
+      {
+        "kit.ts":
+          "export function twice<T>(x: T): T { return x; }\nMath.floor = (x: number): number => 42;\n",
+      },
+      `import { twice } from "./kit.ts";
+export function f(x: number): number { return twice(x); }
+`,
+    );
+    expect(inlined.functions).toEqual([]);
+    expect(inlined.outside[0]?.message).toContain("assigns to Math.floor (line 2)");
+    // A constant of such a file is no value to read either: K is 42 once the file has run.
+    const constant = readWith(
+      {
+        "k.ts": "Math.floor = (x: number): number => 42;\nexport const K = Math.floor(5);\n",
+      },
+      `import { K } from "./k.ts";
+export function f(): number { return K; }
+`,
+    );
+    expect(constant.functions).toEqual([]);
+    expect(constant.outside[0]?.message).toContain("assigns to Math.floor");
+    // A local's `prototype` field is the local's: the chain's root is resolved by the compiler.
+    const local = readSubset(`export const o: { prototype?: number } = {};
+export function setup(): void { o.prototype = 1; }
+export function f(x: number): number { return Math.floor(x); }
+`);
+    expect(local.functions.map((fn) => fn.name)).toEqual(["f"]);
+    // So is a parameter or local named like a global object.
+    const param = readSubset(`export function setup(window: { x: number }): void { window.x = 1; }
+export function f(x: number): number { return Math.floor(x); }
+`);
+    expect(param.functions.map((fn) => fn.name)).toEqual(["f"]);
+  });
+
+  test("review: a @ts-nocheck comment turns the compiler's checks off: every function of the file is outside", () => {
+    const m = readSubset(`// @ts-nocheck
+export interface C { readonly n: number }
+export function f(x: number): number { const c: C | null = null; return c === null ? x : c.n; }
+export function g(x: number): number { return x + 1; }
+`);
+    expect(m.functions).toEqual([]);
+    expect(m.outside.map((o) => o.message)).toEqual([
+      expect.stringContaining("@ts-nocheck"),
+      expect.stringContaining("@ts-nocheck"),
+    ]);
+    expect(m.outside[0]).toMatchObject({ name: "f", line: 1 });
+    // As the compiler reads the directive: a `//` comment opening with it, and a later @ts-check undoes it.
+    for (const top of [
+      "/** Avoid @ts-nocheck: it hides errors. */",
+      "// @ts-nocheck\n// @ts-check",
+    ]) {
+      const checked = readSubset(`${top}
+export interface C { readonly n: number }
+export function f(x: number): number { const c: C | null = null; return c === null ? x : c.n; }
+export function g(x: number): number { return x + 1; }
+`);
+      expect(
+        checked.functions.map((fn) => fn.name),
+        top,
+      ).toEqual(["g"]);
+      expect(checked.outside[0]?.message, top).toMatch(/compiler reports an error/);
+    }
+  });
+
+  test("review: an error is the declaration's own, not its const siblings'; a directive is one the compiler would honour", () => {
+    const m =
+      readSubset(`export const bad = (x: number): number => x.nope, good = (x: number): number => x + 1;
+export function quoted(): string { return "@ts-ignore"; }
+/** Never put a @ts-ignore in here. */
+export function prose(x: number): number { return x + 1; }
+export function block(x: number): number {
+  /* @ts-ignore */
+  return x + 1;
+}
+`);
+    expect(m.functions.map((f) => f.name)).toEqual(["good", "quoted", "prose"]);
+    expect(m.outside.map((o) => o.name)).toEqual(["bad", "block"]);
+    // A directive above a statement reaches its first line, so every declaration sharing it.
+    const shared = readSubset(`// @ts-ignore
+export const a = (x: number): number => x + 1, b = (x: number): number => x + 2;
+`);
+    expect(shared.functions).toEqual([]);
+    expect(shared.outside.map((o) => o.name)).toEqual(["a", "b"]);
+    // A directive inside a sibling's body is the sibling's.
+    const inside = readSubset(`export const bad = (x: number): number => {
+    // @ts-ignore
+    return x + 1;
+  },
+  good = (x: number): number => x + 2;
+`);
+    expect(inside.functions.map((f) => f.name)).toEqual(["good"]);
+    expect(inside.outside.map((o) => o.name)).toEqual(["bad"]);
+    // A constant the compiler rejects on its name (a declared type the value does not fit) is not read.
+    const constant = readWith(
+      { "k.ts": "export const K: 1 = 2;\n" },
+      `import { K } from "./k.ts";
+export function f(): number { return K; }
+`,
+    );
+    expect(constant.functions).toEqual([]);
+    expect(constant.outside[0]?.message).toMatch(/compiler reports an error/);
+  });
+
+  test("review: a project's augmentation of Number's interface changes no value: Number.isInteger is still the built-in", () => {
+    const m = readWith(
+      { "aug.ts": "declare global { interface Number { foo(): void } }\nexport {};\n" },
+      `import "./aug.ts";
+export function g(x: number): boolean { return Number.isInteger(x); }
+`,
+    );
+    expect(m.outside).toEqual([]);
+    expect(m.functions.map((f) => f.name)).toEqual(["g"]);
+  });
+
+  test("review: a built-in bound to something else says so; a var declared after its use is named without a throw", () => {
+    const imported = readWith(
+      { "fake.ts": "export default { floor: (x: number): number => x + 1 };\n" },
+      `import Math from "./fake.ts";
+export function f(x: number): number { return Math.floor(x); }
+`,
+    );
+    expect(imported.outside[0]?.message).toContain("Math, which is not the standard Math here");
+    const hoisted = readSubset(
+      "export function f(x: number): number { const y = x + K; var K = 1; return y; }\n",
+    );
+    expect(hoisted.outside[0]?.message).toBe("K, which is declared after this use in its block");
+  });
+
+  test("review: a function the compiler reports an error in is outside with the message even where it reads; a comment hiding one too", () => {
+    const m = readSubset(`export interface C { readonly n: number }
+export function f(x: number): number { const c: C | null = null; return c === null ? x : c.n; }
+export function g(x: number): number {
+  // @ts-ignore
+  return x + 1;
+}
+export function h(x: number): number { return x + 1; }
+`);
+    expect(m.functions.map((fn) => fn.name)).toEqual(["h"]);
+    const why = Object.fromEntries(m.outside.map((o) => [o.name, o]));
+    expect(why["f"]).toMatchObject({ line: 2 });
+    expect(why["f"]?.message).toMatch(/compiler reports an error: .*never/);
+    expect(why["g"]).toMatchObject({
+      line: 4,
+      message: "a @ts-ignore comment, which hides a compiler error from the reader",
+    });
   });
 
   test("division and Math.floor are typed on numbers; Math.floor takes one argument", () => {

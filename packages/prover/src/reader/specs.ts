@@ -41,12 +41,13 @@ import {
   isConst,
   isExported,
   lineAt,
+  type Opened,
   openParen,
   textOf,
   withProgram,
   withSourceFile,
 } from "./compiler.ts";
-import { topLevelNames } from "./expressions.ts";
+import { rebound } from "./subset.ts";
 import { specTypeOf, unionOf } from "./types.ts";
 
 export interface ReadSpecsInput {
@@ -329,7 +330,7 @@ interface ModuleImport {
 /** Read the spec file's exports. */
 function readSpecSide(
   sf: SourceFile,
-  program: Program,
+  { program, checker, standardGlobal }: Opened,
   modulePath: string,
   moduleKey: string,
   specSpecifiers: ReadonlySet<string>,
@@ -409,6 +410,46 @@ function readSpecSide(
       return fail(`${arg.text} must be a named import of the module's function`, arg);
     return imp.name;
   };
+  /**
+   * A claim is read from its arrow's text alone, where `Math` and `Number`
+   * are the globals unless the arrow binds them itself: an arrow naming
+   * one that resolves to anything else here (a binding of the spec file,
+   * an import, a const of the arrow's own block declared after the use)
+   * is refused, so a claim is never read as something it does not
+   * compute. A parameter or const of the arrow bound before the use is
+   * the arrow reader's own name for it (a parameter named `Math` reads as
+   * that parameter), and a binding the claims do not name, or a type-only
+   * import, is fine.
+   */
+  const builtins = (arrow: ArrowFunction, node: Node, what: string): void => {
+    if (
+      is.isPropertyAccessExpression(node) &&
+      is.isIdentifier(node.expression) &&
+      (node.expression.text === "Math" || node.expression.text === "Number") &&
+      !standardGlobal(node.expression)
+    ) {
+      const id = node.expression;
+      const bound = checker.getSymbolAtLocation(id)?.declarations[0]?.resolve();
+      const own =
+        bound !== undefined &&
+        bound.getSourceFile() === sf &&
+        bound.pos >= arrow.pos &&
+        bound.end <= arrow.end &&
+        bound.getStart(sf) < id.getStart(sf);
+      if (!own) {
+        const file = bound?.getSourceFile();
+        const where =
+          bound && file
+            ? ` (bound at line ${lineAt(file, bound)}${file === sf ? "" : ` of ${file.fileName}`})`
+            : "";
+        fail(
+          `${what} names ${id.text}, which is not the global ${id.text} here${where}; rename the binding`,
+          id,
+        );
+      }
+    }
+    node.forEachChild((child) => builtins(arrow, child, what));
+  };
   /** An arrow function: its params, body text and whether the body is a block. */
   const arrow = (node: Expression, what: string): { arrow: Arrow; node: ArrowFunction } => {
     if (!is.isArrowFunction(node))
@@ -417,6 +458,7 @@ function readSpecSide(
         node,
       );
     if (isAsync(node)) fail(`${what} is an async arrow; it must be synchronous`, node);
+    builtins(node, node.body, what);
     // A rest or destructured parameter has no name of its own: the binder keeps the function's.
     const params = node.parameters.map((p) =>
       !p.dotDotDotToken && is.isIdentifier(p.name) ? p.name.text : null,
@@ -597,7 +639,8 @@ export function readSpecs(input: ReadSpecsInput): ModuleSpecs {
       { path: modulePath, text: input.module },
       { path: specPath, text: input.spec },
     ],
-    ({ program, checker, file, parseError }) => {
+    (opened) => {
+      const { checker, file, parseError } = opened;
       const moduleError = parseError(modulePath);
       const specError = parseError(specPath);
       const errors: SpecError[] = [];
@@ -617,21 +660,20 @@ export function readSpecs(input: ReadSpecsInput): ModuleSpecs {
       const moduleSide = readModuleSide(moduleFile, checker);
       const specSide = readSpecSide(
         file(specPath),
-        program,
+        opened,
         modulePath,
         moduleFile.path,
         new Set(input.specSpecifiers ?? ["eutaxy/spec", "@eutaxy/spec"]),
       );
       errors.push(...moduleSide.errors, ...specSide.errors);
-      // A claim is read from its arrow's text alone, where Math and Number are the globals: a spec
-      // file that binds either would have its claims read as something they do not compute.
-      const specFile = file(specPath);
-      for (const [global, at] of topLevelNames(specFile))
-        if (global === "Math" || global === "Number")
-          errors.push({
-            line: lineAt(specFile, at),
-            message: `the spec file binds ${global}, which its claims would be read as the global ${global}; rename it`,
-          });
+      // The spec file runs whenever it is imported (the TESTED rung imports it): an assignment to a
+      // built-in there makes the claims compute something other than what they are read as.
+      const patched = rebound(file(specPath), checker, opened.standardGlobal);
+      if (patched)
+        errors.push({
+          line: patched.line,
+          message: `the spec file assigns to ${patched.target}, so the built-ins its claims are read with may not be the standard ones`,
+        });
       // The claims' free names: the spec file's local names for the module's declarations.
       const imports = specSide.imports.flatMap((i) => {
         const fn = moduleSide.exports.get(i.name);

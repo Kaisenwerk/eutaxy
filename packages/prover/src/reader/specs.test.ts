@@ -208,22 +208,51 @@ export const p = forall(constant, { ensures: () => true });
     expect(specs.errors[0]?.message).toContain("exports no function constant");
   });
 
-  test("a spec file that binds Math or Number is an error: its claims are read with the globals", () => {
-    for (const binding of [
-      "const Math = { floor: (x: number) => x + 1 };",
-      'import Number from "./fake.ts";',
-    ]) {
-      const specs = read(`
+  test("a claim naming Math or Number where the spec file binds it is an error: the claim is read with the globals", () => {
+    const header = `
 import { forall } from "eutaxy/spec";
 import { decideRefund } from "./domain.ts";
-${binding}
+`;
+    for (const [binding, claim] of [
+      ["const Math = { floor: (x: number) => x + 1 };", "(c) => Math.floor(c) === c"],
+      ['import Number from "./fake.ts";', "(c) => Number.isInteger(c)"],
+      // A const in the arrow's own block shadows the global from before its line (and throws).
+      ["", "(c) => { const y = Math.floor(c); const Math = 1; return y === c; }"],
+    ] as const) {
+      const specs = read(`${header}${binding}
+export const p = forall(decideRefund, { ensures: ${claim} });
+`);
+      const name = claim.includes("Math") ? "Math" : "Number";
+      expect(specs.functions, claim).toEqual([]);
+      expect(
+        specs.errors.map((e) => e.message),
+        claim,
+      ).toEqual([
+        `p: ensures names ${name}, which is not the global ${name} here (bound at line ${binding ? 4 : 5}); rename the binding`,
+      ]);
+    }
+    // A binding no claim names is fine, and so is a type-only import of the name: the compiler
+    // resolves a value past it to the global.
+    const fine = read(`${header}import type { Status as Number } from "./domain.ts";
+const Math = { floor: (x: number) => x + 1 };
+export const p = forall(decideRefund, { when: (c) => Number.isInteger(c), ensures: (c) => c === c });
+`);
+    expect(fine.errors).toEqual([]);
+    expect(fine.functions[0]?.properties.map((p) => p.name)).toEqual(["p"]);
+    // The arrow's own parameter or const named Math, bound before the use, is what the arrow reader
+    // reads it as: no error here (its claim is for the engines to take or refuse).
+    const own = read(`${header}export const q = forall(decideRefund, {
+  ensures: (Math) => { const Number = Math; return Math.valueOf() === Number.valueOf(); },
+});
+`);
+    expect(own.errors).toEqual([]);
+    // The spec file runs when it is imported: assigning to a built-in there is an error.
+    const patched = read(`${header}Math.floor = (x: number): number => x + 1;
 export const p = forall(decideRefund, { ensures: (c) => Math.floor(c) === c });
 `);
-      const name = binding.includes("Math") ? "Math" : "Number";
-      expect(specs.errors.map((e) => e.message)).toContain(
-        `the spec file binds ${name}, which its claims would be read as the global ${name}; rename it`,
-      );
-    }
+    expect(patched.errors.map((e) => e.message)).toEqual([
+      "the spec file assigns to Math.floor, so the built-ins its claims are read with may not be the standard ones",
+    ]);
   });
 
   test("forall and total must come from eutaxy/spec; a local forall is not one", () => {

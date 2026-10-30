@@ -66,7 +66,16 @@ imported function is read inlined at each call, instantiated by the
 call's context); a function outside
 it, or calling one, is reported with the construct and the line, and the
 rest of the module still goes through. A function the module assigns to,
-or any direct `eval`, puts what it may rebind outside. `fits` is the
+or any direct `eval`, puts what it may rebind outside; so does a direct
+assignment to a global of the standard library or a property of one
+(`Math.floor = …`), or through `globalThis`, anywhere in a read file (an
+error in the spec file), or a `@ts-nocheck` comment, for all of that
+file's functions and constants (`builtinsAssumption` is what every
+`PROVEN` then rests on). `Math` and `Number` are
+the built-ins only where the compiler resolves them to its standard
+library (a spec file's claim naming either elsewhere is an error), and a
+function the compiler reports an error in, or that hides one behind
+`@ts-ignore`, is outside with the message. `fits` is the
 subset's assignability (a member where its union is, `null` or the inner
 type where a nullable is); `restrictModule` is the module as an engine
 that takes fewer types sees it. `readArrowBody` reads a spec file's arrow

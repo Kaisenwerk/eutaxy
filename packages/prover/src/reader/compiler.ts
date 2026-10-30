@@ -11,6 +11,7 @@
 
 import {
   type FunctionLikeBase,
+  type Identifier,
   ModifierFlags,
   type ModifiersBase,
   type Node,
@@ -69,8 +70,27 @@ export interface Opened {
   readonly file: (path: string) => SourceFile;
   /** The first parse error of an input file, if any. */
   readonly parseError: (path: string) => { line: number; message: string } | undefined;
-  /** The compiler's errors in a file of the program, as text ranges (offsets into the file). */
-  readonly typeErrors: (path: string) => readonly { pos: number; end: number }[];
+  /** The compiler's errors in a file of the program: text ranges (offsets into the file), with the message and its line. */
+  readonly typeErrors: (path: string) => readonly CompilerError[];
+  /**
+   * Whether an identifier names the global of its name: the compiler
+   * resolves it to a symbol declared in its default library alone
+   * (`lib.*.d.ts`). A declaration, import or block-scoped shadow of the
+   * name in scope, a global declared by the project's own declaration
+   * files, or a name the compiler cannot resolve is not; a type-only
+   * import of the name is, since the compiler resolves a value past it,
+   * and so is an interface augmentation of its type (`declare global {
+   * interface Number { … } }`), which changes no value.
+   */
+  readonly standardGlobal: (id: Identifier) => boolean;
+}
+
+/** One compiler error in a file: its text range, message and 1-based line. */
+export interface CompilerError {
+  readonly pos: number;
+  readonly end: number;
+  readonly message: string;
+  readonly line: number;
 }
 
 /** Run `fn` over a program whose root files are the inputs, released afterwards. */
@@ -93,19 +113,44 @@ export function withProgram<T>(files: readonly InputFile[], fn: (opened: Opened)
         ? { line: (first.startPosition?.line ?? 0) + 1, message: first.text }
         : undefined;
     };
-    const errors = new Map<string, readonly { pos: number; end: number }[]>();
+    const errors = new Map<string, readonly CompilerError[]>();
     const typeErrors = (path: string) => {
       let found = errors.get(path);
       if (!found) {
         found = program
           .getSemanticDiagnostics(path)
           .filter((d) => d.category === DiagnosticCategory.Error)
-          .map((d) => ({ pos: d.pos, end: d.end }));
+          .map((d) => ({
+            pos: d.pos,
+            end: d.end,
+            message: d.text,
+            line: (d.startPosition?.line ?? 0) + 1,
+          }));
         errors.set(path, found);
       }
       return found;
     };
-    return fn({ program, checker, file, parseError, typeErrors });
+    // Answers by symbol: the global `Math` is one symbol however often it is named. Interface and
+    // type alias declarations merge into a symbol without touching its value, so only the others decide.
+    const standard = new Map<number, boolean>();
+    const typeOnly = new Set([SyntaxKind.InterfaceDeclaration, SyntaxKind.TypeAliasDeclaration]);
+    const standardGlobal = (id: Identifier): boolean => {
+      const symbol = checker.getSymbolAtLocation(id);
+      if (!symbol) return false;
+      let known = standard.get(symbol.id);
+      if (known === undefined) {
+        const values = symbol.declarations.filter((d) => !typeOnly.has(d.kind));
+        known =
+          values.length > 0 &&
+          values.every((d) => {
+            const sf = d.resolve()?.getSourceFile();
+            return sf !== undefined && program.isSourceFileDefaultLibrary(sf);
+          });
+        standard.set(symbol.id, known);
+      }
+      return known;
+    };
+    return fn({ program, checker, file, parseError, typeErrors, standardGlobal });
   } finally {
     snapshot.dispose();
   }

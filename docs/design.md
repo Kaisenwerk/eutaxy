@@ -921,8 +921,10 @@ literals, the other fields in each as written, which pure fields make
 exact), field reads (on a union, a field every
 member has: its tag), `Number.isInteger`, `Math.floor` and `/` (as
 JavaScript computes them on doubles; `Number` and `Math` are the
-globals only where the file binds no such name, by declaration or
-import), module-level constants, and calls to the module's own
+built-ins only where the compiler resolves the name to its standard
+library, so a declaration, import or block-scoped shadow in scope, even
+one declared after the use, makes it something else, and a type-only
+import does not), module-level constants, and calls to the module's own
 functions. A module-level `const` holding a number, boolean or string
 built from literals, operators and other such constants, the module's
 own or one it imports (resolved as the compiler resolves it), is read as
@@ -945,7 +947,20 @@ inside compound types (`Ok<T>`), which leave such a call outside. A call
 the compiler reports an error on (a name imported with `import type`,
 which does not exist when the code runs), a callee without a body (a
 declaration file), one its file may rebind, or one reached again while
-it is being read (recursion) is outside the subset. A record may be a
+it is being read (recursion) is outside the subset. So is a function the
+compiler reports an error in, with the compiler's message, however it
+reads (a `const` used before its declaration throws where the reader
+would see a value), and one holding a `@ts-ignore` or `@ts-expect-error`
+comment, which hides such an error. A direct assignment to a global of
+the compiler's standard library or to a property of one (`Math.floor =
+…`, `Array.prototype.map = …`, `Math = …`), or through `globalThis`,
+`self` or `window`, anywhere in a read file, inside a function or not,
+puts every function and constant of that file outside (in the spec file,
+which runs whenever it is imported, it is an error), as does a
+`@ts-nocheck` comment, which turns the compiler's checks off; every
+`PROVEN` states the assumption that the built-ins are the standard ones,
+since an assignment made another way (`Object.defineProperty`, through
+an alias) or elsewhere (a polyfill, another module) is not seen. A record may be a
 member of several unions: `Err<E>` is one of `Result<A, E>` and of
 `Result<B, E>`, so decisions sharing an error type share its record, and
 an error returned from one result as the other is the same value. Two

@@ -18,6 +18,7 @@ import type {
   ProveInput as ProverInput,
 } from "@eutaxy/prover";
 import {
+  builtinsAssumption,
   children,
   type Expr,
   listKinds,
@@ -67,6 +68,7 @@ export const engineAssumptions: readonly string[] = [
   "number is modelled as the unbounded integers: no overflow, no fractions, no NaN",
   "string is modelled as Lean's String, a sequence of Unicode characters: a lone surrogate, which a JavaScript string can hold, is outside every string binder's domain",
   "the function and its callees are pure and total: the module's own, or generic or imported ones read at each call from their own files; nothing else is modelled",
+  builtinsAssumption,
   `the proof was checked by the Lean ${leanVersion} kernel on the emitted statement, not by Eutaxy`,
 ];
 

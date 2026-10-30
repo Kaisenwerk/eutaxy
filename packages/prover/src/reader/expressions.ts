@@ -75,6 +75,13 @@ export interface Names {
   readonly declared: (name: string) => boolean;
   /** Whether the text is a spec file's, whose names are its imports, never the module's. */
   readonly spec: boolean;
+  /**
+   * Whether an identifier is the global of its name (`Math`, `Number`):
+   * for a module, the compiler resolves it to its standard library; for a
+   * spec file's arrow, read from its text alone, every built-in it names
+   * has been checked so by the spec reader, so any is.
+   */
+  readonly global: (id: Identifier) => boolean;
 }
 
 /** Where the types a body mentions come from: the compiler for the module, the module's own declared types for an arrow. */
@@ -102,36 +109,6 @@ const binaryOps: Partial<Record<SyntaxKind, BinaryOp>> = {
   [SyntaxKind.BarBarToken]: "||",
 };
 
-/** The names a file binds at its top level, declarations and imports alike, each at its binding. */
-export function topLevelNames(sf: SourceFile): Map<string, Node> {
-  const out = new Map<string, Node>();
-  const bind = (name: Node | undefined): void => {
-    if (!name) return;
-    if (is.isIdentifier(name)) out.set(name.text, name);
-    else if (is.isObjectBindingPattern(name) || is.isArrayBindingPattern(name))
-      for (const element of name.elements) if (!is.isOmittedExpression(element)) bind(element.name);
-  };
-  for (const st of sf.statements) {
-    if (is.isVariableStatement(st)) for (const d of st.declarationList.declarations) bind(d.name);
-    else if (
-      is.isFunctionDeclaration(st) ||
-      is.isClassDeclaration(st) ||
-      is.isEnumDeclaration(st) ||
-      is.isModuleDeclaration(st) ||
-      is.isImportEqualsDeclaration(st)
-    )
-      bind(st.name);
-    else if (is.isImportDeclaration(st)) {
-      const clause = st.importClause;
-      bind(clause?.name);
-      const bindings = clause?.namedBindings;
-      if (bindings && is.isNamespaceImport(bindings)) bind(bindings.name);
-      else if (bindings) for (const element of bindings.elements) bind(element.name);
-    }
-  }
-  return out;
-}
-
 const methods = new Set(["slice", "map", "flatMap", "every", "some", "reduce"]);
 
 /** The reader of one text: a function body, or an arrow of the spec file. */
@@ -144,8 +121,6 @@ export class ExprReader {
   private readonly lineOf: (node: Node) => number;
   private readonly inline: Inline | undefined;
   private readonly constant: Constant | undefined;
-  /** Every name the file binds at its top level or imports: a global such as `Math` it may shadow. */
-  private topLevel: ReadonlyMap<string, Node> | undefined;
   /** Record literals typed by the call they are passed to, in place of the compiler's contextual type. */
   private readonly typedAs = new Map<Node, SubsetType>();
 
@@ -167,10 +142,9 @@ export class ExprReader {
     this.constant = constant;
   }
 
-  /** Whether `name` is the global of that name here: no scope, function or top-level binding shadows it. */
-  private global(name: string, scope: Scope): boolean {
-    this.topLevel ??= topLevelNames(this.sf);
-    return !scope.has(name) && !this.names.declared(name) && !this.topLevel.has(name);
+  /** Whether an identifier is the global of its name here: no scope or function shadows it, and the names confirm it. */
+  private global(id: Identifier, scope: Scope): boolean {
+    return !scope.has(id.text) && !this.names.declared(id.text) && this.names.global(id);
   }
 
   fail(what: string, at: Node): never {
@@ -391,6 +365,13 @@ export class ExprReader {
     if (scope.has(name) || this.names.declared(name)) return { kind: "var", name };
     const constant = this.constant?.(node, (what) => this.fail(what, node));
     if (constant) return constant;
+    // A built-in the compiler resolves to something other than its standard library: an import of the
+    // name, say. (`Math.abs` reaches here too, as the global: its method is what the subset lacks.)
+    if ((name === "Math" || name === "Number") && !this.names.global(node))
+      this.fail(
+        `${name}, which is not the standard ${name} here: a declaration of it other than the compiler's is in scope`,
+        node,
+      );
     this.fail(
       this.names.spec
         ? `${name}, which is neither a parameter, a const nor a function imported from the module beside the spec file`
@@ -458,7 +439,7 @@ export class ExprReader {
         is.isIdentifier(receiver) &&
         receiver.text === "Number" &&
         method === "isInteger" &&
-        this.global("Number", scope)
+        this.global(receiver, scope)
       ) {
         const [arg, extra] = node.arguments;
         if (!arg || extra) this.fail("Number.isInteger takes one argument", node);
@@ -468,7 +449,7 @@ export class ExprReader {
         is.isIdentifier(receiver) &&
         receiver.text === "Math" &&
         method === "floor" &&
-        this.global("Math", scope)
+        this.global(receiver, scope)
       ) {
         const [arg, extra] = node.arguments;
         if (!arg || extra) this.fail("Math.floor takes one argument", node);

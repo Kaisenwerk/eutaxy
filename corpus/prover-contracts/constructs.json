@@ -204,6 +204,11 @@
       "what": "for...of, Set and other collections beyond the list operations: outside the subset",
       "lean": "out",
       "smt": "out"
+    },
+    "rebound-builtin": {
+      "what": "a direct assignment to a global of the standard library or a property of one (Math.floor, Array.prototype.map), or through globalThis, anywhere in a read file: every function of that file is outside the subset",
+      "lean": "out",
+      "smt": "out"
     }
   }
 }
