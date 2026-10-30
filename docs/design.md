@@ -894,7 +894,9 @@ initializers travel in the `.olean`. The subset
 is specified operationally by the contract corpus
 (`corpus/prover-contracts`: functions with known outcomes, provable, given
 up on, and outside the subset) and widens one characterised class at a
-time. Today the subset is: exported functions over `number`, `boolean` and
+time. Today the subset is: exported functions, declared or held as an
+arrow by a module-level `const` (a `let` or `var` may be rebound, so its
+function is outside, and so are its callers), over `number`, `boolean` and
 `string` (a union of string literals reads as `string`: the proof covers
 every string, more than the type admits), record types (`interface` or
 object `type`) declared in the module, nullable types (`T | null`) and

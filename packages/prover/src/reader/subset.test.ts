@@ -674,6 +674,47 @@ export function tag(n: number): T { return { kind: n < 0 ? "neg" : "pos", code: 
     expect(m.outside).toEqual([{ name: "g", line: 5, message: "the / operator" }]);
   });
 
+  test("a const arrow is a function as a declaration is: expression or block body, called and calling", () => {
+    const src = `
+export interface Window { readonly index: number; readonly endsAt: number }
+export const twice = (n: number): number => n + n;
+export const window = (i: number): Window => ({ index: i, endsAt: twice(i) + 1 });
+export const clamp = (n: number): number => {
+  if (n < 0) return 0;
+  return n;
+};
+export function viaArrow(n: number): number { return clamp(twice(n)); }
+`;
+    const m = readSubset(src);
+    expect(m.outside).toEqual([]);
+    expect(m.functions.map((f) => f.name)).toEqual(["twice", "window", "clamp", "viaArrow"]);
+    const w = m.functions.find((f) => f.name === "window");
+    expect(w?.returns).toEqual({ kind: "record", name: "Window" });
+    expect(w?.body).toMatchObject({
+      kind: "record",
+      fields: [{ name: "index" }, { name: "endsAt" }],
+    });
+    // The identity the spec reader records: the offset of the arrow's own `(`.
+    expect(w?.offset).toBe(src.indexOf("(i: number)"));
+    expect(m.functions.find((f) => f.name === "clamp")?.body.kind).toBe("cond");
+  });
+
+  test("an arrow that may be rebound, or is no arrow, is outside with why; so are its callers", () => {
+    const m = readSubset(`
+export let rebindable = (n: number): number => n;
+export const viaLet = (n: number): number => rebindable(n);
+export const expression = function (n: number): number { return n; };
+export const untyped = (n: number) => n;
+export const twoAtOnce = (n: number): number => n, other = (n: number): number => n;
+`);
+    expect(m.functions.map((f) => f.name)).toEqual(["twoAtOnce", "other"]);
+    const why = Object.fromEntries(m.outside.map((o) => [o.name, o.message]));
+    expect(why["rebindable"]).toMatch(/declared with let/);
+    expect(why["viaLet"]).toMatch(/calls rebindable/);
+    expect(why["expression"]).toMatch(/function expression/);
+    expect(why["untyped"]).toMatch(/without a return type/);
+  });
+
   test("declarations that are not functions or records are skipped", () => {
     const m = readSubset(`
 import { x } from "./x.ts";

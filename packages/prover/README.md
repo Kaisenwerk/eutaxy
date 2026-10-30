@@ -46,7 +46,8 @@ ensures })` and `total(f)` with the combinators imported from
 the module's file), the arrows kept as text, and the precondition's
 conjuncts about one parameter as that binder's hint (`hintsOf`).
 `readSubset` and `readExpression` read the subset every first-party
-engine translates: exported functions over `number`, `boolean` and
+engine translates: exported functions (declarations, and arrows a
+module-level `const` holds) over `number`, `boolean` and
 `string` (string-literal unions read as string), record types (a declared
 one by its name, an inline or instantiated one by its printed form), nullable types and tagged unions, lists of any of
 those, returning any of those, with `const`, `if` and early returns,

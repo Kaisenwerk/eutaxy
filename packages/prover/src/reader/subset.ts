@@ -1,6 +1,7 @@
 /**
  * The pure TypeScript subset the first-party engines accept, read into a
- * small tree: exported functions over `number`, `boolean` and `string`,
+ * small tree: exported functions (declarations, and arrows a module-level
+ * `const` holds) over `number`, `boolean` and `string`,
  * record types, nullable types (`T | null`) and tagged unions of records,
  * lists of any of those, returning any of those; bodies made of `const`
  * bindings, `if` with early returns, `return`, and expressions from
@@ -21,8 +22,10 @@
 
 import type { Arrow } from "@eutaxy/spec";
 import {
+  type ArrowFunction,
   type Expression,
   type FunctionDeclaration,
+  type FunctionExpression,
   type Identifier,
   InternalSymbolName,
   type Node,
@@ -32,7 +35,15 @@ import {
 } from "typescript/ast";
 import * as is from "typescript/ast/is";
 import type { Checker, Type } from "typescript/sync";
-import { isAsync, lineAt, openParen, textOf, withProgram, withSourceFile } from "./compiler.ts";
+import {
+  isAsync,
+  isConst,
+  lineAt,
+  openParen,
+  textOf,
+  withProgram,
+  withSourceFile,
+} from "./compiler.ts";
 import { blockOf, ExprReader, type Names, syntacticType, type TypeSource } from "./expressions.ts";
 import { SubsetTypes } from "./types.ts";
 
@@ -1156,14 +1167,14 @@ function isWritten(node: Node): boolean {
 function assigned(
   sf: SourceFile,
   checker: Checker,
-  declarations: ReadonlyMap<string, FunctionDeclaration>,
+  declarations: ReadonlyMap<string, Declared>,
 ): Map<string, number> {
   const out = new Map<string, number>();
   const symbolIds = new Map<string, number | undefined>();
   const idOf = (name: string): number | undefined => {
     if (!symbolIds.has(name)) {
       const decl = declarations.get(name);
-      symbolIds.set(name, decl?.name ? checker.getSymbolAtLocation(decl.name)?.id : undefined);
+      symbolIds.set(name, decl ? checker.getSymbolAtLocation(decl.name)?.id : undefined);
     }
     return symbolIds.get(name);
   };
@@ -1189,27 +1200,33 @@ function assigned(
   return out;
 }
 
+/** A function as written: a declaration, or the arrow (or function expression) a module-level binding holds. */
+type FunctionNode = FunctionDeclaration | ArrowFunction | FunctionExpression;
+
+/** A module-level function: its name, its node, and the statement declaring it (for its line). */
+interface Declared {
+  readonly name: Identifier;
+  readonly node: FunctionNode;
+  readonly statement: Node;
+}
+
 /** A function's header read: its typed parameters and return type, with the body still to read. */
 interface Head {
   readonly name: string;
-  readonly decl: FunctionDeclaration;
+  readonly decl: FunctionNode;
   readonly params: readonly Param[];
   readonly returns: SubsetType;
   readonly line: number;
   readonly offset: number;
 }
 
-/** `export function name(params): Type {` read, the types through the compiler. */
-function head(
-  reader: ExprReader,
-  types: SubsetTypes,
-  checker: Checker,
-  decl: FunctionDeclaration,
-): Head {
+/** `export function name(params): Type {` or `export const name = (params): Type => …` read, the types through the compiler. */
+function head(reader: ExprReader, types: SubsetTypes, checker: Checker, d: Declared): Head {
   const sf = reader.sf;
-  const name = (decl.name as Identifier).text;
+  const decl = d.node;
+  const name = d.name.text;
   if (isAsync(decl)) reader.fail("an async function (core functions are synchronous)", decl);
-  if (decl.asteriskToken) reader.fail("a generator function", decl);
+  if (!is.isArrowFunction(decl) && decl.asteriskToken) reader.fail("a generator function", decl);
   if (decl.typeParameters) reader.fail("type parameters", decl.typeParameters[0] ?? decl);
   const params: Param[] = [];
   for (const p of decl.parameters) {
@@ -1235,15 +1252,19 @@ function head(
   if (!decl.body) reader.fail("a function without a body", decl);
   const offset = openParen(sf, decl);
   if (offset === undefined) reader.fail("a function without a parameter list", decl);
-  return { name, decl, params, returns, line: lineAt(sf, decl), offset };
+  return { name, decl, params, returns, line: lineAt(sf, d.statement), offset };
 }
 
 /** The function, its body read and typed against its header. */
 function declaration(reader: ExprReader, h: Head): SubsetFunction {
-  const body = h.decl.body as NonNullable<FunctionDeclaration["body"]>;
+  const body = h.decl.body as NonNullable<FunctionNode["body"]>;
   const scope = new Map(h.params.map((p) => [p.name, p.type]));
-  // Null checks narrow the names they guard in the branches they guard, before anything is typed.
-  const read = reader.narrowed(reader.block(body.statements, scope, body), scope, body);
+  // An arrow's expression body is its one return. Null checks narrow the names they guard in the
+  // branches they guard, before anything is typed.
+  const statements = is.isBlock(body)
+    ? reader.block(body.statements, scope, body)
+    : reader.expression(body, scope);
+  const read = reader.narrowed(statements, scope, body);
   // Typing the whole body here: a record literal of no declared type, a field read on an integer or
   // a body of another type than declared are all outside the subset, found now rather than by an engine.
   const actual = reader.typeOfExpr(read, scope, body);
@@ -1278,13 +1299,42 @@ export function readSubset(
   const path = options.path ?? virtualModulePath;
   return withProgram([{ path, text: source }], ({ checker, file, parseError }) => {
     const sf = file(path);
-    // Pass 1: the module's top-level function declarations, and what makes them untrustworthy.
-    const declarations = new Map<string, FunctionDeclaration>();
+    // Pass 1: the module's top-level functions, and what makes them untrustworthy. A function is a
+    // declaration or the arrow a module-level const holds; a binding that may be reassigned (let, var)
+    // or holds a function expression is read for its callers' typing, and is outside itself.
+    const declarations = new Map<string, Declared>();
     const overloaded = new Set<string>();
+    const rebindable = new Map<string, OutsideFunction>();
+    const declare = (name: Identifier, node: FunctionNode, statement: Node): void => {
+      if (declarations.has(name.text)) overloaded.add(name.text);
+      else declarations.set(name.text, { name, node, statement });
+    };
     for (const st of sf.statements) {
-      if (!is.isFunctionDeclaration(st) || !st.name) continue;
-      if (declarations.has(st.name.text)) overloaded.add(st.name.text);
-      else declarations.set(st.name.text, st);
+      if (is.isFunctionDeclaration(st)) {
+        if (st.name) declare(st.name, st, st);
+        continue;
+      }
+      if (!is.isVariableStatement(st)) continue;
+      for (const d of st.declarationList.declarations) {
+        if (!is.isIdentifier(d.name) || !d.initializer) continue;
+        let init: Expression = d.initializer;
+        while (is.isParenthesizedExpression(init)) init = init.expression;
+        if (!is.isArrowFunction(init) && !is.isFunctionExpression(init)) continue;
+        const name = d.name.text;
+        declare(d.name, init, st);
+        if (!isConst(st.declarationList))
+          rebindable.set(name, {
+            name,
+            line: lineAt(sf, st),
+            message: `${name} is declared with let or var, so what runs under its name may be another function`,
+          });
+        else if (is.isFunctionExpression(init))
+          rebindable.set(name, {
+            name,
+            line: lineAt(sf, st),
+            message: `${name} holds a function expression (write a function declaration or an arrow)`,
+          });
+      }
     }
     const declared = new Set(declarations.keys());
     const outside = new Map<string, OutsideFunction>();
@@ -1318,6 +1368,7 @@ export function readSubset(
           line: evalLine,
           message: "the module mentions eval directly, which can rebind any of its declarations",
         });
+    for (const [name, why] of rebindable) if (!outside.has(name)) outside.set(name, why);
     for (const [name, line] of assigned(sf, checker, declarations))
       if (!outside.has(name))
         outside.set(name, {
@@ -1360,7 +1411,7 @@ export function readSubset(
     for (const [name, decl] of declarations) {
       try {
         if (overloaded.has(name))
-          reader.fail(`${name} is declared more than once (overloads)`, decl);
+          reader.fail(`${name} is declared more than once (overloads)`, decl.statement);
         const h = head(reader, types, checker, decl);
         // Callers of an assigned function still type-check against its declaration; they are then outside with it.
         signatures.set(name, { params: h.params, returns: h.returns });

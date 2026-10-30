@@ -143,11 +143,11 @@ async function drawn(dir: string, source: string, engine: "lean" | "smt") {
   }
   // Every entry with a function in the subset validates the translation; none may silently skip it.
   expect(checks.length).toBe(functions * 12);
-  expect(functions).toBe(
-    subset.functions.filter((f) => checked(f) && source.includes(`export function ${f.name}(`))
-      .length,
-  );
-  expect(source.match(/^export function (\w+)/gm)?.length ?? 0).toBeGreaterThan(0);
+  // An exported function is a declaration or an arrow a module-level const holds.
+  const exported = (name: string): boolean =>
+    source.includes(`export function ${name}(`) || source.includes(`export const ${name} = (`);
+  expect(functions).toBe(subset.functions.filter((f) => checked(f) && exported(f.name)).length);
+  expect(source.match(/^export (function|const) (\w+)/gm)?.length ?? 0).toBeGreaterThan(0);
   return { subset, checks };
 }
 
