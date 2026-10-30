@@ -1,0 +1,40 @@
+{
+  "description": "A generic helper and a plain one imported from another file, and a generic alias instantiated at number, are read at each call; both engines prove the claims; the SMT engine refutes a planted one, which the Lean engine gives up on.",
+  "covers": [
+    "inlined-call",
+    "generic-alias",
+    "imported-type",
+    "const-arrow",
+    "function-declaration",
+    "record"
+  ],
+  "expect": {
+    "tested": {
+      "boxed": {
+        "neverNegative": "TESTED"
+      },
+      "unboxed": {
+        "keepsNonNegatives": "TESTED",
+        "keepsEverything": "REFUTED"
+      }
+    },
+    "lean": {
+      "boxed": {
+        "neverNegative": "PROVEN"
+      },
+      "unboxed": {
+        "keepsNonNegatives": "PROVEN",
+        "keepsEverything": "gave_up"
+      }
+    },
+    "smt": {
+      "boxed": {
+        "neverNegative": "PROVEN"
+      },
+      "unboxed": {
+        "keepsNonNegatives": "PROVEN",
+        "keepsEverything": "REFUTED"
+      }
+    }
+  }
+}

@@ -1,0 +1,42 @@
+{
+  "description": "Arrows held by module-level consts are functions as declarations are: an expression body returning a record, a block body with early returns, calls between arrows and declarations; both engines prove the claims; the SMT engine refutes a planted one, which the Lean engine gives up on.",
+  "covers": ["const-arrow", "record", "local-call", "if-early-return"],
+  "expect": {
+    "tested": {
+      "clampAttempts": {
+        "withinBounds": "TESTED",
+        "keepsAttempts": "REFUTED"
+      },
+      "nextWindow": {
+        "advances": "TESTED"
+      },
+      "remaining": {
+        "neverNegative": "TESTED"
+      }
+    },
+    "lean": {
+      "clampAttempts": {
+        "withinBounds": "PROVEN",
+        "keepsAttempts": "gave_up"
+      },
+      "nextWindow": {
+        "advances": "PROVEN"
+      },
+      "remaining": {
+        "neverNegative": "PROVEN"
+      }
+    },
+    "smt": {
+      "clampAttempts": {
+        "withinBounds": "PROVEN",
+        "keepsAttempts": "REFUTED"
+      },
+      "nextWindow": {
+        "advances": "PROVEN"
+      },
+      "remaining": {
+        "neverNegative": "PROVEN"
+      }
+    }
+  }
+}

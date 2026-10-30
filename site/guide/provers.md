@@ -139,4 +139,7 @@ Today it covers:
 A function outside the subset, or one calling such a function, is
 `UNKNOWN` (`unsupported`) with the construct and its line, and the rest of
 the module still goes through. The [design document](/reference/design#provers)
-has the exact boundary.
+has the exact boundary, and the corpus vocabulary,
+[`constructs.json`](https://github.com/Kaisenwerk/eutaxy/blob/main/corpus/prover-contracts/constructs.json),
+lists every construct with whether each engine takes it; each has an
+entry of its own in the corpus.

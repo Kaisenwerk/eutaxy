@@ -1,0 +1,27 @@
+{
+  "description": "A union member's tag chosen by a conditional inside the record literal reads as a conditional between two literals; the SMT engine proves the claims and refutes a planted one; the Lean engine reports unions unsupported.",
+  "covers": ["conditional-tag", "tagged-union"],
+  "expect": {
+    "tested": {
+      "level": {
+        "highAboveLimit": "TESTED",
+        "keepsN": "TESTED",
+        "highAtLimit": "REFUTED"
+      }
+    },
+    "lean": {
+      "level": {
+        "highAboveLimit": "unsupported",
+        "keepsN": "unsupported",
+        "highAtLimit": "unsupported"
+      }
+    },
+    "smt": {
+      "level": {
+        "highAboveLimit": "PROVEN",
+        "keepsN": "PROVEN",
+        "highAtLimit": "REFUTED"
+      }
+    }
+  }
+}

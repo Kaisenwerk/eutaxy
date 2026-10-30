@@ -1,0 +1,30 @@
+{
+  "description": "The refund core, fixed: all three properties and termination are proved.",
+  "covers": ["record", "if-early-return", "boolean-operators", "arithmetic", "comparison"],
+  "expect": {
+    "tested": {
+      "decideRefund": {
+        "withinCaptured": "REFUTED",
+        "addsTheAmount": "REFUTED",
+        "fullRefundAllowed": "TESTED",
+        "decideRefundTotal": "unsupported"
+      }
+    },
+    "lean": {
+      "decideRefund": {
+        "withinCaptured": "PROVEN",
+        "addsTheAmount": "PROVEN",
+        "fullRefundAllowed": "PROVEN",
+        "decideRefundTotal": "PROVEN"
+      }
+    },
+    "smt": {
+      "decideRefund": {
+        "withinCaptured": "REFUTED",
+        "addsTheAmount": "REFUTED",
+        "fullRefundAllowed": "PROVEN",
+        "decideRefundTotal": "unsupported"
+      }
+    }
+  }
+}

@@ -1,0 +1,48 @@
+{
+  "description": "A record binder is proved by both engines; a nullable record, a nullable union of literals and a tagged-union result are read into the subset and proved by the SMT engine (option and union datatypes, narrowing by null checks), with a planted false claim refuted on a replayed model; the Lean engine reports them unsupported until it has them.",
+  "covers": ["record", "nullable", "tagged-union", "string-literal-union"],
+  "expect": {
+    "tested": {
+      "bump": {
+        "bumpCounts": "REFUTED",
+        "lockedAtFive": "TESTED"
+      },
+      "admit": {
+        "admitsMatches": "TESTED",
+        "nullRefused": "TESTED",
+        "admitsWhenNotNull": "REFUTED"
+      },
+      "decideAccess": {
+        "sendCodeIff": "TESTED"
+      }
+    },
+    "lean": {
+      "bump": {
+        "bumpCounts": "PROVEN",
+        "lockedAtFive": "PROVEN"
+      },
+      "admit": {
+        "admitsMatches": "unsupported",
+        "nullRefused": "unsupported",
+        "admitsWhenNotNull": "unsupported"
+      },
+      "decideAccess": {
+        "sendCodeIff": "unsupported"
+      }
+    },
+    "smt": {
+      "bump": {
+        "bumpCounts": "REFUTED",
+        "lockedAtFive": "PROVEN"
+      },
+      "admit": {
+        "admitsMatches": "PROVEN",
+        "nullRefused": "PROVEN",
+        "admitsWhenNotNull": "REFUTED"
+      },
+      "decideAccess": {
+        "sendCodeIff": "PROVEN"
+      }
+    }
+  }
+}

@@ -1,0 +1,189 @@
+{
+  "constructs": {
+    "function-declaration": {
+      "what": "an exported function declaration",
+      "lean": "in",
+      "smt": "in"
+    },
+    "const-arrow": {
+      "what": "an arrow held by a module-level const, read as a declaration is",
+      "lean": "in",
+      "smt": "in"
+    },
+    "forward-declaration": {
+      "what": "a function or alias used before it is declared",
+      "lean": "in",
+      "smt": "in"
+    },
+    "number": {
+      "what": "number parameters and results: the integers for Lean, doubles for SMT",
+      "lean": "in",
+      "smt": "in"
+    },
+    "boolean": {
+      "what": "boolean parameters and results",
+      "lean": "in",
+      "smt": "in"
+    },
+    "string": {
+      "what": "string literals (escapes decoded), and + joining two strings",
+      "lean": "in",
+      "smt": "in"
+    },
+    "string-literal-union": {
+      "what": "a union of string literals, read as string",
+      "lean": "in",
+      "smt": "in"
+    },
+    "equality": {
+      "what": "=== and !== on one primitive type",
+      "lean": "in",
+      "smt": "in"
+    },
+    "comparison": {
+      "what": "< <= > >= on numbers",
+      "lean": "in",
+      "smt": "in"
+    },
+    "arithmetic": {
+      "what": "+ - * on numbers; a product of two variables is read but beyond linear arithmetic",
+      "lean": "in",
+      "smt": "in"
+    },
+    "boolean-operators": {
+      "what": "&& || !",
+      "lean": "in",
+      "smt": "in"
+    },
+    "number-is-integer": {
+      "what": "Number.isInteger",
+      "lean": "in",
+      "smt": "in"
+    },
+    "const-binding": {
+      "what": "a const binding in a body",
+      "lean": "in",
+      "smt": "in"
+    },
+    "if-early-return": {
+      "what": "if and if/else with early returns",
+      "lean": "in",
+      "smt": "in"
+    },
+    "conditional-operator": {
+      "what": "the conditional operator",
+      "lean": "in",
+      "smt": "in"
+    },
+    "local-call": {
+      "what": "a call to a function of the module",
+      "lean": "in",
+      "smt": "in"
+    },
+    "inlined-call": {
+      "what": "a call to a generic function, or one imported from another file, read at each call",
+      "lean": "in",
+      "smt": "in"
+    },
+    "precondition": {
+      "what": "a spec's when, as hypotheses",
+      "lean": "in",
+      "smt": "in"
+    },
+    "record": {
+      "what": "a record type (interface or object type alias): literals and field reads",
+      "lean": "in",
+      "smt": "in"
+    },
+    "inline-object-type": {
+      "what": "an inline object type in a signature",
+      "lean": "in",
+      "smt": "in"
+    },
+    "contextual-record-type": {
+      "what": "a record literal typed by its context when two aliases share a shape",
+      "lean": "in",
+      "smt": "in"
+    },
+    "keyword-names": {
+      "what": "names that are Lean keywords (from, end)",
+      "lean": "in",
+      "smt": "in"
+    },
+    "generic-alias": {
+      "what": "a generic type alias, instantiated where it is used",
+      "lean": "in",
+      "smt": "in"
+    },
+    "imported-type": {
+      "what": "a type imported from another file of the project",
+      "lean": "in",
+      "smt": "in"
+    },
+    "nullable": {
+      "what": "T | null, narrowed by === null and !== null",
+      "lean": "out",
+      "smt": "in"
+    },
+    "tagged-union": {
+      "what": "a union of records with a tag field, narrowed by testing the tag",
+      "lean": "out",
+      "smt": "in"
+    },
+    "record-in-several-unions": {
+      "what": "one member record in two unions, moving between them",
+      "lean": "out",
+      "smt": "in"
+    },
+    "conditional-tag": {
+      "what": "a union member's tag chosen by a conditional inside the literal",
+      "lean": "out",
+      "smt": "in"
+    },
+    "truthiness-null-test": {
+      "what": "truthiness of a nullable record or union (a condition, or under !) as a null test",
+      "lean": "out",
+      "smt": "in"
+    },
+    "list": {
+      "what": "readonly T[] as a list: literals with a trailing spread, length, xs[0] ?? d, slice(1), map, flatMap, every, some, reduce",
+      "lean": "in",
+      "smt": "out"
+    },
+    "structural-recursion": {
+      "what": "recursion on a list parameter's slice(1) after testing its length against 0",
+      "lean": "in",
+      "smt": "out"
+    },
+    "supplied-proof": {
+      "what": "a Lean file beside the spec file supplying proofs the tactic script does not find",
+      "lean": "in",
+      "smt": "out"
+    },
+    "loop-and-mutable-binding": {
+      "what": "a loop or a let binding: outside the subset",
+      "lean": "out",
+      "smt": "out"
+    },
+    "general-recursion": {
+      "what": "recursion other than structural recursion on a list: outside the subset",
+      "lean": "out",
+      "smt": "out"
+    },
+    "regex-precondition": {
+      "what": "a regex test in a spec's when: outside the subset",
+      "lean": "out",
+      "smt": "out"
+    },
+    "truthiness-of-primitives": {
+      "what": "truthiness of a nullable number or string, which is not a null test: outside the subset",
+      "lean": "out",
+      "smt": "out"
+    },
+    "collections": {
+      "what": "for...of, Set and other collections beyond the list operations: outside the subset",
+      "lean": "out",
+      "smt": "out"
+    }
+  }
+}

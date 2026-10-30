@@ -41,7 +41,7 @@ interface Json {
 
 describe("eutaxy report", () => {
   test("every spec file under the directory through TESTED, keyed by its path there", async () => {
-    const r = await report("corpus/prover-contracts/strings");
+    const r = await report("corpus/prover-contracts/constructs/strings");
     // The entry plants refutations (a claim false on NaN), so the report fails.
     expect(r.code, r.stderr).toBe(1);
     const json = JSON.parse(r.stdout) as Json;
@@ -73,14 +73,14 @@ describe("eutaxy report", () => {
     expect(a.stdout).toMatch(overflow);
     expect(masked(a.stdout)).toBe(masked(b.stdout));
     const modules = new Set((JSON.parse(a.stdout) as Json).specs.map((s) => s.module));
-    expect(modules.has("./strings/domain.ts")).toBe(true);
-    expect(modules.has("./refund-fixed/domain.ts")).toBe(true);
+    expect(modules.has("./constructs/strings/domain.ts")).toBe(true);
+    expect(modules.has("./shapes/refund-fixed/domain.ts")).toBe(true);
     const c = await report("corpus/prover-contracts", { seed: "t" });
     expect(c.stdout).not.toBe(a.stdout);
   });
 
   test("text: grouped by module with a closing count", async () => {
-    const r = await report("corpus/prover-contracts/strings", { json: false });
+    const r = await report("corpus/prover-contracts/constructs/strings", { json: false });
     expect(r.stdout).toContain("\n./domain.ts\n  TESTED   decideAccess sendCodeIff:");
     expect(r.stdout.trimEnd().split("\n").at(-1)).toBe(
       "8 properties in 1 module: 5 TESTED, 2 REFUTED, 1 UNKNOWN",
@@ -219,7 +219,9 @@ describe("eutaxy report", () => {
     const lone = await report(orphan);
     expect(lone.code).toBe(3);
     expect(lone.stderr).toContain("./gone.ts:1: gone.props.ts has no module gone.ts beside it");
-    const unknown = await report("corpus/prover-contracts/strings", { provers: ["coq"] });
+    const unknown = await report("corpus/prover-contracts/constructs/strings", {
+      provers: ["coq"],
+    });
     expect(unknown.code).toBe(3);
     expect(unknown.stderr).toContain("unknown prover coq; known: lean, smt");
     expect((await report(join(scratch, "missing"))).code).toBe(3);

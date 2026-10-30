@@ -1,0 +1,36 @@
+{
+  "description": "Preconditions bounding the binders become hypotheses: lower bounds, closed and open ranges.",
+  "covers": ["precondition", "arithmetic", "if-early-return"],
+  "expect": {
+    "tested": {
+      "withdraw": {
+        "neverNegative": "TESTED",
+        "atMostBalance": "REFUTED",
+        "exactWhenAffordable": "REFUTED"
+      },
+      "twice": {
+        "smallDouble": "TESTED"
+      }
+    },
+    "lean": {
+      "withdraw": {
+        "neverNegative": "PROVEN",
+        "atMostBalance": "PROVEN",
+        "exactWhenAffordable": "PROVEN"
+      },
+      "twice": {
+        "smallDouble": "PROVEN"
+      }
+    },
+    "smt": {
+      "withdraw": {
+        "neverNegative": "PROVEN",
+        "atMostBalance": "REFUTED",
+        "exactWhenAffordable": "REFUTED"
+      },
+      "twice": {
+        "smallDouble": "PROVEN"
+      }
+    }
+  }
+}

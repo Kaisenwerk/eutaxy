@@ -1,0 +1,66 @@
+{
+  "description": "Strings: literals (escapes included), equality, + as joining, string-literal union types read as string, string fields.",
+  "covers": ["string", "string-literal-union", "equality", "record"],
+  "expect": {
+    "tested": {
+      "decideAccess": {
+        "sendCodeIff": "TESTED",
+        "twoOutcomes": "TESTED",
+        "decideAccessTotal": "unsupported"
+      },
+      "networkKey": {
+        "neverEmpty": "TESTED"
+      },
+      "sameNetwork": {
+        "distinctNetworks": "TESTED"
+      },
+      "tag": {
+        "kindOfSign": "REFUTED",
+        "codeKept": "REFUTED"
+      },
+      "label": {
+        "escapes": "TESTED"
+      }
+    },
+    "lean": {
+      "decideAccess": {
+        "sendCodeIff": "PROVEN",
+        "twoOutcomes": "PROVEN",
+        "decideAccessTotal": "PROVEN"
+      },
+      "networkKey": {
+        "neverEmpty": "PROVEN"
+      },
+      "tag": {
+        "kindOfSign": "PROVEN",
+        "codeKept": "PROVEN"
+      },
+      "label": {
+        "escapes": "PROVEN"
+      },
+      "sameNetwork": {
+        "distinctNetworks": "PROVEN"
+      }
+    },
+    "smt": {
+      "decideAccess": {
+        "sendCodeIff": "PROVEN",
+        "twoOutcomes": "PROVEN",
+        "decideAccessTotal": "unsupported"
+      },
+      "networkKey": {
+        "neverEmpty": "PROVEN"
+      },
+      "sameNetwork": {
+        "distinctNetworks": "PROVEN"
+      },
+      "tag": {
+        "kindOfSign": "REFUTED",
+        "codeKept": "REFUTED"
+      },
+      "label": {
+        "escapes": "PROVEN"
+      }
+    }
+  }
+}

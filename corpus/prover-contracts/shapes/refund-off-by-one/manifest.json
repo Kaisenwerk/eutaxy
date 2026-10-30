@@ -1,0 +1,27 @@
+{
+  "description": "The planted off-by-one: two properties proved, the false one given up on.",
+  "covers": ["record", "if-early-return", "boolean-operators", "arithmetic", "comparison"],
+  "expect": {
+    "tested": {
+      "decideRefund": {
+        "withinCaptured": "REFUTED",
+        "addsTheAmount": "REFUTED",
+        "fullRefundAllowed": "REFUTED"
+      }
+    },
+    "lean": {
+      "decideRefund": {
+        "withinCaptured": "PROVEN",
+        "addsTheAmount": "PROVEN",
+        "fullRefundAllowed": "gave_up"
+      }
+    },
+    "smt": {
+      "decideRefund": {
+        "withinCaptured": "REFUTED",
+        "addsTheAmount": "REFUTED",
+        "fullRefundAllowed": "REFUTED"
+      }
+    }
+  }
+}

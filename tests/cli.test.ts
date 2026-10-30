@@ -305,17 +305,24 @@ describe("eutaxy check", () => {
 
 describe("eutaxy report", () => {
   test("runs every spec file under a directory and exits 1 on a refutation", () => {
-    const r = eutaxy(["report", "corpus/prover-contracts/refund-fixed"]);
+    const r = eutaxy(["report", "corpus/prover-contracts/shapes/refund-fixed"]);
     expect(r.status, r.stderr).toBe(1);
     expect(r.stdout).toContain("\n./domain.ts\n");
     expect(r.stdout).toContain("TESTED   decideRefund fullRefundAllowed: held on");
     expect(r.stdout).toContain("4 properties in 1 module:");
-    expect(eutaxy(["report", "corpus/prover-contracts/strings", "extra"]).status).toBe(3);
+    expect(eutaxy(["report", "corpus/prover-contracts/constructs/strings", "extra"]).status).toBe(
+      3,
+    );
     // A forgotten value must not quietly drop the PROVEN rung; a check-only flag is not ignored.
-    const bare = eutaxy(["report", "corpus/prover-contracts/strings", "--prover"]);
+    const bare = eutaxy(["report", "corpus/prover-contracts/constructs/strings", "--prover"]);
     expect(bare.status).toBe(3);
     expect(bare.stderr).toContain("--prover needs a value");
-    const checkOnly = eutaxy(["report", "corpus/prover-contracts/strings", "--max-runs", "5"]);
+    const checkOnly = eutaxy([
+      "report",
+      "corpus/prover-contracts/constructs/strings",
+      "--max-runs",
+      "5",
+    ]);
     expect(checkOnly.status).toBe(3);
     expect(checkOnly.stderr).toContain("report does not take --max-runs");
   });
@@ -358,7 +365,7 @@ describe("eutaxy report", () => {
     if (!hasZ3) return;
     const r = eutaxy([
       "report",
-      "corpus/prover-contracts/refund-fixed",
+      "corpus/prover-contracts/shapes/refund-fixed",
       "--prover",
       "smt",
       "--json",

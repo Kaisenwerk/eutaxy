@@ -10,7 +10,7 @@
  * failure.
  */
 
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { nextInt, type PrngState, seedPrng } from "@eutaxy/core";
@@ -31,19 +31,7 @@ import {
 } from "@eutaxy/prover-smt";
 import { type Binder, isSpec } from "@eutaxy/spec";
 import { describe, expect, test } from "vitest";
-
-const root = import.meta.dirname;
-const entries = readdirSync(root, { withFileTypes: true })
-  .filter((d) => d.isDirectory() && existsSync(join(root, d.name, "manifest.json")))
-  .map((d) => d.name)
-  .sort();
-
-type Expected = { readonly [fn: string]: { readonly [property: string]: string } };
-interface Manifest {
-  readonly description: string;
-  /** Per rung and engine: the TESTED rung on inputs drawn from the parameter types, then each engine. */
-  readonly expect: { readonly tested: Expected; readonly lean: Expected; readonly smt: Expected };
-}
+import { entries, manifest as manifestOf, root } from "./entries.ts";
 
 const lean = await findLean();
 const z3 = await findZ3();
@@ -170,7 +158,7 @@ function outcomes(
 
 for (const entry of entries) {
   const dir = join(root, entry);
-  const manifest = JSON.parse(readFileSync(join(dir, "manifest.json"), "utf8")) as Manifest;
+  const manifest = manifestOf(entry);
   // Real paths: a type imported from a file beside the module resolves from where the module is.
   const modulePath = join(dir, "domain.ts");
   const source = readFileSync(modulePath, "utf8");

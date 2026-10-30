@@ -1,0 +1,33 @@
+{
+  "description": "One error record in two results (Err<Reason> in Result<boolean, Reason> and Result<number, Reason>), an error from the first returned as the second; the SMT engine proves the claims and refutes a planted one; the Lean engine reports unions unsupported.",
+  "covers": ["record-in-several-unions", "tagged-union", "generic-alias"],
+  "expect": {
+    "tested": {
+      "admit": {
+        "admitsWithin": "TESTED"
+      },
+      "room": {
+        "fullPassesThrough": "TESTED",
+        "alwaysRoom": "REFUTED"
+      }
+    },
+    "lean": {
+      "admit": {
+        "admitsWithin": "unsupported"
+      },
+      "room": {
+        "fullPassesThrough": "unsupported",
+        "alwaysRoom": "unsupported"
+      }
+    },
+    "smt": {
+      "admit": {
+        "admitsWithin": "PROVEN"
+      },
+      "room": {
+        "fullPassesThrough": "PROVEN",
+        "alwaysRoom": "REFUTED"
+      }
+    }
+  }
+}

@@ -50,7 +50,7 @@ describe("published package", () => {
     try {
       run(
         process.execPath,
-        [join(dist, "bin.mjs"), "report", "corpus/prover-contracts/strings", "--json"],
+        [join(dist, "bin.mjs"), "report", "corpus/prover-contracts/constructs/strings", "--json"],
         root,
       );
     } catch (err) {

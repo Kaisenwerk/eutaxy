@@ -1,0 +1,73 @@
+{
+  "description": "Generic helpers imported from a result kit in another file are read at each call, at the instantiation the caller's declared result gives; one error type in two Results is one member record in two unions, and an error returned from one Result as the other moves between them; the SMT engine proves the decisions and refutes a planted claim; the Lean engine reports unions unsupported. A tag chosen by a conditional in the literal, and a nullable record tested by truthiness, read and prove as the code means them.",
+  "covers": [
+    "inlined-call",
+    "generic-alias",
+    "imported-type",
+    "const-arrow",
+    "tagged-union",
+    "record-in-several-unions",
+    "conditional-tag",
+    "truthiness-null-test",
+    "nullable"
+  ],
+  "expect": {
+    "tested": {
+      "judge": {
+        "okIffMatches": "TESTED",
+        "lockedFromFive": "TESTED",
+        "alwaysOk": "REFUTED"
+      },
+      "remaining": {
+        "countsDown": "TESTED"
+      },
+      "attemptsLeft": {
+        "lockedPassesThrough": "TESTED"
+      },
+      "judgeTagged": {
+        "taggedLikeJudge": "TESTED"
+      },
+      "admit": {
+        "expiredWhenMissing": "TESTED"
+      }
+    },
+    "lean": {
+      "judge": {
+        "okIffMatches": "unsupported",
+        "lockedFromFive": "unsupported",
+        "alwaysOk": "unsupported"
+      },
+      "remaining": {
+        "countsDown": "unsupported"
+      },
+      "attemptsLeft": {
+        "lockedPassesThrough": "unsupported"
+      },
+      "judgeTagged": {
+        "taggedLikeJudge": "unsupported"
+      },
+      "admit": {
+        "expiredWhenMissing": "unsupported"
+      }
+    },
+    "smt": {
+      "judge": {
+        "okIffMatches": "PROVEN",
+        "lockedFromFive": "PROVEN",
+        "alwaysOk": "REFUTED"
+      },
+      "remaining": {
+        "countsDown": "PROVEN"
+      },
+      "attemptsLeft": {
+        "lockedPassesThrough": "PROVEN"
+      },
+      "judgeTagged": {
+        "taggedLikeJudge": "PROVEN"
+      },
+      "admit": {
+        "expiredWhenMissing": "PROVEN"
+      }
+    }
+  }
+}

@@ -894,7 +894,10 @@ initializers travel in the `.olean`. The subset
 is specified operationally by the contract corpus
 (`corpus/prover-contracts`: functions with known outcomes, provable, given
 up on, and outside the subset) and widens one characterised class at a
-time. Today the subset is: exported functions, declared or held as an
+time. Its vocabulary, `constructs.json`, names each construct and whether
+each engine takes it; every construct has an entry of its own, and a
+test checks the vocabulary against the outcomes those entries expect.
+Today the subset is: exported functions, declared or held as an
 arrow by a module-level `const` (a `let` or `var` may be rebound, so its
 function is outside, and so are its callers), over `number`, `boolean` and
 `string` (a union of string literals reads as `string`: the proof covers

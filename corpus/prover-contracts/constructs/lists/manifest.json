@@ -1,0 +1,75 @@
+{
+  "description": "Lists: readonly T[] as Lean's List; literals with a trailing spread, length, xs[0] ?? d, slice(1), map and flatMap (with the index), every, some, reduce, and structural recursion on slice(1). The Lean engine translates them, its translation checked on drawn lists; the SMT engine does not take lists. Claims needing induction are beyond the tactic script: domain.props.lean supplies their proofs, which Lean's kernel checks.",
+  "covers": ["list", "structural-recursion", "supplied-proof"],
+  "expect": {
+    "tested": {
+      "schedules": {
+        "countIsProduct": "TESTED"
+      },
+      "scheduleCount": {
+        "emptyCount": "TESTED"
+      },
+      "doubled": {
+        "doubledKeepsLength": "TESTED"
+      },
+      "pushFront": {
+        "pushFrontGrows": "TESTED"
+      },
+      "sum": {
+        "sumOfOne": "TESTED"
+      },
+      "allBelow": {
+        "belowAnything": "TESTED"
+      },
+      "hasAt": {
+        "neverAtItsIndex": "REFUTED"
+      }
+    },
+    "lean": {
+      "schedules": {
+        "countIsProduct": "PROVEN"
+      },
+      "scheduleCount": {
+        "emptyCount": "PROVEN"
+      },
+      "doubled": {
+        "doubledKeepsLength": "PROVEN"
+      },
+      "pushFront": {
+        "pushFrontGrows": "PROVEN"
+      },
+      "sum": {
+        "sumOfOne": "PROVEN"
+      },
+      "allBelow": {
+        "belowAnything": "PROVEN"
+      },
+      "hasAt": {
+        "neverAtItsIndex": "gave_up"
+      }
+    },
+    "smt": {
+      "schedules": {
+        "countIsProduct": "unsupported"
+      },
+      "scheduleCount": {
+        "emptyCount": "unsupported"
+      },
+      "doubled": {
+        "doubledKeepsLength": "unsupported"
+      },
+      "pushFront": {
+        "pushFrontGrows": "unsupported"
+      },
+      "sum": {
+        "sumOfOne": "unsupported"
+      },
+      "allBelow": {
+        "belowAnything": "unsupported"
+      },
+      "hasAt": {
+        "neverAtItsIndex": "unsupported"
+      }
+    }
+  }
+}

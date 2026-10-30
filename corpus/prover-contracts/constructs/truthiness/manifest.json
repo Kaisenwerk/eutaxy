@@ -1,0 +1,42 @@
+{
+  "description": "Truthiness of a nullable record, in a condition or under !, is a null test; the SMT engine proves the claims and refutes a planted one; truthiness of a nullable number is not a null test (0 and NaN are falsy) and stays outside, while TESTED refutes its claim on NaN; the Lean engine reports nullable types unsupported.",
+  "covers": ["truthiness-null-test", "nullable", "truthiness-of-primitives"],
+  "expect": {
+    "tested": {
+      "remaining": {
+        "missingIsZero": "TESTED",
+        "presentIsPositive": "REFUTED"
+      },
+      "active": {
+        "activeHasTime": "TESTED"
+      },
+      "orZero": {
+        "orZeroKeeps": "REFUTED"
+      }
+    },
+    "lean": {
+      "remaining": {
+        "missingIsZero": "unsupported",
+        "presentIsPositive": "unsupported"
+      },
+      "active": {
+        "activeHasTime": "unsupported"
+      },
+      "orZero": {
+        "orZeroKeeps": "unsupported"
+      }
+    },
+    "smt": {
+      "remaining": {
+        "missingIsZero": "PROVEN",
+        "presentIsPositive": "REFUTED"
+      },
+      "active": {
+        "activeHasTime": "PROVEN"
+      },
+      "orZero": {
+        "orZeroKeeps": "unsupported"
+      }
+    }
+  }
+}

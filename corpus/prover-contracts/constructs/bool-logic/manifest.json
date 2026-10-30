@@ -1,0 +1,46 @@
+{
+  "description": "Boolean parameters and results; equality of booleans as iff.",
+  "covers": [
+    "boolean",
+    "boolean-operators",
+    "equality",
+    "record",
+    "if-early-return",
+    "function-declaration"
+  ],
+  "expect": {
+    "tested": {
+      "decide": {
+        "allowedIff": "TESTED",
+        "reasonWhenBanned": "TESTED",
+        "reasonCodes": "TESTED"
+      },
+      "either": {
+        "xor": "TESTED",
+        "sameValue": "TESTED"
+      }
+    },
+    "lean": {
+      "decide": {
+        "allowedIff": "PROVEN",
+        "reasonWhenBanned": "PROVEN",
+        "reasonCodes": "PROVEN"
+      },
+      "either": {
+        "xor": "PROVEN",
+        "sameValue": "PROVEN"
+      }
+    },
+    "smt": {
+      "decide": {
+        "allowedIff": "PROVEN",
+        "reasonWhenBanned": "PROVEN",
+        "reasonCodes": "PROVEN"
+      },
+      "either": {
+        "xor": "PROVEN",
+        "sameValue": "PROVEN"
+      }
+    }
+  }
+}

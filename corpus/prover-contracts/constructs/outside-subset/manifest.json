@@ -1,0 +1,30 @@
+{
+  "description": "A loop and a mutable binding put one function outside the subset: its property is unsupported, never guessed; the other function is proved.",
+  "covers": ["loop-and-mutable-binding"],
+  "expect": {
+    "tested": {
+      "sumTo": {
+        "nonNegative": "TESTED"
+      },
+      "same": {
+        "identity": "REFUTED"
+      }
+    },
+    "lean": {
+      "sumTo": {
+        "nonNegative": "unsupported"
+      },
+      "same": {
+        "identity": "PROVEN"
+      }
+    },
+    "smt": {
+      "sumTo": {
+        "nonNegative": "unsupported"
+      },
+      "same": {
+        "identity": "REFUTED"
+      }
+    }
+  }
+}
