@@ -19,7 +19,29 @@ export interface Manifest {
   readonly covers: readonly string[];
   /** Per rung and engine: the TESTED rung on inputs drawn from the parameter types, then each engine. */
   readonly expect: { readonly tested: Expected; readonly lean: Expected; readonly smt: Expected };
+  /**
+   * Inputs, per function, each engine's translation must compute exactly
+   * what JavaScript computes on, beyond the drawn ones: edge values with
+   * where they come from (a test262 file, say). The Lean engine is checked
+   * on those that are integers with an integer result, the numbers it
+   * models. A number may be written "NaN", "-0", "Infinity" or
+   * "-Infinity", which JSON cannot hold.
+   */
+  readonly edges?: {
+    readonly [fn: string]: { readonly source: string; readonly inputs: readonly unknown[][] };
+  };
 }
+
+const special: Readonly<Record<string, number>> = {
+  NaN: Number.NaN,
+  "-0": -0,
+  Infinity: Number.POSITIVE_INFINITY,
+  "-Infinity": Number.NEGATIVE_INFINITY,
+};
+
+/** An edge input as JavaScript sees it: the spelled numbers decoded. */
+export const edgeValue = (v: unknown): unknown =>
+  typeof v === "string" && v in special ? special[v] : v;
 
 export type Engine = "lean" | "smt";
 

@@ -126,6 +126,9 @@ Today it covers:
 - **Expressions**: `+ - *` on numbers, `+` on strings, comparisons,
   `===`/`!==` on primitives and against `null`, `&& || !`, the conditional
   operator, string and record literals, field reads, `Number.isInteger`,
+  `Math.floor` and `/` (the Lean engine takes division only as
+  `Math.floor(x / c)` for a positive integer constant), module-level
+  constants (own or imported, read as their values),
   and calls to the module's own functions. A generic function, or one
   imported from another file of the project, is read at each call, at
   the types that call gives it, so a result kit shared across modules

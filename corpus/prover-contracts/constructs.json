@@ -50,6 +50,21 @@
       "lean": "in",
       "smt": "in"
     },
+    "division": {
+      "what": "x / y on doubles; the Lean engine, whose numbers are the integers, refuses it outside Math.floor(x / c)",
+      "lean": "out",
+      "smt": "in"
+    },
+    "floor-division": {
+      "what": "Math.floor(x / c) for a positive integer constant c: Lean's Int division",
+      "lean": "in",
+      "smt": "in"
+    },
+    "math-floor": {
+      "what": "Math.floor, rounding toward negative infinity",
+      "lean": "in",
+      "smt": "in"
+    },
     "boolean-operators": {
       "what": "&& || !",
       "lean": "in",
@@ -77,6 +92,11 @@
     },
     "local-call": {
       "what": "a call to a function of the module",
+      "lean": "in",
+      "smt": "in"
+    },
+    "module-constant": {
+      "what": "a module-level const holding a number, boolean or string built from literals, operators and other such constants, the module's own or imported, read as its value",
       "lean": "in",
       "smt": "in"
     },

@@ -46,6 +46,7 @@ import {
   withProgram,
   withSourceFile,
 } from "./compiler.ts";
+import { topLevelNames } from "./expressions.ts";
 import { specTypeOf, unionOf } from "./types.ts";
 
 export interface ReadSpecsInput {
@@ -622,6 +623,15 @@ export function readSpecs(input: ReadSpecsInput): ModuleSpecs {
         new Set(input.specSpecifiers ?? ["eutaxy/spec", "@eutaxy/spec"]),
       );
       errors.push(...moduleSide.errors, ...specSide.errors);
+      // A claim is read from its arrow's text alone, where Math and Number are the globals: a spec
+      // file that binds either would have its claims read as something they do not compute.
+      const specFile = file(specPath);
+      for (const [global, at] of topLevelNames(specFile))
+        if (global === "Math" || global === "Number")
+          errors.push({
+            line: lineAt(specFile, at),
+            message: `the spec file binds ${global}, which its claims would be read as the global ${global}; rename it`,
+          });
       // The claims' free names: the spec file's local names for the module's declarations.
       const imports = specSide.imports.flatMap((i) => {
         const fn = moduleSide.exports.get(i.name);

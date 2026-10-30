@@ -919,8 +919,17 @@ lone surrogate has no Lean character and is refused), record literals
 `{ type: c ? "a" : "b", … }`, is read as a conditional between two
 literals, the other fields in each as written, which pure fields make
 exact), field reads (on a union, a field every
-member has: its tag), `Number.isInteger`, and calls to the module's own
-functions. A generic function, and a function imported from another file
+member has: its tag), `Number.isInteger`, `Math.floor` and `/` (as
+JavaScript computes them on doubles; `Number` and `Math` are the
+globals only where the file binds no such name, by declaration or
+import), module-level constants, and calls to the module's own
+functions. A module-level `const` holding a number, boolean or string
+built from literals, operators and other such constants, the module's
+own or one it imports (resolved as the compiler resolves it), is read as
+its value wherever it is named, which a `const` makes exact; a `let` or
+`var` may be rebound and is outside, as is a constant holding a record,
+calling a function, or reaching itself. A spec file does not read the
+module's constants yet: its claims spell the values. A generic function, and a function imported from another file
 of the project, is read at each call instead: the compiler resolves the
 callee, the call's types instantiate it (from the type the call's value
 is expected to have where that decides its type parameters, since the
@@ -957,7 +966,14 @@ list exhausts its call stack, and a proof over arrays says it assumes
 them dense, since JavaScript's array methods skip a sparse array's holes.
 Other recursion, mutual recursion included, is outside. Of these the Lean engine takes
 everything but the nullable types and the unions, which the SMT engine
-takes first; the SMT engine does not take lists. A function using what
+takes first; the SMT engine does not take lists. The Lean engine, whose
+numbers are the integers, takes division only as `Math.floor(x / c)` for
+a positive integer constant `c` (Lean's `Int` division, which rounds
+toward negative infinity as `Math.floor` does, and which `omega`
+decides), and `Math.floor` of anything else as the identity; the SMT
+engine takes `/` and `Math.floor` on doubles (`fp.div` and
+`fp.roundToIntegral` toward negative infinity), checked against
+JavaScript on test262's edge values. A function using what
 an engine does not take is `unsupported` there, as is a caller of one. Ordering strings is refused: JavaScript compares UTF-16 code
 units, Lean characters, and the two disagree beyond the basic plane. A function outside the subset, or one calling such a function,
 is `UNKNOWN` (`unsupported`) with the construct and the line, and the rest

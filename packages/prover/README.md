@@ -51,7 +51,8 @@ module-level `const` holds) over `number`, `boolean` and
 `string` (string-literal unions read as string), record types (a declared
 one by its name, an inline or instantiated one by its printed form), nullable types and tagged unions, lists of any of
 those, returning any of those, with `const`, `if` and early returns,
-`+ - *`, `+` joining strings, comparisons, `=== !==` (against `null` too,
+`+ - * /`, `Math.floor`, module-level constants (own or imported, read
+as their values), `+` joining strings, comparisons, `=== !==` (against `null` too,
 which narrows the tested name where the check holds: `narrow` nodes,
 `insertNarrows`, `narrowsOf`; a test of a union's tag likewise narrows
 the name to that member: `narrowTag` nodes, `tagNarrowsOf`), `&& || !`,

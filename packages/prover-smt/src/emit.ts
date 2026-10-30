@@ -303,6 +303,9 @@ export function term(
       return `(not ${t(e.operand)})`;
     case "isInteger":
       return isIntegerTerm(t(e.operand));
+    case "floor":
+      // Math.floor: toward negative infinity, -0, NaN and the infinities kept, as IEEE 754 rounds.
+      return `(fp.roundToIntegral RTN ${t(e.operand)})`;
     case "binary": {
       const lt = typed(e.left);
       const rt = typed(e.right);
@@ -315,6 +318,8 @@ export function term(
           return `(fp.sub RNE ${t(e.left)} ${t(e.right)})`;
         case "*":
           return `(fp.mul RNE ${t(e.left)} ${t(e.right)})`;
+        case "/":
+          return `(fp.div RNE ${t(e.left)} ${t(e.right)})`;
         case "<":
           return `(fp.lt ${t(e.left)} ${t(e.right)})`;
         case "<=":

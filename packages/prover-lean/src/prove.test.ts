@@ -34,14 +34,14 @@ const specOn = (fn: string, body: string, name = "p") =>
 describe("prepare", () => {
   test("a function outside the subset names the construct and the line; the others are still emitted", () => {
     const source =
-      "export function f(x: number): number {\n  return x / 1;\n}\nexport function g(x: number): number { return x; }";
+      "export function f(x: number): number {\n  return x % 1;\n}\nexport function g(x: number): number { return x; }";
     const spec =
       `${specOn("f", "(x) => f(x) === x")}\n${specOn("g", "(x) => g(x) === x", "q")}`.replace(
         'import { forall } from "eutaxy/spec";\nimport { g }',
         "import { g }",
       );
     const p = prepare({ source, specs: read(source, spec) });
-    expect(p.outside.get("f")).toBe("outside the engine's subset (line 2): the / operator");
+    expect(p.outside.get("f")).toBe("outside the engine's subset (line 2): the % operator");
     expect(p.emitted.theorems.map((t) => t.function)).toEqual(["g"]);
   });
 

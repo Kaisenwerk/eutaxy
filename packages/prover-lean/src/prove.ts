@@ -29,7 +29,7 @@ import {
   type SubsetType,
 } from "@eutaxy/prover/reader";
 import type { FunctionSpec, Property, SpecError, SpecType } from "@eutaxy/spec";
-import { type Emitted, emitModule } from "./emit.ts";
+import { dividesOutside, divisionOutside, type Emitted, emitModule } from "./emit.ts";
 import { checkLean, findLean, type LeanDiagnostic, leanVersion } from "./lean.ts";
 import {
   axiomsOf,
@@ -123,14 +123,21 @@ export function prepare(input: ProveInput): Prepared {
   const wanted = input.functions ? new Set(input.functions) : undefined;
   const fns = specs.functions.filter((f) => !wanted || wanted.has(f.name));
   // Nullable types and tagged unions are read, but this engine does not take them yet: the SMT engine does.
+  // Division leaves the integers this engine models, except as Math.floor(x / c).
   const module = restrictModule(
-    readSubset(
-      input.source,
-      fns.map((f) => f.name),
-      input.modulePath === undefined ? {} : { path: input.modulePath },
+    restrictModule(
+      readSubset(
+        input.source,
+        fns.map((f) => f.name),
+        input.modulePath === undefined ? {} : { path: input.modulePath },
+      ),
+      leanTakes,
+      "nullable types and tagged unions are not in the Lean engine's subset yet",
     ),
-    leanTakes,
-    "nullable types and tagged unions are not in the Lean engine's subset yet",
+    () => true,
+    divisionOutside,
+    new Set(),
+    dividesOutside,
   );
   const outside = new Map<string, string>();
   for (const o of module.outside)

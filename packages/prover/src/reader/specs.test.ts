@@ -208,6 +208,24 @@ export const p = forall(constant, { ensures: () => true });
     expect(specs.errors[0]?.message).toContain("exports no function constant");
   });
 
+  test("a spec file that binds Math or Number is an error: its claims are read with the globals", () => {
+    for (const binding of [
+      "const Math = { floor: (x: number) => x + 1 };",
+      'import Number from "./fake.ts";',
+    ]) {
+      const specs = read(`
+import { forall } from "eutaxy/spec";
+import { decideRefund } from "./domain.ts";
+${binding}
+export const p = forall(decideRefund, { ensures: (c) => Math.floor(c) === c });
+`);
+      const name = binding.includes("Math") ? "Math" : "Number";
+      expect(specs.errors.map((e) => e.message)).toContain(
+        `the spec file binds ${name}, which its claims would be read as the global ${name}; rename it`,
+      );
+    }
+  });
+
   test("forall and total must come from eutaxy/spec; a local forall is not one", () => {
     const specs = read(`
 import { decideRefund } from "./domain.ts";

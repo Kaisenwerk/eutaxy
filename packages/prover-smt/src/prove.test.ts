@@ -42,11 +42,11 @@ const read = (module: string, spec: string) =>
 describe("prepare", () => {
   test("a function outside the subset names the construct and the line; the others get scripts", () => {
     const source =
-      "export function f(x: number): number {\n  return x / 1;\n}\nexport function g(x: number): number { return x; }";
+      "export function f(x: number): number {\n  return x % 1;\n}\nexport function g(x: number): number { return x; }";
     const spec =
       'import { forall } from "eutaxy/spec";\nimport { f, g } from "./domain.ts";\nexport const p = forall(f, { ensures: (x) => f(x) === x });\nexport const q = forall(g, { ensures: (x) => g(x) === x });';
     const p = prepare({ source, specs: read(source, spec) });
-    expect(p.outside.get("f")).toBe("outside the engine's subset (line 2): the / operator");
+    expect(p.outside.get("f")).toBe("outside the engine's subset (line 2): the % operator");
     expect([...p.scripts.keys()].map((k) => k.split("\u0000")[1])).toEqual(["q"]);
   });
 

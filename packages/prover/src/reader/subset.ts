@@ -47,6 +47,7 @@ import {
 } from "./compiler.ts";
 import {
   blockOf,
+  type Constant,
   ExprReader,
   type Inline,
   type Names,
@@ -115,7 +116,19 @@ export interface UnionType {
   readonly members: readonly { readonly tag: string | boolean; readonly record: string }[];
 }
 
-export type BinaryOp = "+" | "-" | "*" | "<" | "<=" | ">" | ">=" | "===" | "!==" | "&&" | "||";
+export type BinaryOp =
+  | "+"
+  | "-"
+  | "*"
+  | "/"
+  | "<"
+  | "<="
+  | ">"
+  | ">="
+  | "==="
+  | "!=="
+  | "&&"
+  | "||";
 
 export type Expr =
   | { readonly kind: "int"; readonly value: string }
@@ -136,6 +149,8 @@ export type Expr =
   | { readonly kind: "not"; readonly operand: Expr }
   /** `Number.isInteger(e)`: always true of an integer in the engines' integer model, the real predicate on doubles. */
   | { readonly kind: "isInteger"; readonly operand: Expr }
+  /** `Math.floor(e)`: rounding toward negative infinity on doubles; the identity on the integers. */
+  | { readonly kind: "floor"; readonly operand: Expr }
   | { readonly kind: "binary"; readonly op: BinaryOp; readonly left: Expr; readonly right: Expr }
   | { readonly kind: "cond"; readonly test: Expr; readonly ifTrue: Expr; readonly ifFalse: Expr }
   | { readonly kind: "call"; readonly callee: string; readonly args: readonly Expr[] }
@@ -484,6 +499,7 @@ export function insertNarrows(
       return { kind: "not", operand: go(condition(e.operand, scope), scope) };
     case "neg":
     case "isInteger":
+    case "floor":
       return { kind: e.kind, operand: go(e.operand, scope) };
     case "narrow":
     case "narrowTag":
@@ -670,7 +686,7 @@ export function typeOf(
       // `+` joins two strings; every other arithmetic or ordering operator is on integers only
       // (ordering strings compares UTF-16 code units in JavaScript and characters in Lean: not the same).
       if (e.op === "+" && l.kind === "string" && r.kind === "string") return { kind: "string" };
-      const arithmetic = ["+", "-", "*", "<", "<=", ">", ">="].includes(e.op);
+      const arithmetic = ["+", "-", "*", "/", "<", "<=", ">", ">="].includes(e.op);
       if (arithmetic && (l.kind !== "int" || r.kind !== "int"))
         fail(
           `${e.op} on a ${l.kind} and a ${r.kind} (the subset has it on integers${e.op === "+" ? ", and + on two strings" : ""})`,
@@ -687,7 +703,7 @@ export function typeOf(
           );
         if (!comparable(l, r)) fail(`${e.op} between a ${describe(l)} and a ${describe(r)}`);
       }
-      return ["+", "-", "*"].includes(e.op) ? { kind: "int" } : { kind: "bool" };
+      return ["+", "-", "*", "/"].includes(e.op) ? { kind: "int" } : { kind: "bool" };
     }
     case "neg": {
       const t = typeOf(e.operand, scope, ctx, fail);
@@ -703,6 +719,11 @@ export function typeOf(
       const t = typeOf(e.operand, scope, ctx, fail);
       if (t.kind !== "int") fail(`Number.isInteger on a ${t.kind}`);
       return { kind: "bool" };
+    }
+    case "floor": {
+      const t = typeOf(e.operand, scope, ctx, fail);
+      if (t.kind !== "int") fail(`Math.floor on a ${t.kind}`);
+      return { kind: "int" };
     }
     case "cond": {
       const test = typeOf(e.test, scope, ctx, fail);
@@ -882,6 +903,7 @@ function boundNames(e: Expr, out = new Set<string>()): Set<string> {
     case "neg":
     case "not":
     case "isInteger":
+    case "floor":
       return boundNames(e.operand, out);
     case "binary":
       boundNames(e.left, out);
@@ -960,6 +982,7 @@ export function renameVars(
     case "neg":
     case "not":
     case "isInteger":
+    case "floor":
       return { kind: e.kind, operand: go(e.operand) };
     case "binary":
       return { kind: "binary", op: e.op, left: go(e.left), right: go(e.right) };
@@ -1061,6 +1084,7 @@ function callees(e: Expr, out = new Set<string>()): Set<string> {
     case "neg":
     case "not":
     case "isInteger":
+    case "floor":
       return callees(e.operand, out);
     case "binary":
       callees(e.left, out);
@@ -1482,7 +1506,7 @@ function match(declared: Type, expected: Type, bound: Map<number, Type>): Type |
  * declaration file), one its file may rebind, or one reached again while
  * it is being inlined (recursion) is outside the subset, with why.
  */
-function inliner(c: InlinerContext): Inline {
+function inliner(c: InlinerContext): { inline: Inline; constant: Constant } {
   const files = new Map<SourceFile, FileFunctions>([[c.module, c.own]]);
   const functionsOf = (file: SourceFile): FileFunctions => {
     let found = files.get(file);
@@ -1542,7 +1566,7 @@ function inliner(c: InlinerContext): Inline {
       annotation: (node, refuse) => c.types.of(concrete(c.checker.getTypeAtLocation(node)), refuse),
       contextual: c.typeSource.contextual,
     };
-    const reader = new ExprReader(file, fileNames, typeSource, c.ctx, undefined, inline);
+    const reader = new ExprReader(file, fileNames, typeSource, c.ctx, undefined, inline, constant);
     const params = shape(reader, d.node);
     const symbols = signature.getParameters();
     if (symbols.length !== params.length || call.arguments.length !== params.length)
@@ -1644,7 +1668,97 @@ function inliner(c: InlinerContext): Inline {
       inlining.pop();
     }
   };
-  return inline;
+  // The constants being read, innermost last: one that reaches itself is refused.
+  const reading: string[] = [];
+  const constant: Constant = (name, fail: (what: string) => never) => {
+    let symbol = c.checker.getSymbolAtLocation(name);
+    if (!symbol) return undefined;
+    const imported = (symbol.flags & SymbolFlags.Alias) !== 0;
+    if (imported) symbol = c.checker.getAliasedSymbol(symbol);
+    const decl = symbol.valueDeclaration?.resolve();
+    if (!decl || !is.isVariableDeclaration(decl) || !is.isIdentifier(decl.name)) return undefined;
+    const list = decl.parent;
+    const statement = list.parent;
+    const file = decl.getSourceFile();
+    // A module-level `const` only: a `let` or `var` may be rebound, a local is not this name.
+    if (!is.isVariableDeclarationList(list) || !is.isVariableStatement(statement)) return undefined;
+    if (statement.parent !== file) return undefined;
+    const where = file === c.module ? decl.name.text : `${decl.name.text} (from ${file.fileName})`;
+    // A global (Math, say) is declared in the compiler's own declaration files: no constant here.
+    if (file.isDeclarationFile && !imported) return undefined;
+    if (file.isDeclarationFile)
+      fail(`${where} has no value to read: it is declared in a declaration file`);
+    if (!isConst(list)) fail(`${where} is a module-level let or var, which may be rebound`);
+    // A name the compiler rejects here (used before its declaration, say) is not read.
+    const at = name.getSourceFile();
+    const start = name.getStart(at);
+    if (c.typeErrors(at.fileName).some((e) => e.pos < name.end && e.end > start))
+      fail(`the compiler reports an error on ${name.text} here`);
+    if (c.parseError(file.fileName)) fail(`${where} is in a file the compiler cannot parse`);
+    const init = decl.initializer;
+    if (!init) fail(`${where} has no initializer`);
+    if (is.isArrowFunction(init) || is.isFunctionExpression(init)) return undefined;
+    const key = `${file.fileName}#${decl.name.text}`;
+    if (reading.includes(key)) fail(`${where} is defined in terms of itself`);
+    const fns = functionsOf(file);
+    const fileNames: Names = {
+      callable: () => false,
+      target: (n) => n,
+      declared: (n) => fns.declarations.has(n),
+      spec: false,
+    };
+    const reader = new ExprReader(
+      file,
+      fileNames,
+      c.typeSource,
+      c.ctx,
+      undefined,
+      undefined,
+      constant,
+    );
+    reading.push(key);
+    try {
+      const value = reader.expression(init, new Map());
+      if (!isValue(value))
+        reader.fail(
+          `${decl.name.text} holds something other than a number, boolean or string built from literals, operators and other such constants`,
+          init,
+        );
+      return value;
+    } catch (err) {
+      if (!(err instanceof OutsideSubset)) throw err;
+      fail(
+        `${where}, read where it is used, is outside the subset: ${err.message} (line ${err.line} of its file)`,
+      );
+    } finally {
+      reading.pop();
+    }
+  };
+  return { inline, constant };
+}
+
+/**
+ * Whether an expression is a value a constant may hold: literals of the
+ * primitive types and the operators on them, with no name, call or record.
+ */
+function isValue(e: Expr): boolean {
+  switch (e.kind) {
+    case "int":
+    case "bool":
+    case "string":
+      return true;
+    case "neg":
+    case "not":
+    case "isInteger":
+    case "floor":
+      return isValue(e.operand);
+    case "binary":
+      return isValue(e.left) && isValue(e.right);
+    case "cond":
+      return isValue(e.test) && isValue(e.ifTrue) && isValue(e.ifFalse);
+    default:
+      return false;
+  }
 }
 
 /**
@@ -1746,7 +1860,7 @@ export function readSubset(
         annotation: (node, refuse) => types.of(checker.getTypeAtLocation(node), refuse),
         contextual: (node) => contextualType(checker, types, node),
       };
-      const inline = inliner({
+      const { inline, constant } = inliner({
         checker,
         types,
         typeSource,
@@ -1756,7 +1870,7 @@ export function readSubset(
         parseError,
         typeErrors,
       });
-      const reader = new ExprReader(sf, names, typeSource, ctx, undefined, inline);
+      const reader = new ExprReader(sf, names, typeSource, ctx, undefined, inline, constant);
       const heads: Head[] = [];
       for (const [name, decl] of declarations) {
         try {
@@ -2022,6 +2136,7 @@ export function children(e: Expr): Expr[] {
     case "neg":
     case "not":
     case "isInteger":
+    case "floor":
       return [e.operand];
     case "binary":
       return [e.left, e.right];
@@ -2064,6 +2179,7 @@ function hasNode(e: Expr, kinds: ReadonlySet<Expr["kind"]>): boolean {
     case "neg":
     case "not":
     case "isInteger":
+    case "floor":
       return hasNode(e.operand, kinds);
     case "binary":
       return hasNode(e.left, kinds) || hasNode(e.right, kinds);
@@ -2103,6 +2219,8 @@ export function restrictModule(
   reason: string,
   /** Expression kinds a function's body may not hold here: by default what nullable types and unions bring. */
   bodies: ReadonlySet<Expr["kind"]> = new Set(["null", "narrow", "narrowTag"]),
+  /** A body the engine refuses for what it computes, not its kinds or types (a division, say). */
+  refused?: (body: Expr) => boolean,
 ): SubsetModule {
   // A record with a field the engine does not take is out, and so is a union with such a member, and
   // so, in turn, is a record with a field of that union: to a fixed point.
@@ -2134,7 +2252,8 @@ export function restrictModule(
     !f.params.every((p) => typeTaken(p.type, takes, badRecords)) ||
     !typeTaken(f.returns, takes, badRecords) ||
     annotations(f.body).some((t) => !typeTaken(t, takes, badRecords)) ||
-    hasNode(f.body, bodies);
+    hasNode(f.body, bodies) ||
+    refused?.(f.body) === true;
   for (const f of module.functions)
     if (uses(f)) {
       kept.delete(f.name);

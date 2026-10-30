@@ -11,6 +11,7 @@
  */
 
 import {
+  children,
   type Expr,
   hasLoneSurrogate,
   OutsideSubset,
@@ -109,6 +110,36 @@ function env(module: SubsetModule): Env {
   };
 }
 
+export const divisionOutside =
+  "division other than Math.floor(x / c) with c a positive integer constant: this engine models numbers as integers, which / leaves (the SMT engine takes it)";
+
+/** Whether an expression divides other than as Math.floor(x / c), c a positive integer constant. */
+export function dividesOutside(e: Expr): boolean {
+  if (e.kind === "floor" && e.operand.kind === "binary" && e.operand.op === "/") {
+    const c = integerValue(e.operand.right);
+    if (c !== undefined && c > 0n) return dividesOutside(e.operand.left);
+  }
+  if (e.kind === "binary" && e.op === "/") return true;
+  return children(e).some(dividesOutside);
+}
+
+/** The value of an integer expression built from literals by + - * and negation, if it is one. */
+function integerValue(e: Expr): bigint | undefined {
+  if (e.kind === "int") return BigInt(e.value);
+  if (e.kind === "neg") {
+    const v = integerValue(e.operand);
+    return v === undefined ? undefined : -v;
+  }
+  if (e.kind !== "binary") return undefined;
+  const l = integerValue(e.left);
+  const r = integerValue(e.right);
+  if (l === undefined || r === undefined) return undefined;
+  if (e.op === "+") return l + r;
+  if (e.op === "-") return l - r;
+  if (e.op === "*") return l * r;
+  return undefined;
+}
+
 const fail: (message: string) => never = (message) => {
   throw new OutsideSubset(message, 0);
 };
@@ -136,9 +167,20 @@ export function term(e: Expr, scope: ReadonlyMap<string, SubsetType>, env: Env):
     case "not":
       return `(!${t(e.operand)})`;
     case "isInteger":
-      // Every number is an integer in this engine's model; the operand is still typed.
+      // Every number is an integer in this engine's model. The operand is still emitted, so what
+      // this engine refuses in it (a division) is refused here too, not dropped with it.
       typeOf(e.operand, scope, env.ctx, fail);
+      t(e.operand);
       return "true";
+    case "floor": {
+      // Of an integer, Math.floor is the integer; of x / c, with c a positive integer constant, it is
+      // Lean's Int division, which rounds toward negative infinity as Math.floor does.
+      const o = e.operand;
+      if (o.kind !== "binary" || o.op !== "/") return t(o);
+      const c = integerValue(o.right);
+      if (c === undefined || c <= 0n) fail(divisionOutside);
+      return `(${t(o.left)} / (${c} : Int))`;
+    }
     case "binary":
       switch (e.op) {
         case "+": {
@@ -148,6 +190,8 @@ export function term(e: Expr, scope: ReadonlyMap<string, SubsetType>, env: Env):
         case "-":
         case "*":
           return `(${t(e.left)} ${e.op} ${t(e.right)})`;
+        case "/":
+          return fail(divisionOutside);
         case "<":
         case ">":
           return `(decide (${t(e.left)} ${e.op} ${t(e.right)}))`;

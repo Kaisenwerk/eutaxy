@@ -183,7 +183,7 @@ export function fine(n: number): number { return n; }
     ['export function f(x: string): boolean { return x === "\\ud83d"; }', "lone surrogate"],
     ['export function f(x: string): boolean { return x === "\\101"; }', "escape sequence"],
     ['export function f(x: string): boolean { return x === "\\u{110000}"; }', "0x10FFFF"],
-    ["export function f(x: number): number { return x / 2; }", "the / operator"],
+    ["export function f(x: number): number { return x % 2; }", "the % operator"],
     ["export function f(x: number): number { return x % 2; }", "the % operator"],
     ["export function f(x: number): number { return 1.5; }", "numeric literal 1.5"],
     ["export function f(x: number): boolean { return x == 1; }", "the == operator"],
@@ -677,9 +677,9 @@ export function tag(n: number): T { return { kind: n < 0 ? "neg" : "pos", code: 
 
   test("an error names the line", () => {
     const m = readSubset(
-      "export function f(x: number): number {\n  return x;\n}\nexport function g(x: number): number {\n  return x / 2;\n}",
+      "export function f(x: number): number {\n  return x;\n}\nexport function g(x: number): number {\n  return x % 2;\n}",
     );
-    expect(m.outside).toEqual([{ name: "g", line: 5, message: "the / operator" }]);
+    expect(m.outside).toEqual([{ name: "g", line: 5, message: "the % operator" }]);
   });
 
   test("a const arrow is a function as a declaration is: expression or block body, called and calling", () => {
@@ -1329,5 +1329,112 @@ export const c = (n: number): number => hidden(n);
     expect(why["b"]).toMatch(/recursi/);
     expect(why["c"]).toMatch(/no body|declaration file/);
     expect(m.functions).toEqual([]);
+  });
+});
+
+describe("module constants, Math.floor and division", () => {
+  test("a module-level const is read as its value, own or imported, built on another", () => {
+    const m = readWith(
+      { "limits.ts": "export const MAX = 5;\nexport const WINDOW = 60 * 1000;\n" },
+      `import { MAX, WINDOW } from "./limits.ts";
+const LAST = MAX - 1;
+const NAME = "w";
+export const locked = (a: number): boolean => a > LAST;
+export function windowOf(t: number): number { return Math.floor(t / WINDOW); }
+export function named(s: string): boolean { return s === NAME; }
+`,
+    );
+    expect(m.outside).toEqual([]);
+    const body = (name: string) => m.functions.find((f) => f.name === name)?.body;
+    expect(body("locked")).toEqual({
+      kind: "binary",
+      op: ">",
+      left: { kind: "var", name: "a" },
+      right: {
+        kind: "binary",
+        op: "-",
+        left: { kind: "int", value: "5" },
+        right: { kind: "int", value: "1" },
+      },
+    });
+    expect(body("windowOf")).toEqual({
+      kind: "floor",
+      operand: {
+        kind: "binary",
+        op: "/",
+        left: { kind: "var", name: "t" },
+        right: {
+          kind: "binary",
+          op: "*",
+          left: { kind: "int", value: "60" },
+          right: { kind: "int", value: "1000" },
+        },
+      },
+    });
+    expect(body("named")).toMatchObject({ right: { kind: "string", value: "w" } });
+  });
+
+  test("a parameter named like a constant is the parameter", () => {
+    const m = readSubset(
+      "const MAX = 5;\nexport function f(MAX: number): number { return MAX + 1; }\n",
+    );
+    expect(m.functions[0]?.body).toMatchObject({ left: { kind: "var", name: "MAX" } });
+  });
+
+  test("what a constant cannot be read as is outside with why", () => {
+    const m = readWith(
+      { "loose.ts": "export let LOOSE = 3;\n" },
+      `import { LOOSE } from "./loose.ts";
+let mutable = 1;
+const RECORD = { n: 1 };
+const SELF: number = SELF + 1;
+const CALLED = twice(2);
+function twice(n: number): number { return n + n; }
+export const a = (n: number): number => n + LOOSE;
+export const b = (n: number): number => n + mutable;
+export const c = (n: number): number => n + RECORD.n;
+export const d = (n: number): number => n + SELF;
+export const e = (n: number): number => n + CALLED;
+`,
+    );
+    const why = Object.fromEntries(m.outside.map((o) => [o.name, o.message]));
+    expect(why["a"]).toMatch(/let or var/);
+    expect(why["b"]).toMatch(/let or var/);
+    expect(why["c"]).toMatch(/other than a number, boolean or string/);
+    expect(why["d"]).toMatch(/error|itself/);
+    expect(why["e"]).toMatch(/twice/);
+    expect(m.functions.map((f) => f.name)).toEqual(["twice"]);
+  });
+
+  test("Math.floor and Number.isInteger are the globals only where nothing in the file binds the name", () => {
+    expect(
+      readSubset("export function f(x: number): number { return Math.floor(x); }\n").outside,
+    ).toEqual([]);
+    for (const shadow of [
+      "const Math = { floor: (x: number): number => x + 1 };",
+      'import Math from "./fake.ts";',
+      "const Number = { isInteger: (x: number): boolean => false };",
+    ]) {
+      const m = readWith(
+        { "fake.ts": "export default { floor: (x: number): number => x + 1 };\n" },
+        `${shadow}
+export function f(x: number): number { return Math.floor(x); }
+export function g(x: number): boolean { return Number.isInteger(x); }
+`,
+      );
+      const read = m.functions.map((f) => f.name);
+      expect(read, shadow).not.toContain(shadow.includes("Number") ? "g" : "f");
+    }
+  });
+
+  test("division and Math.floor are typed on numbers; Math.floor takes one argument", () => {
+    const m = readSubset(`export function half(n: number): number { return n / 2; }
+export function bad(s: string): number { return Math.floor(s); }
+export function two(x: number): number { return Math.floor(x, 1); }
+`);
+    expect(m.functions.map((f) => f.name)).toEqual(["half"]);
+    const why = Object.fromEntries(m.outside.map((o) => [o.name, o.message]));
+    expect(why["bad"]).toMatch(/Math.floor on a string|error/);
+    expect(why["two"]).toMatch(/one argument|error/);
   });
 });

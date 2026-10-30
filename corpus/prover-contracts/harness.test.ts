@@ -31,7 +31,7 @@ import {
 } from "@eutaxy/prover-smt";
 import { type Binder, isSpec } from "@eutaxy/spec";
 import { describe, expect, test } from "vitest";
-import { entries, manifest as manifestOf, root } from "./entries.ts";
+import { type Expected, edgeValue, entries, manifest as manifestOf, root } from "./entries.ts";
 
 const lean = await findLean();
 const z3 = await findZ3();
@@ -102,8 +102,15 @@ const drawable = (t: SubsetType, engine: "lean" | "smt"): boolean =>
   t.kind === "string" ||
   (engine === "lean" && t.kind === "list" && drawable(t.element, engine));
 
-/** The functions the translation can be validated on: in the subset, exported, every parameter drawable. */
-async function drawn(dir: string, source: string, engine: "lean" | "smt") {
+/**
+ * The functions the translation can be validated on: in the subset, exported, every parameter
+ * drawable, and not refused by the engine (every property of theirs `unsupported` there).
+ */
+async function drawn(dir: string, source: string, engine: "lean" | "smt", expected: Expected) {
+  const refused = (name: string): boolean => {
+    const byProperty = Object.values(expected[name] ?? {});
+    return byProperty.length > 0 && byProperty.every((o) => o === "unsupported");
+  };
   const subset = readSubset(source, undefined, { path: join(dir, "domain.ts") });
   const module = (await import(join(dir, "domain.ts"))) as Record<
     string,
@@ -121,7 +128,7 @@ async function drawn(dir: string, source: string, engine: "lean" | "smt") {
   let functions = 0;
   for (const fn of subset.functions) {
     if (typeof module[fn.name] !== "function") continue;
-    if (!checked(fn)) continue;
+    if (!checked(fn) || refused(fn.name)) continue;
     functions++;
     for (const args of drawArgs(
       fn.params.map((p) => p.type),
@@ -134,7 +141,9 @@ async function drawn(dir: string, source: string, engine: "lean" | "smt") {
   // An exported function is a declaration or an arrow a module-level const holds.
   const exported = (name: string): boolean =>
     source.includes(`export function ${name}(`) || source.includes(`export const ${name} = (`);
-  expect(functions).toBe(subset.functions.filter((f) => checked(f) && exported(f.name)).length);
+  expect(functions).toBe(
+    subset.functions.filter((f) => checked(f) && !refused(f.name) && exported(f.name)).length,
+  );
   expect(source.match(/^export (function|const) (\w+)/gm)?.length ?? 0).toBeGreaterThan(0);
   return { subset, checks };
 }
@@ -197,8 +206,25 @@ for (const entry of entries) {
       "lean",
       async () => {
         const specs = readSpecs({ module: source, spec, modulePath });
-        const { subset, checks } = await drawn(dir, source, "lean");
-        const extra = checks.map(
+        const { subset, checks } = await drawn(dir, source, "lean", manifest.expect.lean);
+        // Edge inputs too, those of them that are integers, as are their results: the numbers this
+        // engine models.
+        const module = (await import(modulePath)) as Record<string, (...a: unknown[]) => unknown>;
+        const integral = (v: unknown): boolean => typeof v !== "number" || Number.isInteger(v);
+        const edgeChecks = Object.entries(manifest.edges ?? {}).flatMap(([name, { inputs }]) => {
+          const fn = subset.functions.find((f) => f.name === name);
+          if (!fn || checks.every((c) => c.fn.name !== name)) return [];
+          return inputs
+            .map((raw) => raw.map(edgeValue))
+            .filter((args) => args.every(integral))
+            .map((args) => ({
+              fn,
+              args,
+              result: (module[name] as (...a: unknown[]) => unknown)(...args),
+            }))
+            .filter(({ result }) => integral(result));
+        });
+        const extra = [...checks, ...edgeChecks].map(
           ({ fn, args, result }) =>
             `example : ${leanIdent.fn(fn.name)}${args.map((a, i) => ` ${leanValue(a, (fn.params[i] as (typeof fn.params)[number]).type, subset)}`).join("")} = ${leanValue(result, fn.returns, subset)} := by decide`,
         );
@@ -213,7 +239,7 @@ for (const entry of entries) {
       "smt",
       async () => {
         const specs = readSpecs({ module: source, spec, modulePath });
-        const { subset, checks } = await drawn(dir, source, "smt");
+        const { subset, checks } = await drawn(dir, source, "smt", manifest.expect.smt);
         const extra = checks.map(({ fn, args, result }) => {
           const call =
             args.length === 0
@@ -221,6 +247,25 @@ for (const entry of entries) {
               : `(${smtIdent.fn(fn.name)} ${args.map((a, i) => smtValue(a, (fn.params[i] as (typeof fn.params)[number]).type, subset)).join(" ")})`;
           return equal(call, smtValue(result, fn.returns, subset), fn.returns, subset);
         });
+        // Edge inputs: the translation must give exactly the JavaScript value, NaN and -0 included
+        // (SMT-LIB's = on floating point tells -0 from +0 and takes every NaN as one value).
+        const module = (await import(modulePath)) as Record<string, (...a: unknown[]) => unknown>;
+        for (const [name, { inputs }] of Object.entries(manifest.edges ?? {})) {
+          const fn = subset.functions.find((f) => f.name === name);
+          expect(fn, `edges for ${name}, which is not in the subset`).toBeDefined();
+          if (!fn) continue;
+          for (const raw of inputs) {
+            const args = raw.map(edgeValue);
+            const result = (module[name] as (...a: unknown[]) => unknown)(...args);
+            const call = `(${smtIdent.fn(name)} ${args.map((a, i) => smtValue(a, (fn.params[i] as (typeof fn.params)[number]).type, subset)).join(" ")})`;
+            const want = smtValue(result, fn.returns, subset);
+            extra.push(
+              fn.returns.kind === "int"
+                ? `(= ${call} ${want})`
+                : equal(call, want, fn.returns, subset),
+            );
+          }
+        }
         const proofs = await proveWithSmt({ source, specs, modulePath, specPath, extra });
         expect(outcomes(proofs.results)).toEqual(manifest.expect.smt);
       },

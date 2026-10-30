@@ -1,0 +1,121 @@
+{
+  "description": "Module-level constants, the module's own and one built on an imported one, are read as their values; Math.floor and / are read as JavaScript computes them on doubles, checked on test262's edge values. The Lean engine takes Math.floor(x / c) for a positive integer constant c and refuses other division; a claim true over the integers and false for 0.5 is proved by the Lean engine and refuted by the SMT engine. Z3 gives up on the window claims, which need Math.floor over a division of doubles across a range; the Lean engine proves them over the integers.",
+  "covers": [
+    "module-constant",
+    "floor-division",
+    "division",
+    "math-floor",
+    "number-is-integer",
+    "precondition",
+    "const-arrow"
+  ],
+  "expect": {
+    "tested": {
+      "windowOf": {
+        "windowStartsBefore": "TESTED",
+        "nextWindow": "TESTED"
+      },
+      "locked": {
+        "lockedFromFive": "TESTED"
+      },
+      "floorOf": {
+        "floorKeepsIntegers": "TESTED",
+        "floorNeverLower": "REFUTED",
+        "halfIsInteger": "REFUTED"
+      },
+      "ratio": {
+        "halves": "TESTED"
+      }
+    },
+    "lean": {
+      "windowOf": {
+        "windowStartsBefore": "PROVEN",
+        "nextWindow": "PROVEN"
+      },
+      "locked": {
+        "lockedFromFive": "PROVEN"
+      },
+      "floorOf": {
+        "floorKeepsIntegers": "PROVEN",
+        "floorNeverLower": "PROVEN",
+        "halfIsInteger": "unsupported"
+      },
+      "ratio": {
+        "halves": "unsupported"
+      }
+    },
+    "smt": {
+      "windowOf": {
+        "windowStartsBefore": "gave_up",
+        "nextWindow": "gave_up"
+      },
+      "locked": {
+        "lockedFromFive": "PROVEN"
+      },
+      "floorOf": {
+        "floorKeepsIntegers": "PROVEN",
+        "floorNeverLower": "REFUTED",
+        "halfIsInteger": "REFUTED"
+      },
+      "ratio": {
+        "halves": "PROVEN"
+      }
+    }
+  },
+  "edges": {
+    "windowOf": {
+      "source": "the window's boundaries: either side of 0 and of one window (60000 ms)",
+      "inputs": [
+        [-60001],
+        [-60000],
+        [-59999],
+        [-1],
+        ["-0"],
+        [0],
+        [1],
+        [59999],
+        [60000],
+        [60001],
+        [1000000000000]
+      ]
+    },
+    "floorOf": {
+      "source": "test262 test/built-ins/Math/floor/S15.8.2.9_A1.js to S15.8.2.9_A7.js (tc39/test262 at 91c70759363c)",
+      "inputs": [
+        ["NaN"],
+        [0],
+        ["-0"],
+        ["Infinity"],
+        ["-Infinity"],
+        [1e-15],
+        [0.999999999999999],
+        [0.5],
+        [-0.1],
+        [-0.5],
+        [-1.5],
+        [99.9],
+        [-100]
+      ]
+    },
+    "ratio": {
+      "source": "test262 test/language/expressions/division/S11.5.2_A4_T5.js to S11.5.2_A4_T10.js (tc39/test262 at 91c70759363c)",
+      "inputs": [
+        ["-Infinity", 1],
+        ["-Infinity", -1],
+        ["Infinity", "Infinity"],
+        [0, 0],
+        ["-0", 0],
+        ["-0", 1],
+        ["-0", -1],
+        [0, -1],
+        [1, 0],
+        [-1, 0],
+        [-1, "-0"],
+        [1, "Infinity"],
+        [-1, "Infinity"],
+        [7, 2],
+        [-7, 2]
+      ]
+    }
+  }
+}

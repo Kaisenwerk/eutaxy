@@ -56,6 +56,15 @@ export type Inline = (
   fail: (what: string) => never,
 ) => Expr | undefined;
 
+/**
+ * A name the text reads that is neither in scope nor a function: a
+ * module-level `const` of the text's file or one it imports, read as its
+ * initializer (a `const` holding a pure value is that value wherever it is
+ * read). Undefined when the name is no such constant, so it is refused as
+ * before; `fail` refuses at the name.
+ */
+export type Constant = (name: Identifier, fail: (what: string) => never) => Expr | undefined;
+
 /** What the bare names of the text being read stand for, outside any local scope. */
 export interface Names {
   /** A function the subset may call under this name. */
@@ -82,6 +91,7 @@ const binaryOps: Partial<Record<SyntaxKind, BinaryOp>> = {
   [SyntaxKind.PlusToken]: "+",
   [SyntaxKind.MinusToken]: "-",
   [SyntaxKind.AsteriskToken]: "*",
+  [SyntaxKind.SlashToken]: "/",
   [SyntaxKind.LessThanToken]: "<",
   [SyntaxKind.LessThanEqualsToken]: "<=",
   [SyntaxKind.GreaterThanToken]: ">",
@@ -91,6 +101,36 @@ const binaryOps: Partial<Record<SyntaxKind, BinaryOp>> = {
   [SyntaxKind.AmpersandAmpersandToken]: "&&",
   [SyntaxKind.BarBarToken]: "||",
 };
+
+/** The names a file binds at its top level, declarations and imports alike, each at its binding. */
+export function topLevelNames(sf: SourceFile): Map<string, Node> {
+  const out = new Map<string, Node>();
+  const bind = (name: Node | undefined): void => {
+    if (!name) return;
+    if (is.isIdentifier(name)) out.set(name.text, name);
+    else if (is.isObjectBindingPattern(name) || is.isArrayBindingPattern(name))
+      for (const element of name.elements) if (!is.isOmittedExpression(element)) bind(element.name);
+  };
+  for (const st of sf.statements) {
+    if (is.isVariableStatement(st)) for (const d of st.declarationList.declarations) bind(d.name);
+    else if (
+      is.isFunctionDeclaration(st) ||
+      is.isClassDeclaration(st) ||
+      is.isEnumDeclaration(st) ||
+      is.isModuleDeclaration(st) ||
+      is.isImportEqualsDeclaration(st)
+    )
+      bind(st.name);
+    else if (is.isImportDeclaration(st)) {
+      const clause = st.importClause;
+      bind(clause?.name);
+      const bindings = clause?.namedBindings;
+      if (bindings && is.isNamespaceImport(bindings)) bind(bindings.name);
+      else if (bindings) for (const element of bindings.elements) bind(element.name);
+    }
+  }
+  return out;
+}
 
 const methods = new Set(["slice", "map", "flatMap", "every", "some", "reduce"]);
 
@@ -103,6 +143,9 @@ export class ExprReader {
   /** The line a refusal reports for a node: the file's, or none for text whose position the caller knows. */
   private readonly lineOf: (node: Node) => number;
   private readonly inline: Inline | undefined;
+  private readonly constant: Constant | undefined;
+  /** Every name the file binds at its top level or imports: a global such as `Math` it may shadow. */
+  private topLevel: ReadonlyMap<string, Node> | undefined;
   /** Record literals typed by the call they are passed to, in place of the compiler's contextual type. */
   private readonly typedAs = new Map<Node, SubsetType>();
 
@@ -113,6 +156,7 @@ export class ExprReader {
     ctx: TypeContext,
     lineOf: (node: Node) => number = (node) => lineAt(sf, node),
     inline?: Inline,
+    constant?: Constant,
   ) {
     this.sf = sf;
     this.names = names;
@@ -120,6 +164,13 @@ export class ExprReader {
     this.ctx = ctx;
     this.lineOf = lineOf;
     this.inline = inline;
+    this.constant = constant;
+  }
+
+  /** Whether `name` is the global of that name here: no scope, function or top-level binding shadows it. */
+  private global(name: string, scope: Scope): boolean {
+    this.topLevel ??= topLevelNames(this.sf);
+    return !scope.has(name) && !this.names.declared(name) && !this.topLevel.has(name);
   }
 
   fail(what: string, at: Node): never {
@@ -338,6 +389,8 @@ export class ExprReader {
     const name = node.text;
     if (name === "undefined") this.fail("undefined (the subset has null)", node);
     if (scope.has(name) || this.names.declared(name)) return { kind: "var", name };
+    const constant = this.constant?.(node, (what) => this.fail(what, node));
+    if (constant) return constant;
     this.fail(
       this.names.spec
         ? `${name}, which is neither a parameter, a const nor a function imported from the module beside the spec file`
@@ -405,12 +458,21 @@ export class ExprReader {
         is.isIdentifier(receiver) &&
         receiver.text === "Number" &&
         method === "isInteger" &&
-        !scope.has("Number") &&
-        !this.names.declared("Number")
+        this.global("Number", scope)
       ) {
         const [arg, extra] = node.arguments;
         if (!arg || extra) this.fail("Number.isInteger takes one argument", node);
         return { kind: "isInteger", operand: this.expression(arg, scope) };
+      }
+      if (
+        is.isIdentifier(receiver) &&
+        receiver.text === "Math" &&
+        method === "floor" &&
+        this.global("Math", scope)
+      ) {
+        const [arg, extra] = node.arguments;
+        if (!arg || extra) this.fail("Math.floor takes one argument", node);
+        return { kind: "floor", operand: this.expression(arg, scope) };
       }
       // The receiver first: `Math.abs` fails on `Math`, a name of nothing here, before its method.
       const list = this.expression(receiver, scope);
