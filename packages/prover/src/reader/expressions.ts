@@ -35,6 +35,7 @@ import {
   OutsideSubset,
   type SubsetType,
   type TypeContext,
+  tagOf,
   typeOf,
 } from "./subset.ts";
 import type { Refuse } from "./types.ts";
@@ -559,7 +560,29 @@ export class ExprReader {
       fields.push({ name: p.name.text, value: this.expression(p.initializer, scope) });
     }
     const type = this.typedAs.get(node) ?? this.types.contextual(node);
-    return { kind: "record", fields, ...(type ? { type } : {}) };
+    const literal = (fs: typeof fields): Expr => ({
+      kind: "record",
+      fields: fs,
+      ...(type ? { type } : {}),
+    });
+    // A member of a union picked by a conditional tag (`{ type: c ? "a" : "b", at }`) is one literal
+    // per branch: the conditional moves out, the other fields go into each as written. The fields
+    // are pure, so evaluating the test first computes the same value.
+    const tag = type?.kind === "union" ? tagOf(type.name, this.ctx) : undefined;
+    const chosen = tag === undefined ? undefined : fields.find((f) => f.name === tag);
+    if (chosen?.value.kind === "cond") {
+      const split = (value: Expr): Expr =>
+        value.kind === "cond"
+          ? {
+              kind: "cond",
+              test: value.test,
+              ifTrue: split(value.ifTrue),
+              ifFalse: split(value.ifFalse),
+            }
+          : literal(fields.map((f) => (f === chosen ? { name: f.name, value } : f)));
+      return split(chosen.value);
+    }
+    return literal(fields);
   }
 }
 

@@ -967,6 +967,58 @@ export function wide(b: boolean, a: A, bb: B): U2 { return b ? a : bb; }
   });
 });
 
+describe("a nullable record tested by truthiness", () => {
+  test("!x and a bare x as a condition are null tests on a nullable record, and narrow as they do", () => {
+    const m = readSubset(`
+export interface Challenge { readonly attempts: number }
+export const check = (c: Challenge | null): number => (!c ? 0 : c.attempts);
+export function guard(c: Challenge | null): number {
+  if (c && c.attempts > 0) return c.attempts;
+  return 0;
+}
+`);
+    expect(m.outside).toEqual([]);
+    expect(m.functions.find((f) => f.name === "check")?.body).toMatchObject({
+      kind: "cond",
+      test: { kind: "not", operand: { kind: "binary", op: "!==", right: { kind: "null" } } },
+      ifFalse: { kind: "narrow", name: "c" },
+    });
+  });
+
+  test("a nullable number or string is no object: its truthiness stays outside", () => {
+    const m = readSubset("export const f = (n: number | null): number => (!n ? 0 : 1);");
+    expect(m.functions).toEqual([]);
+  });
+});
+
+describe("a tag chosen by a conditional in a literal", () => {
+  test("the conditional moves out of the literal: one literal per member, the other fields as written", () => {
+    const m = readWith(
+      { "kit.ts": kit },
+      `import { err, ok, type Result } from "./kit.ts";
+export type Refused = { readonly type: "invalid"; readonly at: number } | { readonly type: "locked"; readonly at: number };
+export const refuse = (a: number): Refused => ({ type: a >= 5 ? "locked" : "invalid", at: a });
+export const judge = (a: number, m: boolean): Result<true, Refused> =>
+  m ? ok(true) : err({ type: a >= 5 ? "locked" : "invalid", at: a + 1 });
+`,
+    );
+    expect(m.outside).toEqual([]);
+    const refuse = m.functions.find((f) => f.name === "refuse")?.body as Expr;
+    expect(refuse).toMatchObject({
+      kind: "cond",
+      ifTrue: {
+        kind: "record",
+        fields: [{ name: "type", value: { value: "locked" } }, { name: "at" }],
+      },
+      ifFalse: {
+        kind: "record",
+        fields: [{ name: "type", value: { value: "invalid" } }, { name: "at" }],
+      },
+    });
+    expect(m.functions.map((f) => f.name)).toContain("judge");
+  });
+});
+
 describe("narrowing by a union's tag", () => {
   const module = `
 export type Result<T, E> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly error: E };

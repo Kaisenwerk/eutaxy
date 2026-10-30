@@ -331,7 +331,7 @@ export function narrowsOf(test: Expr, holds: boolean): string[] {
 }
 
 /** The field that tells a union's members apart: literal-typed in every member, with a different literal in each. */
-function tagOf(union: string, ctx: TypeContext): string | undefined {
+export function tagOf(union: string, ctx: TypeContext): string | undefined {
   const members = membersIn(union, ctx);
   const first = members[0];
   if (!first) return undefined;
@@ -427,6 +427,27 @@ export function insertNarrows(
 ): Expr {
   const go = (x: Expr, sc: ReadonlyMap<string, SubsetType>): Expr =>
     insertNarrows(x, sc, ctx, fail);
+  // Where JavaScript tests truthiness (a condition, the operand of `!`), a nullable record or union
+  // is falsy exactly when it is null, since an object is always truthy: `c` there is `c !== null`,
+  // which then narrows as a null check does. A nullable number or string is no object, and stays.
+  const probe = Symbol("untyped");
+  const condition = (x: Expr, sc: ReadonlyMap<string, SubsetType>): Expr => {
+    if (x.kind === "binary" && (x.op === "&&" || x.op === "||"))
+      return { ...x, left: condition(x.left, sc), right: condition(x.right, sc) };
+    if (x.kind === "not") return { kind: "not", operand: condition(x.operand, sc) };
+    let t: SubsetType;
+    try {
+      t = typeOf(x, sc, ctx, () => {
+        throw probe;
+      });
+    } catch (err) {
+      if (err === probe) return x;
+      throw err;
+    }
+    if (t.kind === "nullable" && (t.inner.kind === "record" || t.inner.kind === "union"))
+      return { kind: "binary", op: "!==", left: x, right: { kind: "null" } };
+    return x;
+  };
   const wrap = (
     body: Expr,
     test: Expr,
@@ -459,8 +480,9 @@ export function insertNarrows(
     case "null":
     case "var":
       return e;
-    case "neg":
     case "not":
+      return { kind: "not", operand: go(condition(e.operand, scope), scope) };
+    case "neg":
     case "isInteger":
       return { kind: e.kind, operand: go(e.operand, scope) };
     case "narrow":
@@ -475,7 +497,7 @@ export function insertNarrows(
       return { kind: "binary", op: e.op, left, right: go(e.right, scope) };
     }
     case "cond": {
-      const test = go(e.test, scope);
+      const test = go(condition(e.test, scope), scope);
       return {
         kind: "cond",
         test,

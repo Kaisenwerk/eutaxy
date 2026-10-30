@@ -26,3 +26,15 @@ export const attemptsLeft = (attempts: number, matches: boolean): Result<number,
   if (!verdict.ok) return verdict;
   return ok(5 - attempts);
 };
+
+/** The error's tag chosen by a conditional inside the literal, as real code writes it. */
+export const judgeTagged = (attempts: number, matches: boolean): Result<true, Refused> =>
+  matches ? ok(true) : err({ type: attempts >= 5 ? "locked" : "invalid" });
+
+export interface Challenge {
+  readonly attempts: number;
+}
+
+/** A missing challenge tested by truthiness: an object is always truthy, so `!c` is `c === null`. */
+export const admit = (c: Challenge | null, matches: boolean): Result<true, Refused> =>
+  !c ? err({ type: "expired" }) : judgeTagged(c.attempts, matches);

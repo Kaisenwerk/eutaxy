@@ -906,10 +906,16 @@ returning any of those; bodies of `const` bindings, `if` with early
 returns and `return`; expressions from `+ - *` on numbers and `+` joining
 two strings, comparisons on numbers, `===`/`!==` on any one primitive
 type and against `null` (which narrows the name it tests in the branch it
-guards, so a field read on a nullable is in the subset only there),
+guards, so a field read on a nullable is in the subset only there; where
+JavaScript tests truthiness, in a condition or under `!`, a nullable
+record or union is a null test, since an object is always truthy, while a
+nullable number or string is not, and stays outside),
 `&& || !`, the conditional operator, string literals (escapes decoded; a
 lone surrogate has no Lean character and is refused), record literals
-(a union member's by its tag), field reads (on a union, a field every
+(a union member's by its tag; a tag chosen by a conditional,
+`{ type: c ? "a" : "b", … }`, is read as a conditional between two
+literals, the other fields in each as written, which pure fields make
+exact), field reads (on a union, a field every
 member has: its tag), `Number.isInteger`, and calls to the module's own
 functions. A generic function, and a function imported from another file
 of the project, is read at each call instead: the compiler resolves the
