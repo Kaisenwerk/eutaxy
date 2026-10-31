@@ -4,7 +4,7 @@ import { cloudflareTest } from "@cloudflare/vitest-plugin";
 import { defineConfig } from "vitest/config";
 
 /** One workerd project per corpus entry, so each runs with its own bindings. */
-const corpora = ["corpus/planted-bugs", "corpus/differential"];
+const corpora = ["corpus/planted-bugs", "corpus/differential", "corpus/gates"];
 const workerdProjects = corpora.flatMap((root) =>
   readdirSync(root, { withFileTypes: true })
     .filter((d) => d.isDirectory() && existsSync(join(root, d.name, "wrangler.jsonc")))

@@ -1,0 +1,10 @@
+{
+  "name": "gate-v0-10-workers-calling-each-other",
+  "main": "worker.ts",
+  "compatibility_date": "2026-10-01",
+  "d1_databases": [{ "binding": "DB", "database_name": "orders", "database_id": "local" }],
+  // The partner Worker is scripted by the scenarios; the binding points at this Worker only so that env.PARTNER exists.
+  "services": [{ "binding": "PARTNER", "service": "gate-v0-10-workers-calling-each-other" }],
+  "workflows": [{ "name": "fulfilment", "binding": "FULFILMENT", "class_name": "Fulfilment" }],
+  "triggers": { "crons": ["*/15 * * * *"] }
+}

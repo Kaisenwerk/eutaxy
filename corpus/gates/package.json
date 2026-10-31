@@ -1,0 +1,15 @@
+{
+  "name": "@eutaxy-corpus/gates",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@eutaxy/cloudflare": "workspace:*",
+    "@eutaxy/core": "workspace:*",
+    "eutaxy": "workspace:*"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "1.4.6",
+    "@cloudflare/workers-types": "5.20261022.1"
+  }
+}

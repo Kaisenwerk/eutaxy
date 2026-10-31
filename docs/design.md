@@ -118,8 +118,8 @@ runtime over a process boundary.
 | `eutaxy` (facade) | Public API at `eutaxy`, `eutaxy/cloudflare` and `eutaxy/aws`                                                                                                                          | all of the above |
 
 Outside `packages/`, the repository holds `corpus/` (planted bugs,
-differential scenarios, prover contracts; never published), `examples/` and
-`docs/`.
+differential scenarios, phase gates, prover contracts; never published),
+`examples/` and `docs/`.
 - Boundaries are enforced by the package manager: each package declares
   exactly its allowed imports, and pnpm's isolated workspace links only
   declared dependencies, so a forbidden import does not resolve. TypeScript

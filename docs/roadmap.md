@@ -84,11 +84,11 @@ Then the boundaries, each following the Cloudflare documentation it cites:
 
 The v0.10 gate: scenarios for a Worker that is driven over RPC and by
 cron, calls another Worker through a service binding, and sends events
-to a Workflow that waits for them run with no `UNSUPPORTED` verdict; each
-new boundary has a planted bug the check catches and, where the local
-runtime implements it, a differential entry against workerd; and the
-opening refactor leaves every earlier corpus verdict and committed trace
-unchanged.
+to a Workflow that waits for them run with no `UNSUPPORTED` verdict (the
+Worker lives in `corpus/gates/`); each new boundary has a planted bug the
+check catches and, where the local runtime implements it, a differential
+entry against workerd; and the opening refactor leaves every earlier corpus
+verdict and committed trace unchanged.
 
 ## Patch work alongside v0.10
 
