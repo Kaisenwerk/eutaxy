@@ -150,6 +150,27 @@ generated regression tests import it.
 The phases after v0.10, in order. Each is driven by the same target, and
 each one's text is made exact, gate included, when it starts.
 
+### First after v0.10 — Prover install
+
+`eutaxy prover install lean` and `eutaxy prover install smt`, as
+packaging already describes, so that a user and the target's CI get a
+prover with one command instead of installing elan or Z3 by hand. Each
+Eutaxy release carries, per platform, the URL and SHA-256 of the
+upstream Lean and Z3 release files its engines are pinned to; the command
+downloads explicitly (never on install, never during a check), verifies
+the checksum, and unpacks into Eutaxy's cache directory, where engines
+look first, before elan and the `PATH`. A mirror or offline directory can
+replace the download host. Upstream files come first because rebuilding
+the toolchains would mean a build matrix and hosting to secure; a trimmed
+Lean bundle (the binary and `Init`, which is all the emitted modules
+load) is built only if the measured download size calls for it. It comes
+first because it is small and every later phase's proofs need a prover
+the target can install.
+
+Gate: CI installs both engines with the command instead of its own
+install steps and the contract corpus passes on them; a test shows a
+checksum mismatch installs nothing.
+
 ### v0.11 — The agent loop
 
 An MCP server and goal files for supplied proofs. `eutaxy mcp` is a local
