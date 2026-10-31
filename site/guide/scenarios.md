@@ -121,10 +121,31 @@ Setup steps run before every run, so each run starts from the same state.
 | `durableObject(binding, objects?, { alarmsPerObject })` | Clears the namespace, seeds the named objects' storage, evicts them; snapshots storage after the run |
 | `r2Bucket(binding, objects?)`                           | Empties the bucket and seeds these objects; snapshots it after the run                               |
 | `workflow(binding, className, { name })`                | Names the class (an export of the Worker module) a Workflow binding's instances run                  |
+| `service(binding, { methods, fetch })`                  | Scripts the Worker behind a service binding: each method's reply, the replies to `fetch()`; never calls it |
 
-A Durable Object namespace, R2 bucket or Workflow binding the Worker uses
-without its setup step makes the run `UNSUPPORTED`, since state left over
-from one run would leak into the next. See
+A Durable Object namespace, R2 bucket, Workflow binding or service binding
+the Worker uses without its setup step makes the run `UNSUPPORTED`: state
+left over from one run would leak into the next, and a real peer would be
+called.
+
+A service binding's script names each method's reply, a value returned or
+an error thrown to the caller, and the replies to `fetch()` through the
+binding, matched by method and path like an external's:
+
+```ts
+const billing = service("BILLING", {
+  methods: {
+    charge: { returns: { chargeId: "ch-1" } },
+    refund: { throws: "RangeError: already refunded" },
+  },
+  fetch: [{ method: "GET", path: "/health", status: 204 }],
+});
+```
+
+Each call is one effect (`Service:<binding>`, the method as op) with the
+faults of a Durable Object stub call: the call never reached the callee, it
+acted and the answer was lost, or the caller died after it.
+`serviceCall(binding, method)` selects the calls for invariants. See
 [Cloudflare Workers](/platforms/cloudflare) for what each binding models.
 
 ## Externals

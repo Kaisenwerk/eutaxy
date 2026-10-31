@@ -301,6 +301,58 @@ export function workflow(
   };
 }
 
+/** A scripted method's reply: a value returned to the caller, or an error (`"<Name>: <message>"`) thrown to it. */
+export type ScriptedReply = { readonly returns: JsonValue } | { readonly throws: string };
+
+/** A reply to `fetch()` through a service binding; a type alias of core's `ScriptedResponse`, for the JSON shape. */
+export type ServiceResponse = {
+  readonly method?: string;
+  readonly path?: string;
+  readonly status: number;
+  readonly headers?: { readonly [name: string]: string };
+  readonly body?: JsonValue;
+};
+
+/**
+ * Script the Worker another Worker reaches through a service binding: its
+ * RPC methods answer from `methods` (every method returns `null` when
+ * omitted; a method missing from a present `methods` makes the run
+ * UNSUPPORTED) and its `fetch()` from `fetch`, matched by method and path
+ * as an external's responses are (200 with an empty body when omitted).
+ * The real binding is never called. Each call is one effect,
+ * `Service:<binding>`, with the faults of a Durable Object stub call.
+ */
+export interface ServiceSetup extends PlatformData {
+  readonly kind: "service";
+  readonly binding: string;
+  readonly methods?: { readonly [method: string]: ScriptedReply };
+  readonly fetch?: readonly ServiceResponse[];
+}
+
+export function service(
+  binding: string,
+  options: {
+    readonly methods?: { readonly [method: string]: ScriptedReply };
+    readonly fetch?: readonly ServiceResponse[];
+  } = {},
+): ServiceSetup {
+  return {
+    kind: "service",
+    binding,
+    ...(options.methods === undefined ? {} : { methods: options.methods }),
+    ...(options.fetch === undefined ? {} : { fetch: [...options.fetch] }),
+  };
+}
+
+/** Selects the calls through a service binding that completed, one method's or all. */
+export function serviceCall(binding: string, method?: string): EffectSelector {
+  return {
+    target: `Service:${binding}`,
+    ...(method === undefined ? {} : { op: method }),
+    kind: "result",
+  };
+}
+
 /** Selects a Workflow's step attempts, optionally of one step; a failed attempt's result carries its error. */
 export function workflowStep(binding: string, step?: string): EffectSelector {
   return {
@@ -345,7 +397,13 @@ export interface CloudflareScenarioInput {
         readonly queue: string;
         readonly messages: readonly QueueMessage[];
       };
-  readonly setup?: readonly (D1Setup | DurableObjectSetup | R2Setup | WorkflowSetup)[];
+  readonly setup?: readonly (
+    | D1Setup
+    | DurableObjectSetup
+    | R2Setup
+    | WorkflowSetup
+    | ServiceSetup
+  )[];
   readonly externals?: readonly ExternalDecl[];
   readonly invariants: readonly Invariant[];
   readonly bounds?: Partial<Bounds>;

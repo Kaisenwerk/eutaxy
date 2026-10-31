@@ -33,8 +33,10 @@ import {
   type DurableObjectSetup,
   defaultAlarmsPerObject,
   type R2Setup,
+  type ServiceSetup,
   type WorkflowSetup,
 } from "./scenario.ts";
+import { isServiceBinding, proxyService } from "./services.ts";
 import {
   deliverWorkflow,
   isWorkflowBinding,
@@ -347,6 +349,49 @@ export function workflowBinding(deps: WorkflowDeps): Binding<object, WorkflowSet
         maxFaultsPerRun: spec.bounds.maxFaultsPerRun,
         maxRedeliveries: spec.bounds.maxRedeliveries,
       });
+    },
+  };
+}
+
+/**
+ * A service binding: never the real binding, a stub answering from the
+ * scenario's `service` setup; each call one effect. Nothing to reset or
+ * snapshot, the callee is scripted.
+ */
+export function serviceBinding(): Binding<object, ServiceSetup> {
+  /** The bindings the current scenario scripts. */
+  let scripts = new Map<string, ServiceSetup>();
+  /** Per binding, the stub for the current run's script. */
+  const proxies = new Map<string, object>();
+  return {
+    kind: "service",
+    target: "Service",
+    is: isServiceBinding,
+    proxy(name, _real, ctx) {
+      const script = scripts.get(name);
+      if (!script) {
+        ctx.hooks.unsupported(
+          `service binding ${name} needs a service() setup step scripting the Worker it reaches`,
+        );
+        // Never the real binding: it would call the real peer.
+        return proxyService(name, ctx, { kind: "service", binding: name, methods: {} });
+      }
+      let p = proxies.get(name);
+      if (!p) {
+        p = proxyService(name, ctx, script);
+        proxies.set(name, p);
+      }
+      return p;
+    },
+    clear() {
+      scripts = new Map();
+      proxies.clear();
+    },
+    async reset(step) {
+      scripts.set(step.binding, step);
+    },
+    async snapshot() {
+      return null;
     },
   };
 }

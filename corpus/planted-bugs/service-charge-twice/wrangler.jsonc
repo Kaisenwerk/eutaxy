@@ -1,0 +1,11 @@
+{
+  "name": "planted-service-charge-twice",
+  "main": "worker.ts",
+  "compatibility_date": "2026-10-01",
+  "d1_databases": [{ "binding": "DB", "database_name": "orders", "database_id": "local" }],
+  "queues": {
+    "consumers": [{ "queue": "orders", "max_batch_size": 1, "max_retries": 3 }]
+  },
+  // The billing Worker is scripted by the scenario; the binding points at this Worker only so that env.BILLING exists.
+  "services": [{ "binding": "BILLING", "service": "planted-service-charge-twice" }]
+}

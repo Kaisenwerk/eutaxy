@@ -22,6 +22,7 @@ import {
   durableObjectBinding,
   ownedSetups,
   r2Binding,
+  serviceBinding,
   workflowBinding,
 } from "./bindings.ts";
 import type { ProxyContext } from "./d1.ts";
@@ -80,7 +81,8 @@ const assumptions: readonly string[] = [
   "platform model: Cloudflare Queues at-least-once delivery; the first ack or retry decision per message wins; unacked messages are redelivered up to max_retries then dead-lettered",
   "D1 statements run against Miniflare's SQLite; each run/first/all/raw/batch/exec is one effect",
   "message.timestamp is the virtual clock's time at delivery",
-  "only D1, Durable Object, R2 and Workflow bindings are proxied; touching any other binding makes the run UNSUPPORTED",
+  "only D1, Durable Object, R2, Workflow and scripted service bindings are proxied; touching any other binding makes the run UNSUPPORTED",
+  "service bindings are scripted callees: the Worker behind a binding is never called; each RPC method call or fetch() through it is one effect answered from the scenario's service() setup, where crash_before and error mean the call never reached the callee, ambiguous that it acted and the answer was lost, and crash_after that the caller died after it (developers.cloudflare.com/workers/runtime-apis/bindings/service-bindings/); Cloudflare does not retry such a call",
   "R2 buckets are Miniflare's real ones, emptied and seeded before each run and snapshotted after it; R2 is strongly consistent and the last writer wins (developers.cloudflare.com/r2/reference/consistency/); each put, delete, get, head and list is one effect, a body is read inside its get, and an object's version and upload time are stand-ins so traces repeat; multipart uploads and conditions on the upload time are not modelled",
   "Durable Objects are the real objects workerd runs (storage, transactions, input and output gates are the runtime's own); each stub call is one effect: crash_before or error means it never reached the object, ambiguous means the object committed and the caller lost the answer, crash_after means the caller died after it; in a concurrent run an object's own outbound I/O during a call is a turn, so another event may enter the object meanwhile (its input gate is open then), except while it holds the gate with blockConcurrencyWhile, when its effects run at once; storage operations are not turns (the input gate holds other events during them); the object's own binding calls are not recorded; objects are cleared, seeded and evicted before each run and their storage is snapshotted after it (developers.cloudflare.com/durable-objects/api/storage-api/)",
   "Durable Object alarms are taken over so none is scheduled on the real clock and fire in virtual time: one alarm per object, a later setAlarm replaces it, setAlarm in a transaction applies on commit, the alarm survives eviction, alarm() is one effect (crash_before: it never ran; crash_after: it ran and counts as failed; error: it threw), and a failed alarm is retried after 2 s, 4 s, 8 s ... up to six retries and maxRedeliveries, with retryCount and isRetry (developers.cloudflare.com/durable-objects/api/base/#alarm); each object's alarm fires at most alarmsPerObject times per run (default 3)",
@@ -106,8 +108,13 @@ export function createCloudflarePlatform(options: CloudflarePlatformOptions): Pl
     currentInvocation: () => ctx.hooks.running(),
   };
 
-  /** The kinds of binding modelled, in the order an env value is tried against them. */
+  /**
+   * The kinds of binding modelled, in the order an env value is tried against
+   * them: a service binding first, since in workerd it answers every duck
+   * type (its property reads are RPC stubs).
+   */
   const bindings: readonly Binding[] = [
+    serviceBinding(),
     d1Binding(options.schemas),
     durableObjectBinding({ ctx, helpers: options.durableObjects, real: (name) => env[name] }),
     r2Binding(),

@@ -54,7 +54,8 @@ export function findResponse(
   });
 }
 
-interface Reply {
+/** A scripted reply, ready to become a Response: lower-cased header names, the body as text. */
+export interface Reply {
   readonly status: number;
   readonly headers: { readonly [name: string]: string };
   readonly body: string;
@@ -62,7 +63,13 @@ interface Reply {
 
 const REDIRECTS = new Set([301, 302, 303, 307, 308]);
 
-function replyOf(r: ScriptedResponse | null): Reply {
+/** Whether a status is a redirect `fetch` would follow unless told `redirect: "manual"`. */
+export function isRedirect(status: number): boolean {
+  return REDIRECTS.has(status);
+}
+
+/** The reply a scripted response stands for; `null` is the default reply, 200 with an empty body. */
+export function replyOf(r: ScriptedResponse | null): Reply {
   if (r === null) return { status: 200, headers: {}, body: "" };
   const json = r.body !== undefined && typeof r.body !== "string";
   const headers: Record<string, string> = {};
@@ -72,14 +79,15 @@ function replyOf(r: ScriptedResponse | null): Reply {
   return { status: r.status, headers, body };
 }
 
-function toResponse(reply: Reply): Response {
+export function toResponse(reply: Reply): Response {
   return new Response(reply.body === "" ? null : reply.body, {
     status: reply.status,
     headers: reply.headers,
   });
 }
 
-function parseBody(text: string): JsonValue {
+/** A request or reply body as effect-log data: JSON when it parses, the text otherwise, null when empty. */
+export function parseBody(text: string): JsonValue {
   if (text === "") return null;
   try {
     return JSON.parse(text) as JsonValue;
@@ -142,7 +150,7 @@ export function createScriptedFetch(
         throw new TypeError(`fetch failed: no scripted response for ${method} ${url.pathname}`);
       }
       const reply = replyOf(script);
-      if (REDIRECTS.has(reply.status) && request.redirect !== "manual") {
+      if (isRedirect(reply.status) && request.redirect !== "manual") {
         unsupported(
           `external ${external.name} answers ${method} ${url.pathname} with a ${reply.status} redirect; script the final reply or fetch with redirect: "manual"`,
         );

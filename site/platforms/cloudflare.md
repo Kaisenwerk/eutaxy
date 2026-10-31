@@ -23,6 +23,7 @@ the verdict's assumptions cite.
 | Durable Objects   | `durableObject`   | each stub call, each alarm                    | The real objects: storage, transactions, input and output gates are the runtime's own                            |
 | R2                | `r2Bucket`        | `put`, `delete`, `get`, `head`, `list`        | Miniflare's buckets; strongly consistent, last writer wins, conditional operations as documented                 |
 | Workflows         | `workflow`        | `create`; two points per `step.do` attempt    | A model of the engine: step retries with backoff, restarts that re-run `run()` with persisted step results       |
+| Service bindings  | `service`         | each RPC call, each `fetch()`                 | The callee scripted: replies from the setup; faults as a Durable Object stub call; never retried by Cloudflare   |
 
 ### D1
 
@@ -59,6 +60,18 @@ never retries an RPC call, so the caller policy you declare (`retries`,
 `delaysMs`, `deadlineMs`) decides resends. A result that is not plain data
 (a stub, a function, a stream) makes the run `UNSUPPORTED`; an entrypoint's
 own `fetch()` method is not driven by `http()` yet.
+
+### Service bindings
+
+The Worker behind a service binding is scripted, never called: the
+`service` setup names each method's reply (a value, or an error thrown to
+the caller with its name and message, as RPC propagates it) and the replies
+to `fetch()` through the binding, matched by method and path like an
+external's. Each call is one effect, `Service:<binding>`, with the faults of
+a Durable Object stub call: `crash_before` and `error` mean the call never
+reached the callee, `ambiguous` that it acted and the answer was lost,
+`crash_after` that the caller died after it. Cloudflare retries none of
+them. Every verdict states that callees were scripted.
 
 ### Background work
 
@@ -123,7 +136,10 @@ time.
 ## What makes a run `UNSUPPORTED`
 
 Eutaxy refuses to pass a run it cannot control:
-- A binding outside the allowlist: the Cache API, service bindings, AI,
+- A service binding without its `service` setup step, a method its script
+  lacks, an unmatched `fetch()` through it, a redirect reply the runtime
+  would follow, `connect()`, or RPC promise pipelining on its calls.
+- A binding outside the allowlist: the Cache API, AI,
   Hyperdrive, raw sockets, KV.
 - A request to a host no external declares, or one no scripted response
   answers.

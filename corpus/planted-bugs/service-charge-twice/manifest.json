@@ -1,0 +1,8 @@
+{
+  "expect": {
+    "verdict": "VIOLATED",
+    "invariant": "charged-once"
+  },
+  "fault": "any failure after the callee charged: the answer lost (ambiguous on the charge), the caller dying right after it (crash_after), or the insert that follows failing (error on the D1 run; the seed decides which is found first); the redelivery charges again",
+  "description": "A queue consumer charges each order through a billing Worker over a service binding, then records the order as paid. The call's answer can be lost after the callee charged; the handler then fails, Queues redeliver the message, and the redelivery charges the order a second time."
+}

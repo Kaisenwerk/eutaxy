@@ -432,6 +432,24 @@ error. A request to an undeclared host, or one no scripted reply answers,
 makes the run `UNSUPPORTED`. A verdict is only as good as these
 declarations, so they are listed among its assumptions.
 
+**Service bindings are scripted callees.** A Worker reached through a
+service binding (`env.BINDING`, by RPC method or by `fetch()`) is declared
+with `service(binding, { methods, fetch })`: each method's reply, a value
+returned or an error thrown to the caller as RPC propagates it (name and
+message), and the replies to `fetch()`, matched by method and path as an
+external's are. The real binding is never called. Each call is one effect,
+`Service:<binding>`, with the faults of a Durable Object stub call:
+`crash_before` and `error` mean the call never reached the callee,
+`ambiguous` that it acted and the answer was lost, `crash_after` that the
+caller died after it; Cloudflare itself retries none of them. A scripted
+error names a built-in class and is thrown as that class, as RPC keeps the
+type. A binding without its setup step, a method the script lacks, an
+unmatched `fetch()`, a redirect reply the runtime would follow (script the
+final reply, or fetch with `redirect: "manual"`), promise pipelining and
+`connect()` make the run `UNSUPPORTED`, and every verdict states that
+callees were scripted. Running the callee's real code
+in the same simulation is later work, which the scripted boundary teaches.
+
 ## Fault model and platform model
 
 The fault model is platform-neutral and lives in `core`; what Cloudflare
@@ -499,6 +517,10 @@ shares the reading of the limit and none of the proxy code.
   its name and message (RPC error handling); Cloudflare does not retry a
   call, so the caller's declared policy decides resends as for inbound
   requests, and the policy's deadline and delays mean the same.
+- Service bindings: each RPC call or `fetch()` through a binding is one
+  effect answered from the scenario's script, with a Durable Object stub
+  call's fault meanings; the call runs on the same thread and Cloudflare
+  retries nothing (service bindings).
 - Durable Objects (v0.5): input gates block new events during storage
   operations but not during outbound `fetch`; output gates hold responses
   _and outgoing requests_ until pending writes are confirmed; consecutive
@@ -666,8 +688,9 @@ shares the reading of the limit and none of the proxy code.
   implementation (Miniflare's D1 and storage), so SQL and storage semantics
   come for free. The Workflows engine is the exception (see above); the
   corpus checks the model against the local engine on fault-free runs.
-- An allowlist of proxied bindings; anything else (Cache API, service
-  bindings, AI, Hyperdrive, raw sockets) makes the run `UNSUPPORTED`.
+- An allowlist of proxied bindings; anything else (Cache API, AI,
+  Hyperdrive, raw sockets, a service binding without its `service` setup)
+  makes the run `UNSUPPORTED`.
   Each kind on the allowlist is one record in `cloudflare` (`bindings.ts`):
   how an env value is recognised, the proxy the Worker sees, what is
   forgotten before a run, the reset its setup step asks for, the snapshot

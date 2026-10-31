@@ -28,7 +28,12 @@ export {
   findResponse,
   hostMatches,
   installScriptedFetch,
+  isRedirect,
+  parseBody,
+  type Reply,
+  replyOf,
   type ScriptedFetch,
+  toResponse,
   withoutNetwork,
 } from "./fetch.ts";
 export { type CoreObserver, type ObservedCall, observeCore } from "./observe.ts";
