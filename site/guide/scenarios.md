@@ -1,5 +1,5 @@
 ---
-description: How to write an Eutaxy scenario for a Cloudflare Worker - queue and HTTP drives, caller retry policies, setup for D1, Durable Objects, R2 and Workflows, declared externals, bounds and core specs.
+description: How to write an Eutaxy scenario for a Cloudflare Worker - queue, HTTP and RPC drives, caller retry policies, setup for D1, Durable Objects, R2 and Workflows, declared externals, bounds and core specs.
 ---
 
 # Scenarios
@@ -79,6 +79,37 @@ const webhooks = http(
 sent as `application/json`. With a deadline, the caller decides at the
 response point or at its deadline, whichever comes first, so a resend can
 start while the first attempt is still running.
+
+### `rpc(calls, caller)`
+
+Drives a `WorkerEntrypoint` with method calls. The entrypoint is the
+Worker's default export (pass the class as `handler`) or a named export
+(`entrypoint`, found among the module's `exports`). Each call is an event;
+each attempt constructs the entrypoint anew, as the runtime does, calls the
+method, and records the return value as the response (`Rpc:<method>`, op
+`response`, `{ ok: true, value }`) or the exception as the error the caller
+sees (`{ ok: false, error }`, its name and message).
+
+```ts
+const calls = rpc(
+  [
+    { method: "reserve", args: ["o-1", 2] },
+    { id: "lookup", method: "reservation", args: ["o-1"] },
+  ],
+  {
+    retries: 2, // resends after a call that threw or got no answer (default 0: a calling Worker resends only when written to)
+    delaysMs: [1000], // as for http()
+    deadlineMs: 5000, // as for http()
+    entrypoint: "Inventory", // a named export; omit for the default export
+  },
+);
+```
+
+Cloudflare never retries an RPC call; the caller you declare does. A
+return value that is not plain data (a stub, a function, a stream) makes
+the run `UNSUPPORTED`. `rpcResponse(method, { ok })` selects the answers
+for invariants, and `atLeastOncePerMessage` reads each call's arguments by
+path (`"0.orderId"`).
 
 ## Setup
 

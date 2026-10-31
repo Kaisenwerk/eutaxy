@@ -11,6 +11,7 @@ import {
   atLeastOncePerMessage as coreAtLeastOncePerMessage,
   defaultBounds,
   type EffectSelector,
+  type EventRef,
   type EveryRow,
   type ExternalDecl,
   type Implies,
@@ -106,6 +107,94 @@ export function http(
     ...(options.delaysMs === undefined ? {} : { delaysMs: [...options.delaysMs] }),
     ...(options.deadlineMs === undefined ? {} : { deadlineMs: options.deadlineMs }),
   };
+}
+
+/** One RPC call; `id` defaults to its position, `args` to none. */
+export interface RpcCallInput {
+  readonly id?: string;
+  readonly method: string;
+  readonly args?: readonly JsonValue[];
+}
+
+/** A type alias, not an interface, so it is assignable to the JSON shape of `PlatformData`. */
+export type RpcCallSpec = {
+  readonly id: string;
+  readonly method: string;
+  readonly args: readonly JsonValue[];
+};
+
+/**
+ * Drive a `WorkerEntrypoint` of the Worker with these method calls, one
+ * invocation per attempt, the entrypoint constructed anew for each. The
+ * entrypoint is the Worker's default export, or the named export
+ * `entrypoint`. Cloudflare does not retry an RPC call; the caller resends
+ * a call that threw or got no answer up to `retries` times (default 0: a
+ * calling Worker resends only when written to), after `delaysMs` of
+ * virtual time, and gives up waiting at `deadlineMs`, as the HTTP drive's
+ * caller does.
+ */
+export interface RpcDrive extends PlatformData {
+  readonly kind: "rpc";
+  readonly entrypoint?: string;
+  readonly calls: readonly RpcCallSpec[];
+  readonly retries: number;
+  readonly delaysMs?: readonly number[];
+  readonly deadlineMs?: number;
+}
+
+export interface RpcCallerOptions {
+  readonly entrypoint?: string;
+  readonly retries?: number;
+  readonly delaysMs?: readonly number[];
+  readonly deadlineMs?: number;
+}
+
+export function rpc(calls: readonly RpcCallInput[], options: RpcCallerOptions = {}): RpcDrive {
+  return {
+    kind: "rpc",
+    ...(options.entrypoint === undefined ? {} : { entrypoint: options.entrypoint }),
+    calls: calls.map((c, i) => ({
+      id: c.id ?? `call-${i + 1}`,
+      method: c.method,
+      args: [...(c.args ?? [])],
+    })),
+    retries: options.retries ?? 0,
+    ...(options.delaysMs === undefined ? {} : { delaysMs: [...options.delaysMs] }),
+    ...(options.deadlineMs === undefined ? {} : { deadlineMs: options.deadlineMs }),
+  };
+}
+
+/** The target of a call's effects: the method, under the entrypoint's name when the drive names one. */
+export function rpcTarget(drive: Pick<RpcDrive, "entrypoint">, method: string): string {
+  return `Rpc:${drive.entrypoint === undefined ? method : `${drive.entrypoint}.${method}`}`;
+}
+
+/** The drives a Cloudflare scenario can have. */
+export type Drive = QueueDrive | HttpDrive | RpcDrive;
+
+/** The drive's events as they are first delivered: one per message, request or call, attempt 1. */
+export function driveEvents(drive: Drive): readonly EventRef[] {
+  switch (drive.kind) {
+    case "queue":
+      return drive.messages.map((m) => ({ id: m.id, attempt: 1, data: m.body }));
+    case "http":
+      return drive.requests.map((r) => ({ id: r.id, attempt: 1, data: r as unknown as JsonValue }));
+    case "rpc":
+      return drive.calls.map((c) => ({ id: c.id, attempt: 1, data: c as unknown as JsonValue }));
+  }
+}
+
+/** The drive with only the named events kept, for shrinking. */
+export function restrictDrive(drive: Drive, keepIds: readonly string[]): Drive {
+  const keep = (id: string): boolean => keepIds.includes(id);
+  switch (drive.kind) {
+    case "queue":
+      return { ...drive, messages: drive.messages.filter((m) => keep(m.id)) };
+    case "http":
+      return { ...drive, requests: drive.requests.filter((r) => keep(r.id)) };
+    case "rpc":
+      return { ...drive, calls: drive.calls.filter((c) => keep(c.id)) };
+  }
 }
 
 /** Apply a SQL file to a D1 binding before each run. */
@@ -250,6 +339,7 @@ export interface CloudflareScenarioInput {
   readonly drive:
     | QueueDrive
     | HttpDrive
+    | RpcDrive
     | {
         readonly kind: "queue";
         readonly queue: string;
@@ -313,18 +403,26 @@ export function refines(
 }
 
 /**
- * Every message's (or request's) `bodyKey` value must appear at least once
- * as `key` in a selected effect: nothing the drive delivered may be lost.
+ * Every message's (or request's, or call's) `bodyKey` value must appear at
+ * least once as `key` in a selected effect: nothing the drive delivered may
+ * be lost. For an RPC drive `bodyKey` is a path into the call's arguments
+ * (`"0.orderId"`).
  */
 export function atLeastOncePerMessage(
   name: string,
-  drive: QueueDrive | HttpDrive,
+  drive: Drive,
   effect: EffectSelector,
   key: string,
   bodyKey: string,
 ): AtLeastOnce {
   if (drive.kind === "queue")
     return coreAtLeastOncePerMessage(name, drive.messages, effect, key, bodyKey);
+  if (drive.kind === "rpc") {
+    const calls = drive.calls.map((c) => ({ id: c.id, body: c.args }));
+    const inv = coreAtLeastOncePerMessage(name, calls, effect, key, bodyKey);
+    // An RPC event's data is the whole call, so the path to re-derive from starts at its arguments.
+    return { ...inv, perMessage: { bodyKey: bodyKey === "" ? "args" : `args.${bodyKey}` } };
+  }
   const requests = drive.requests.map((r) => ({ id: r.id, body: r.body ?? null }));
   const inv = coreAtLeastOncePerMessage(name, requests, effect, key, bodyKey);
   // An HTTP event's data is the whole request, so the path to re-derive from starts at its body.
@@ -342,6 +440,23 @@ export function httpResponse(
 ): EffectSelector {
   return {
     target: `Http:${path}`,
+    op: "response",
+    kind: "result",
+    ...(options.ok === undefined ? {} : { where: { "result.ok": options.ok } }),
+  };
+}
+
+/**
+ * Selects the answers an RPC method gave (`ok` narrows to values returned
+ * or to errors thrown). One `result` per attempt: a crash before the
+ * response leaves none.
+ */
+export function rpcResponse(
+  method: string,
+  options: { readonly ok?: boolean; readonly entrypoint?: string } = {},
+): EffectSelector {
+  return {
+    target: rpcTarget(options, method),
     op: "response",
     kind: "result",
     ...(options.ok === undefined ? {} : { where: { "result.ok": options.ok } }),
@@ -436,25 +551,58 @@ function validateHttpDrive(drive: HttpDrive): readonly string[] {
     if ((r.method === "GET" || r.method === "HEAD") && r.body !== undefined)
       errors.push(`requests[${i}] is a ${r.method} and cannot carry a body`);
   });
+  errors.push(...validateCaller("http", drive));
+  return errors;
+}
+
+/** The caller's policy, as both drives a caller resends declare it. */
+function validateCaller(
+  kind: string,
+  drive: {
+    readonly retries: number;
+    readonly delaysMs?: readonly number[];
+    readonly deadlineMs?: number;
+  },
+): readonly string[] {
+  const errors: string[] = [];
   if (!(Number.isInteger(drive.retries) && drive.retries >= 0))
-    errors.push("http drive retries must be a non-negative integer");
+    errors.push(`${kind} drive retries must be a non-negative integer`);
   (drive.delaysMs ?? []).forEach((d, i) => {
     if (!(Number.isInteger(d) && d >= 0))
-      errors.push(`http drive delaysMs[${i}] must be a non-negative integer`);
+      errors.push(`${kind} drive delaysMs[${i}] must be a non-negative integer`);
   });
   if (
     drive.deadlineMs !== undefined &&
     !(Number.isInteger(drive.deadlineMs) && drive.deadlineMs > 0)
   )
-    errors.push("http drive deadlineMs must be a positive integer");
+    errors.push(`${kind} drive deadlineMs must be a positive integer`);
+  return errors;
+}
+
+/** A method name the entrypoint can have: an identifier that is not the constructor. */
+const methodName = /^[A-Za-z_$][\w$]*$/;
+
+function validateRpcDrive(drive: RpcDrive): readonly string[] {
+  const errors: string[] = [];
+  if (drive.entrypoint !== undefined && !methodName.test(drive.entrypoint))
+    errors.push("rpc drive entrypoint must be an exported class name");
+  const ids = new Set<string>();
+  drive.calls.forEach((c, i) => {
+    if (!methodName.test(c.method) || c.method === "constructor")
+      errors.push(`calls[${i}].method must be a method name`);
+    if (!Array.isArray(c.args)) errors.push(`calls[${i}].args must be an array`);
+    if (ids.has(c.id)) errors.push(`duplicate call id ${JSON.stringify(c.id)}`);
+    ids.add(c.id);
+  });
+  errors.push(...validateCaller("rpc", drive));
   return errors;
 }
 
 /** Build and validate a scenario spec; throws with every problem listed. */
 export function defineScenario(input: CloudflareScenarioInput): ScenarioSpec {
   // queue() keeps the ids a QueueDrive already has, so it serves both forms.
-  const drive: QueueDrive | HttpDrive =
-    input.drive.kind === "http" ? input.drive : queue(input.drive.queue, input.drive.messages);
+  const drive: Drive =
+    input.drive.kind === "queue" ? queue(input.drive.queue, input.drive.messages) : input.drive;
   const spec: ScenarioSpec = {
     version: 1,
     name: input.name,
@@ -470,6 +618,7 @@ export function defineScenario(input: CloudflareScenarioInput): ScenarioSpec {
   const errors = [
     ...validateScenario(spec),
     ...(drive.kind === "http" ? validateHttpDrive(drive) : []),
+    ...(drive.kind === "rpc" ? validateRpcDrive(drive) : []),
   ];
   if (errors.length > 0) {
     throw new Error(`invalid scenario ${JSON.stringify(input.name)}:\n- ${errors.join("\n- ")}`);

@@ -13,6 +13,7 @@ export type { DurableObjectTestHelpers } from "./durable-objects.ts";
 export {
   type CloudflarePlatformOptions,
   createCloudflarePlatform,
+  type WorkerEntrypointClass,
   type WorkerHandler,
 } from "./platform.ts";
 export {
@@ -43,11 +44,17 @@ export {
   queue,
   queueAck,
   type R2Setup,
+  type RpcCallerOptions,
+  type RpcCallInput,
+  type RpcCallSpec,
+  type RpcDrive,
   r2Bucket,
   r2Op,
   r2Rows,
   references,
   refines,
+  rpc,
+  rpcResponse,
   unique,
   type WorkflowSetup,
   workflow,

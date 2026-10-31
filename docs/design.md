@@ -364,7 +364,22 @@ provider resends until it gets a 2xx (`retryOn: "non-2xx"`, the default)
 or only on failures and 5xx (`"5xx"`), up to `retries` times; a browser-like
 caller has `retries: 0`. An uncaught exception is a 500 response.
 `httpResponse(path, { ok })` selects responses for invariants such as "one
-2xx per request", and `atLeastOncePerMessage` accepts either drive.
+2xx per request", and `atLeastOncePerMessage` accepts every drive.
+
+`rpc(calls, caller)` drives a `WorkerEntrypoint`: each call (a method and its
+JSON arguments) is an event; each attempt constructs the entrypoint anew with
+a fresh `ExecutionContext`, as the runtime does, and calls the method. The
+return value is the response effect (`Rpc:<method>`, or
+`Rpc:<Entrypoint>.<method>` for a named export, op `response`, result
+`{ ok: true, value }`); an exception is the error the caller sees
+(`{ ok: false, error }`, its name and message, as RPC propagates it). The
+entrypoint is the Worker's default export (the class passed as the handler)
+or the named export the drive's `entrypoint` gives. Cloudflare does not
+retry an RPC call, so the caller's policy decides resends as for HTTP,
+without `retryOn`: a call that threw or got no answer is resent up to
+`retries` times (default 0: a calling Worker resends only when written to).
+A result that is not plain data (a stub, a function, a stream) makes the run
+`UNSUPPORTED`. `rpcResponse(method, { ok })` selects the answers.
 
 Invariants are plain data over the effect log, checked by pure functions.
 An _effect selector_ picks records by target, op, kind and payload fields;
@@ -478,6 +493,12 @@ shares the reading of the limit and none of the proxy code.
   the handler carries on. A delayed event waits until the virtual clock
   reaches it; the engine moves the clock there once nothing else can move,
   firing timers due before it first.
+- Inbound RPC: one invocation per call attempt; the entrypoint, the default
+  export or a named one, is constructed for each call (Workers RPC; service
+  bindings, RPC); an exception propagates to the caller as a new error with
+  its name and message (RPC error handling); Cloudflare does not retry a
+  call, so the caller's declared policy decides resends as for inbound
+  requests, and the policy's deadline and delays mean the same.
 - Durable Objects (v0.5): input gates block new events during storage
   operations but not during outbound `fetch`; output gates hold responses
   _and outgoing requests_ until pending writes are confirmed; consecutive

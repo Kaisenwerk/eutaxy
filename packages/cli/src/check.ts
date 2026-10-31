@@ -248,7 +248,10 @@ export async function runCheck(o: CheckOptions): Promise<number> {
         ...(transport.setup.some((s) => s.kind === "durable_object")
           ? { durableObjects: true }
           : {}),
-        ...(transport.setup.some((s) => s.kind === "workflow") ? { workflows: true } : {}),
+        ...(transport.setup.some((s) => s.kind === "workflow") ||
+        (transport.drive?.kind === "rpc" && transport.drive["entrypoint"] !== undefined)
+          ? { exports: true }
+          : {}),
         ...(o.expectViolation ? { expect: "violates" as const } : {}),
         ...((transport.observed ?? []).length > 0
           ? {

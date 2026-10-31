@@ -1,5 +1,5 @@
 ---
-description: How Eutaxy simulates Cloudflare Workers - D1, Queues, inbound HTTP, outbound fetch, Durable Objects with alarms, R2 and Workflows, the documented semantics each follows, the effects each records, and what makes a run UNSUPPORTED.
+description: How Eutaxy simulates Cloudflare Workers - D1, Queues, inbound HTTP and RPC, outbound fetch, Durable Objects with alarms, R2 and Workflows, the documented semantics each follows, the effects each records, and what makes a run UNSUPPORTED.
 ---
 
 # Cloudflare Workers
@@ -18,6 +18,7 @@ the verdict's assumptions cite.
 | D1                | `d1Schema`        | `run`, `first`, `all`, `raw`, `batch`, `exec` | Miniflare's SQLite. `batch()` is all-or-nothing; separate statements can be cut between                          |
 | Queues (consumer) | the `queue` drive | `ack`, `retry`, background work               | At-least-once delivery; first ack or retry per message wins; redelivered up to `max_retries`, then dead-lettered |
 | Inbound HTTP      | the `http` drive  | the response                                  | One invocation per attempt; an uncaught exception is a 500; the declared caller decides resends                  |
+| Inbound RPC       | the `rpc` drive   | the response                                  | One invocation per call attempt, the entrypoint constructed per call; an exception is the error the caller sees  |
 | Outbound `fetch`  | `external`        | each request                                  | Answered from the declared externals; never reaches the network                                                  |
 | Durable Objects   | `durableObject`   | each stub call, each alarm                    | The real objects: storage, transactions, input and output gates are the runtime's own                            |
 | R2                | `r2Bucket`        | `put`, `delete`, `get`, `head`, `list`        | Miniflare's buckets; strongly consistent, last writer wins, conditional operations as documented                 |
@@ -47,6 +48,17 @@ whose one fault, a crash before it, is the response the caller never
 received. Cloudflare never retries an inbound request, so the caller policy
 you declare (`retries`, `retryOn`, `delaysMs`, `deadlineMs`) decides
 resends.
+
+### Inbound RPC
+
+The `rpc` drive constructs the `WorkerEntrypoint` once per call, as the
+runtime does, and calls the method. The return value is the response effect
+(`Rpc:<method>`, `{ ok: true, value }`); an exception reaches the caller as
+a new error with its name and message (`{ ok: false, error }`). Cloudflare
+never retries an RPC call, so the caller policy you declare (`retries`,
+`delaysMs`, `deadlineMs`) decides resends. A result that is not plain data
+(a stub, a function, a stream) makes the run `UNSUPPORTED`; an entrypoint's
+own `fetch()` method is not driven by `http()` yet.
 
 ### Background work
 

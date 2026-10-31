@@ -11,7 +11,6 @@ import {
   type DeliveryResult,
   type EventRef,
   invocationOf,
-  type JsonValue,
   type Platform,
   type RunHooks,
   type ScenarioSpec,
@@ -29,7 +28,8 @@ import type { ProxyContext } from "./d1.ts";
 import type { DurableObjectTestHelpers } from "./durable-objects.ts";
 import { deliverRequest } from "./http.ts";
 import { deliverMessage } from "./queues.ts";
-import type { HttpDrive, QueueDrive } from "./scenario.ts";
+import { deliverCall, entrypointClass } from "./rpc.ts";
+import { type Drive, driveEvents, restrictDrive } from "./scenario.ts";
 
 /** The Worker's default export, as far as the platform drives it. */
 export interface WorkerHandler {
@@ -37,11 +37,18 @@ export interface WorkerHandler {
   fetch?(request: Request, env: unknown, ctx: ExecutionContext): Response | Promise<Response>;
 }
 
+/** A `WorkerEntrypoint` subclass: the Worker's default export when it exposes RPC methods. Its env is its own. */
+export type WorkerEntrypointClass = abstract new (ctx: ExecutionContext, env: never) => object;
+
 export interface CloudflarePlatformOptions {
   /** The bindings from `cloudflare:workers`. */
   readonly env: object;
-  /** The Worker's default export. */
-  readonly handler: WorkerHandler;
+  /**
+   * The Worker's default export: the handler object, or the
+   * `WorkerEntrypoint` class the `rpc` drive calls (its own `fetch()`
+   * method is not driven by `http()` yet).
+   */
+  readonly handler: WorkerHandler | WorkerEntrypointClass;
   /** Schema SQL per D1 binding named in the scenario's setup. */
   readonly schemas: Readonly<Record<string, string>>;
   /** Cloudflare's default when the consumer does not set max_retries. */
@@ -82,6 +89,7 @@ const assumptions: readonly string[] = [
   "work passed to ctx.waitUntil runs after the handler returns and never affects acknowledgement or the response; a cut_off fault at that point loses work not yet started, and an effect in flight commits without its continuation",
   "concurrent invocations (maxConcurrentInvocations above 1) share one isolate's module state and bindings, and another may run while one awaits I/O (developers.cloudflare.com/workers/reference/how-workers-works/); queue consumers run concurrently up to max_concurrency (developers.cloudflare.com/queues/configuration/consumer-concurrency/)",
   "inbound requests: one invocation per attempt; an uncaught exception is a 500 response; the drive's caller resends a request it got no acceptable response for (crash before the response, an answer after its deadlineMs, or a status its retryOn policy rejects) up to its retries, each resend after its delaysMs entry of virtual time; the handler's own time is virtual, so a late answer is the ambiguous fault at the response point or an answer later than deadlineMs in virtual time",
+  "inbound RPC: one invocation per call attempt, the entrypoint constructed anew for each with a fresh ExecutionContext (developers.cloudflare.com/workers/runtime-apis/bindings/service-bindings/rpc/); the return value is the response effect, and an exception reaches the caller as a new error with its name and message (developers.cloudflare.com/workers/runtime-apis/rpc/error-handling/); Cloudflare does not retry a call, so the drive's caller resends a call that threw or got no answer as the http drive's caller does; a result that is not plain data (a stub, a function, a stream) makes the run UNSUPPORTED",
 ];
 
 export function createCloudflarePlatform(options: CloudflarePlatformOptions): Platform {
@@ -114,7 +122,9 @@ export function createCloudflarePlatform(options: CloudflarePlatformOptions): Pl
       return value;
     },
   });
-  const worker: RunningWorker = { handler: options.handler, env: proxiedEnv };
+  // An entrypoint class exposes RPC methods; the queue and http drives need the handler object.
+  const handler: WorkerHandler = typeof options.handler === "function" ? {} : options.handler;
+  const worker: RunningWorker = { handler, env: proxiedEnv };
 
   return {
     name: "cloudflare",
@@ -128,17 +138,7 @@ export function createCloudflarePlatform(options: CloudflarePlatformOptions): Pl
     },
 
     restrictEvents(spec: ScenarioSpec, keepIds: readonly string[]): ScenarioSpec {
-      const drive = spec.drive as QueueDrive | HttpDrive;
-      if (drive.kind === "http") {
-        return {
-          ...spec,
-          drive: { ...drive, requests: drive.requests.filter((r) => keepIds.includes(r.id)) },
-        };
-      }
-      return {
-        ...spec,
-        drive: { ...drive, messages: drive.messages.filter((m) => keepIds.includes(m.id)) },
-      };
+      return { ...spec, drive: restrictDrive(spec.drive as Drive, keepIds) };
     },
 
     async finish(spec: ScenarioSpec, hooks: RunHooks): Promise<void> {
@@ -152,28 +152,33 @@ export function createCloudflarePlatform(options: CloudflarePlatformOptions): Pl
     },
 
     initialEvents(spec: ScenarioSpec): readonly EventRef[] {
-      const drive = spec.drive as QueueDrive | HttpDrive;
-      if (drive.kind === "http") {
-        return drive.requests.map((r) => ({
-          id: r.id,
-          attempt: 1,
-          data: r as unknown as JsonValue,
-        }));
-      }
-      return drive.messages.map((m) => ({ id: m.id, attempt: 1, data: m.body }));
+      return driveEvents(spec.drive as Drive);
     },
 
     async deliver(event: EventRef, hooks: RunHooks, spec: ScenarioSpec): Promise<DeliveryResult> {
-      const drive = spec.drive as QueueDrive | HttpDrive;
+      const drive = spec.drive as Drive;
       const invocation = invocationOf(event);
       hooksRef = hooks;
       // An event of a binding's own (an alarm, a Workflow run) is the binding's to deliver.
       const owner =
         event.source === undefined ? undefined : bindings.find((b) => b.source === event.source);
       if (owner?.deliver) return owner.deliver(event, hooks, spec);
-      return drive.kind === "http"
-        ? await deliverRequest(event, hooks, spec, drive, invocation, worker)
-        : await deliverMessage(event, hooks, spec, drive, invocation, worker, maxRetries);
+      switch (drive.kind) {
+        case "http":
+          return deliverRequest(event, hooks, spec, drive, invocation, worker);
+        case "rpc": {
+          const cls = entrypointClass(options.handler, options.exports, drive.entrypoint);
+          if (typeof cls !== "function") {
+            hooks.unsupported(
+              `Rpc: ${drive.entrypoint === undefined ? "the Worker's default export" : `export ${drive.entrypoint}`} is not a WorkerEntrypoint class; pass the Worker module's exports as createCloudflarePlatform({ ..., exports })`,
+            );
+            return { status: "errored", followUps: [] };
+          }
+          return deliverCall(event, hooks, spec, drive, invocation, cls, proxiedEnv);
+        }
+        default:
+          return deliverMessage(event, hooks, spec, drive, invocation, worker, maxRetries);
+      }
     },
   };
 }

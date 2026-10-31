@@ -1,0 +1,8 @@
+{
+  "expect": {
+    "verdict": "VIOLATED",
+    "invariant": "reserved-once"
+  },
+  "fault": "a crash after the insert and before the caller gets the answer: crash_after on the D1 run, or crash_before at the response point (the seed decides which is found first)",
+  "description": "An inventory entrypoint's reserve() method inserts the reservation and returns it. Cloudflare does not retry an RPC call, but the calling Worker resends one it got no answer for, so a crash between the insert and the answer makes the resend reserve the order twice."
+}

@@ -25,6 +25,7 @@ import {
 } from "@eutaxy/engine";
 import { drainBackground, executionContext } from "./background.ts";
 import type { ProxyContext } from "./d1.ts";
+import { constructEntrypoint } from "./entrypoint.ts";
 
 /** The `EventRef.source` of a Workflow instance's run. */
 export const workflowSource = "workflow";
@@ -210,40 +211,9 @@ function validInstanceId(id: unknown): boolean {
   return typeof id === "string" && id.length <= 100 && /^[a-zA-Z0-9_][a-zA-Z0-9-_]*$/.test(id);
 }
 
-/** Sets `ctx` and `env` as `WorkflowEntrypoint` does, for the one `new` workerd would refuse. */
-class StandInEntrypoint {
-  readonly ctx: unknown;
-  readonly env: unknown;
-  constructor(ctx: unknown, env: unknown) {
-    this.ctx = ctx;
-    this.env = env;
-  }
-}
-
-/**
- * Construct a `WorkflowEntrypoint` subclass outside the runtime. workerd's
- * base constructor accepts only a native ExecutionContext, so for this one
- * synchronous `new` the class that extends it directly extends a stand-in
- * instead; its own constructor and field initialisers run as written, and
- * the base is put back before anything else can run.
- */
+/** Construct a `WorkflowEntrypoint` subclass outside the runtime, for the one `new` per instance run. */
 export function constructWorkflow(cls: unknown, ctx: unknown, env: unknown): object {
-  if (typeof cls !== "function") throw new TypeError("not a class");
-  let direct = cls as object;
-  for (;;) {
-    const parent = Object.getPrototypeOf(direct) as unknown;
-    if (typeof parent !== "function" || parent === Function.prototype)
-      throw new TypeError(`${(cls as { name: string }).name} does not extend WorkflowEntrypoint`);
-    if ((parent as { name: string }).name === "WorkflowEntrypoint") break;
-    direct = parent;
-  }
-  const base = Object.getPrototypeOf(direct) as object;
-  Object.setPrototypeOf(direct, StandInEntrypoint);
-  try {
-    return Reflect.construct(cls as new (...a: unknown[]) => object, [ctx, env]);
-  } finally {
-    Object.setPrototypeOf(direct, base);
-  }
+  return constructEntrypoint(cls, "WorkflowEntrypoint", ctx, env);
 }
 
 /** The engine's conversion (itty-time): a year is 365.25 days, a month 30; an unknown unit counts 1. */

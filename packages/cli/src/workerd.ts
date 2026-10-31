@@ -25,6 +25,8 @@ export interface CheckTransport {
   readonly specErrors?: readonly SpecError[];
   readonly worker: { readonly entry: string; readonly config: string };
   readonly setup: readonly { readonly kind: string; readonly [key: string]: unknown }[];
+  /** The scenario's drive, for what the regression test must pass the platform (a named entrypoint). */
+  readonly drive?: { readonly kind: string; readonly [key: string]: unknown };
   /** The core modules observed (as the scenario's specs name them) and the functions on each. */
   readonly observed?: readonly { readonly module: string; readonly functions: readonly string[] }[];
 }
@@ -166,7 +168,7 @@ export async function checkInWorkerd(input: WorkerdCheckInput): Promise<CheckTra
     input.modules,
     input.specEntries,
   );
-  const transportBase = { worker: scenario.worker, setup: scenario.setup };
+  const transportBase = { worker: scenario.worker, setup: scenario.setup, drive: scenario.drive };
   if (specErrors.length > 0) return { report: null, specErrors, ...transportBase };
   const observers = selected.map((m) => observeCore(m.namespace, m.names));
   let verdict: Awaited<ReturnType<typeof check>>;

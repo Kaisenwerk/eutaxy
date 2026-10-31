@@ -78,9 +78,11 @@ eutaxy check ./payments.sim.ts
 version of this: a queue consumer with a bug the check finds, and the fixed
 Worker it reports `BOUNDED` for.
 
-A scenario drives the Worker through its `queue()` handler or, with
-`http(...)`, through its `fetch()` handler, where the caller's retry policy
-(a webhook provider resending until it gets a 2xx) decides redelivery. With
+A scenario drives the Worker through its `queue()` handler, with
+`http(...)` through its `fetch()` handler, or with `rpc(...)` through the
+methods of its `WorkerEntrypoint`; for the last two the caller's retry policy
+(a webhook provider resending until it gets a 2xx, a calling Worker resending
+a call that threw) decides redelivery. With
 `maxConcurrentInvocations` above 1, invocations run concurrently and
 interleave at their I/O, including a Durable Object's outbound I/O during
 a call (its storage operations hold other events, as the runtime's input

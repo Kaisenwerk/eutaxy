@@ -17,7 +17,12 @@ export interface CloudflareRegressionOptions {
   readonly maxRetries?: number;
   /** The scenario sets up Durable Objects: pass the Cloudflare test helpers to the platform. */
   readonly durableObjects?: boolean;
-  /** The scenario sets up Workflows: pass the Worker module's exports, where their classes are. */
+  /**
+   * Pass the Worker module's exports to the platform: the scenario sets up
+   * Workflows (their classes are among them) or drives a named entrypoint.
+   */
+  readonly exports?: boolean;
+  /** @deprecated Use `exports`. */
   readonly workflows?: boolean;
   readonly expect?: "holds" | "violates";
   readonly engineModule?: string;
@@ -34,6 +39,7 @@ export function cloudflareRegressionTest(
   options: CloudflareRegressionOptions,
 ): string {
   const bindings = Object.keys(options.schemaPaths).sort();
+  const withExports = options.exports === true || options.workflows === true;
   const imports = [
     'import { createCloudflarePlatform } from "eutaxy/cloudflare";',
     'import { env } from "cloudflare:workers";',
@@ -42,7 +48,7 @@ export function cloudflareRegressionTest(
     ...bindings.map(
       (b) => `import schema_${b} from ${JSON.stringify(`${options.schemaPaths[b]}?raw`)};`,
     ),
-    options.workflows
+    withExports
       ? `import * as worker from ${JSON.stringify(options.workerPath)};`
       : `import handler from ${JSON.stringify(options.workerPath)};`,
     ...(options.specModules ?? []).map(
@@ -52,8 +58,8 @@ export function cloudflareRegressionTest(
   const schemas = `{ ${bindings.map((b) => `${b}: schema_${b}`).join(", ")} }`;
   const retries = options.maxRetries === undefined ? "" : `, maxRetries: ${options.maxRetries}`;
   const objects = options.durableObjects ? ", durableObjects: cloudflareTest" : "";
-  const handler = options.workflows ? "handler: worker.default" : "handler";
-  const exports = options.workflows ? ", exports: worker" : "";
+  const handler = withExports ? "handler: worker.default" : "handler";
+  const exports = withExports ? ", exports: worker" : "";
   return emitRegressionTest(verdict, {
     imports,
     platform: `createCloudflarePlatform({ env, ${handler}, schemas: ${schemas}${retries}${objects}${exports} })`,

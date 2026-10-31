@@ -1,0 +1,5 @@
+CREATE TABLE reservations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  order_id TEXT NOT NULL,
+  qty INTEGER NOT NULL
+);

@@ -14,6 +14,7 @@ import {
   type JsonValue,
   redelivery,
   type ScenarioSpec,
+  toJson,
 } from "@eutaxy/core";
 import {
   CrashSignal,
@@ -32,7 +33,8 @@ import { isD1 } from "./d1.ts";
 import { requestFor } from "./http.ts";
 import { type CloudflarePlatformOptions, createCloudflarePlatform } from "./platform.ts";
 import { isR2 } from "./r2.ts";
-import type { HttpDrive, HttpRequestSpec, QueueDrive } from "./scenario.ts";
+import { callMethod, describeError, entrypointClass } from "./rpc.ts";
+import { type Drive, driveEvents, type HttpRequestSpec, type RpcCallSpec } from "./scenario.ts";
 
 /** A type, not an interface, so it is JSON data the comparison takes as it is. */
 export type AttemptRecord = {
@@ -43,6 +45,8 @@ export type AttemptRecord = {
   readonly decision: "ack" | "retry" | null;
   /** HTTP drive: the response status the caller saw (500 for an uncaught exception). */
   readonly response?: number;
+  /** RPC drive: the answer the caller saw, `{ ok: true, value }` or `{ ok: false, error }`. */
+  readonly result?: JsonValue;
 };
 
 export interface Side {
@@ -199,12 +203,18 @@ async function eutaxySide(
           getPath(e.payload, "result.effective") === true,
       )?.op as "ack" | "retry" | undefined;
       const response = mine.find((e) => e.kind === "result" && e.op === "response");
+      const answer = (): Partial<AttemptRecord> => {
+        if (!response) return {};
+        if (spec.drive.kind === "rpc")
+          return { result: getPath(response.payload, "result") ?? null };
+        return { response: getPath(response.payload, "result.status") as number };
+      };
       return {
         event: event.id,
         attempt: event.attempt,
         status: result.status === "completed" ? "completed" : "errored",
         decision: decision ?? null,
-        ...(response ? { response: getPath(response.payload, "result.status") as number } : {}),
+        ...answer(),
       };
     },
   );
@@ -222,16 +232,13 @@ function flatten(state: Side["state"]): { readonly [name: string]: readonly Json
 /** The raw side: the handler called directly with the real bindings and plain message or Request objects. */
 async function rawSide(spec: ScenarioSpec, options: CloudflarePlatformOptions): Promise<Side> {
   const env = options.env as Record<string, unknown>;
-  const drive = spec.drive as QueueDrive | HttpDrive;
+  const drive = spec.drive as Drive;
   const maxRetries = options.maxRetries ?? 3;
   // The same resets as the proxied side's, which ran first on the same env and so already holds.
   for (const [binding, setup] of ownedSetups(spec.setup, storedBindings(options)))
     await binding.reset(setup, env[setup.binding]);
   const attempts: AttemptRecord[] = [];
-  const pending: EventRef[] =
-    drive.kind === "http"
-      ? drive.requests.map((r) => ({ id: r.id, attempt: 1, data: r as unknown as JsonValue }))
-      : drive.messages.map((m) => ({ id: m.id, attempt: 1, data: m.body }));
+  const pending: EventRef[] = [...driveEvents(drive)];
   // The same virtual globals as the proxied side, from the same seed, so Date.now and randomness agree,
   // and the same scripted externals, without recording.
   const patched = patchGlobals(0);
@@ -268,8 +275,37 @@ async function rawSide(spec: ScenarioSpec, options: CloudflarePlatformOptions): 
       },
     });
   try {
-    if (drive.kind === "http") {
-      const handler = options.handler.fetch;
+    // The queue and http drives need the handler object; an entrypoint class has neither handler.
+    const handlers = typeof options.handler === "function" ? {} : options.handler;
+    if (drive.kind === "rpc") {
+      const cls = entrypointClass(options.handler, options.exports, drive.entrypoint);
+      if (typeof cls !== "function") throw new Error("the Worker has no WorkerEntrypoint class");
+      while (pending.length > 0) {
+        const event = pending.shift() as EventRef;
+        const call = event.data as unknown as RpcCallSpec;
+        const background: Promise<unknown>[] = [];
+        let status: "completed" | "errored";
+        let result: JsonValue;
+        try {
+          const value = await settle(
+            Promise.resolve().then(() =>
+              callMethod(cls, call, executionContext(background), countedEnv),
+            ),
+          );
+          result = { ok: true, value: toJson(value) };
+          status = "completed";
+        } catch (err) {
+          if (err instanceof CrashSignal || err instanceof DifferentialStuck) throw err;
+          result = { ok: false, error: describeError(err) };
+          status = "errored";
+        }
+        await settle(Promise.all(background));
+        attempts.push({ event: event.id, attempt: event.attempt, status, decision: null, result });
+        const next = status === "completed" ? null : redelivery(event, drive.retries, spec.bounds);
+        if (next) pending.push(next);
+      }
+    } else if (drive.kind === "http") {
+      const handler = handlers.fetch;
       if (!handler) throw new Error("the Worker has no fetch() handler");
       while (pending.length > 0) {
         const event = pending.shift() as EventRef;
@@ -280,12 +316,7 @@ async function rawSide(spec: ScenarioSpec, options: CloudflarePlatformOptions): 
         try {
           const r = await settle(
             Promise.resolve().then(() =>
-              handler.call(
-                options.handler,
-                requestFor(req),
-                countedEnv,
-                executionContext(background),
-              ),
+              handler.call(handlers, requestFor(req), countedEnv, executionContext(background)),
             ),
           );
           await settle(r.clone().text());
@@ -309,7 +340,7 @@ async function rawSide(spec: ScenarioSpec, options: CloudflarePlatformOptions): 
         if (next) pending.push(next);
       }
     } else {
-      const handler = options.handler.queue;
+      const handler = handlers.queue;
       if (!handler) throw new Error("the Worker has no queue() handler");
       while (pending.length > 0) {
         const event = pending.shift() as EventRef;
@@ -338,7 +369,7 @@ async function rawSide(spec: ScenarioSpec, options: CloudflarePlatformOptions): 
         let status: "completed" | "errored";
         try {
           await settle(
-            Promise.resolve().then(() => handler.call(options.handler, batch, countedEnv, ctx)),
+            Promise.resolve().then(() => handler.call(handlers, batch, countedEnv, ctx)),
           );
           status = "completed";
         } catch (err) {
@@ -365,7 +396,10 @@ export async function runDifferential(
   spec: ScenarioSpec,
   options: CloudflarePlatformOptions,
 ): Promise<DifferentialResult> {
-  if (spec.drive.kind === "http" && ("delaysMs" in spec.drive || "deadlineMs" in spec.drive)) {
+  if (
+    (spec.drive.kind === "http" || spec.drive.kind === "rpc") &&
+    ("delaysMs" in spec.drive || "deadlineMs" in spec.drive)
+  ) {
     throw new Error("runDifferential does not model the caller's delaysMs or deadlineMs yet");
   }
   const { unsupported, ...eutaxy } = await eutaxySide(spec, options);
