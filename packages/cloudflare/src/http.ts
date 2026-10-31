@@ -1,26 +1,10 @@
 /** Inbound HTTP delivery: one invocation per attempt of a request the drive's caller sends. */
 
-import {
-  type DeliveryResult,
-  type EventRef,
-  type FaultKind,
-  type JsonValue,
-  type RunHooks,
-  redelivery,
-  type ScenarioSpec,
-} from "@eutaxy/core";
+import type { DeliveryResult, EventRef, JsonValue, RunHooks, ScenarioSpec } from "@eutaxy/core";
 import { CrashSignal, InjectedEffectError, runInvocation } from "@eutaxy/engine";
 import { drainBackground, executionContext, type RunningWorker } from "./background.ts";
-import { type HttpDrive, type HttpRequestSpec, retryDelayMs } from "./scenario.ts";
-
-/** The response point: a crash before it is a response the caller never saw. */
-const RESPOND: readonly FaultKind[] = ["crash_before"];
-/**
- * With a caller deadline the answer can also arrive too late: `ambiguous`
- * here means it was sent, the caller counted it as failed, and the handler
- * carried on.
- */
-const RESPOND_WITH_DEADLINE: readonly FaultKind[] = ["crash_before", "ambiguous"];
+import { startCaller } from "./caller.ts";
+import type { HttpDrive, HttpRequestSpec } from "./scenario.ts";
 
 /** The URL inbound requests are addressed to; handlers read only the path. */
 export const requestOrigin = "https://worker.test";
@@ -66,42 +50,14 @@ export async function deliverRequest(
   const req = event.data as unknown as HttpRequestSpec;
   const target = `Http:${req.path}`;
   const inv = hooks.startInvocation(invocation);
-  // Virtual time: when the caller sent this attempt, for its deadline.
-  const started = Date.now();
   const background: Promise<unknown>[] = [];
   const handler = worker.handler.fetch;
   if (!handler) throw new Error("the Worker has no fetch() handler");
   const args: JsonValue = { requestId: event.id, method: req.method, path: req.path };
-  const deadline = drive.deadlineMs;
-  // The caller gives up at its deadline even when the answer comes later still.
-  const lateAt = deadline === undefined ? undefined : started + deadline;
-
-  /** The caller decides once: it accepts the answer, or gives up at `at` and resends or stops. */
-  let decided = false;
-  const giveUp = (at: number): void => {
-    if (decided) return;
-    decided = true;
-    const next = redelivery(event, drive.retries, spec.bounds);
-    if (next) {
-      const resendAt = Math.max(at + retryDelayMs(drive, event.attempt), Date.now());
-      hooks.enqueue({ ...next, ...(resendAt > Date.now() ? { at: resendAt } : {}) });
-    } else {
-      hooks.effectSync(
-        {
-          invocation: hooks.bookkeeping(),
-          target,
-          op: "gave_up",
-          args: { requestId: event.id, attempts: event.attempt },
-          allowed: [],
-        },
-        () => null,
-        () => null,
-      );
-    }
-  };
-  // A virtual timer: at the deadline the caller gives up, whatever the handler is doing.
-  const deadlineTimer =
-    lateAt === undefined ? undefined : setTimeout(() => giveUp(lateAt), deadline);
+  const caller = startCaller(event, hooks, spec, drive, target, {
+    requestId: event.id,
+    attempts: event.attempt,
+  });
 
   const handled = await runInvocation(hooks, inv, () =>
     handler.call(worker.handler, requestFor(req), worker.env, executionContext(background)),
@@ -121,8 +77,8 @@ export async function deliverRequest(
         : body.status;
     if (read === "crashed" || read === "errored") status = read;
   }
-  let late = lateAt !== undefined && Date.now() > lateAt;
-  const allowed = deadline === undefined ? RESPOND : RESPOND_WITH_DEADLINE;
+  let late = caller.isLate();
+  const allowed = caller.responseFaults;
   if (status === "completed" && typeof read === "object") {
     const s = read;
     try {
@@ -151,12 +107,9 @@ export async function deliverRequest(
     summary = s;
   }
 
-  // The caller decides as soon as it has an answer or gives up, before background work ends.
-  if (deadlineTimer !== undefined) clearTimeout(deadlineTimer);
   const accepted =
     summary !== null && !late && (drive.retryOn === "5xx" ? summary.status < 500 : summary.ok);
-  if (accepted) decided = true;
-  else giveUp(late && lateAt !== undefined ? lateAt : Date.now());
+  caller.settle(accepted, late);
 
   if (await drainBackground(hooks, inv, invocation, target, background)) status = "crashed";
   return { status, followUps: [] };

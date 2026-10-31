@@ -1,5 +1,6 @@
 import { atMostOncePerKey } from "@eutaxy/core";
 import { describe, expect, test } from "vitest";
+import { retryDelayMs } from "./caller.ts";
 import {
   atLeastOncePerMessage,
   d1Param,
@@ -10,7 +11,6 @@ import {
   fetchCall,
   http,
   queue,
-  retryDelayMs,
 } from "./scenario.ts";
 
 const payments = queue("payments", [

@@ -108,12 +108,6 @@ export function http(
   };
 }
 
-/** The virtual delay before resend number `resend` (1 for the first), per the drive's caller. */
-export function retryDelayMs(drive: HttpDrive, resend: number): number {
-  const delays = drive.delaysMs ?? [];
-  return delays[Math.min(resend, delays.length) - 1] ?? 0;
-}
-
 /** Apply a SQL file to a D1 binding before each run. */
 export interface D1Setup extends PlatformData {
   readonly kind: "d1";
