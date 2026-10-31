@@ -12,7 +12,11 @@ Object stub proxy with the `durableObjects` test helpers from
 request delivery under the caller's retry policy, Workflows as a model of
 the engine running the scenario's own class (`exports`: the Worker
 module's exports; `workflows.ts`), R2 buckets (`r2.ts`), end-of-run D1,
-Durable Object, R2 and Workflow snapshots), `check`, `expectHolds`, `runDifferential`.
+Durable Object, R2 and Workflow snapshots), `check`, `expectHolds`, `runDifferential`. Each binding kind is one record in
+`bindings.ts` (`d1Binding`, `r2Binding`, `durableObjectBinding`,
+`workflowBinding`: recognise, proxy, clear, reset, snapshot, and for alarms
+and Workflow runs the delivery of the binding's own events); the platform and
+the differential runner iterate the records and know no kind by name.
 State invariants: `d1Rows`, `durableObjectRows`, `r2Rows`, `workflowRows`, `everyRow`, `implies`,
 `unique`, `references`, `queueAck`; `snapshotD1`.
 

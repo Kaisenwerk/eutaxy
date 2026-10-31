@@ -95,7 +95,7 @@ export class WorkflowRegistry {
 }
 
 /** A Workflow binding as the env shows it (Miniflare's `WorkflowImpl`). */
-export function isWorkflowBinding(value: unknown): boolean {
+export function isWorkflowBinding(value: unknown): value is object {
   if (typeof value !== "object" || value === null) return false;
   const v = value as Record<string, unknown>;
   return (

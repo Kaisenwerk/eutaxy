@@ -647,6 +647,13 @@ shares the reading of the limit and none of the proxy code.
   corpus checks the model against the local engine on fault-free runs.
 - An allowlist of proxied bindings; anything else (Cache API, service
   bindings, AI, Hyperdrive, raw sockets) makes the run `UNSUPPORTED`.
+  Each kind on the allowlist is one record in `cloudflare` (`bindings.ts`):
+  how an env value is recognised, the proxy the Worker sees, what is
+  forgotten before a run, the reset its setup step asks for, the snapshot
+  the run ends with and, for Durable Objects and Workflows, the delivery
+  of the binding's own events (alarms, instance runs). The platform and
+  the differential runner iterate the records in setup order and know no
+  kind by name, so a new binding is one record and no change to either.
 - Determinism-breaking APIs that are not virtualised (`WeakRef`,
   `FinalizationRegistry`) also make the run `UNSUPPORTED`; `performance.now`
   is virtualised along with the clock.

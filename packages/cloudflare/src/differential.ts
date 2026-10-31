@@ -27,11 +27,12 @@ import {
   type VirtualClock,
 } from "@eutaxy/engine";
 import { executionContext } from "./background.ts";
-import { isD1, resetD1, snapshotD1 } from "./d1.ts";
+import { type Binding, d1Binding, ownedSetups, r2Binding } from "./bindings.ts";
+import { isD1 } from "./d1.ts";
 import { requestFor } from "./http.ts";
 import { type CloudflarePlatformOptions, createCloudflarePlatform } from "./platform.ts";
-import { isR2, resetR2, snapshotR2 } from "./r2.ts";
-import type { HttpDrive, HttpRequestSpec, QueueDrive, R2Setup } from "./scenario.ts";
+import { isR2 } from "./r2.ts";
+import type { HttpDrive, HttpRequestSpec, QueueDrive } from "./scenario.ts";
 
 /** A type, not an interface, so it is JSON data the comparison takes as it is. */
 export type AttemptRecord = {
@@ -155,23 +156,27 @@ function countingR2(real: R2Bucket, io: { n: number }, clock: VirtualClock): R2B
   });
 }
 
+/**
+ * The bindings whose state the two sides compare: those a store holds and
+ * the real binding resets and reads back (D1, R2). Durable Objects and
+ * Workflows have no raw side.
+ */
+function storedBindings(options: CloudflarePlatformOptions): readonly Binding[] {
+  return [d1Binding(options.schemas), r2Binding()];
+}
+
 async function snapshotAll(
   spec: ScenarioSpec,
   options: CloudflarePlatformOptions,
 ): Promise<Side["state"]> {
   const env = options.env as Record<string, unknown>;
   const out: Record<string, { readonly [table: string]: readonly JsonValue[] }> = {};
-  for (const step of spec.setup) {
-    if (step.kind === "r2") {
-      const binding = (step as R2Setup).binding;
-      const real = env[binding];
-      if (isR2(real)) out[binding] = { objects: await snapshotR2(real) };
-      continue;
-    }
-    if (step.kind !== "d1") continue;
-    const binding = String(step["binding"]);
-    const real = env[binding];
-    if (isD1(real)) out[binding] = await snapshotD1(real);
+  for (const [binding, setup] of ownedSetups(spec.setup, storedBindings(options))) {
+    // A D1 or R2 snapshot reports nothing; if one ever did, the comparison could not stand.
+    const tables = await binding.snapshot(setup, env[setup.binding], (reason) => {
+      throw new Error(`snapshot of ${setup.binding}: ${reason}`);
+    });
+    if (tables) out[setup.binding] = tables;
   }
   return out;
 }
@@ -219,19 +224,9 @@ async function rawSide(spec: ScenarioSpec, options: CloudflarePlatformOptions): 
   const env = options.env as Record<string, unknown>;
   const drive = spec.drive as QueueDrive | HttpDrive;
   const maxRetries = options.maxRetries ?? 3;
-  for (const step of spec.setup) {
-    if (step.kind === "r2") {
-      const setup = step as R2Setup;
-      const real = env[setup.binding];
-      if (isR2(real)) await resetR2(real, setup.objects);
-      continue;
-    }
-    if (step.kind !== "d1") continue;
-    const binding = String(step["binding"]);
-    const schema = options.schemas[binding];
-    const real = env[binding];
-    if (schema !== undefined && isD1(real)) await resetD1(real, schema);
-  }
+  // The same resets as the proxied side's, which ran first on the same env and so already holds.
+  for (const [binding, setup] of ownedSetups(spec.setup, storedBindings(options)))
+    await binding.reset(setup, env[setup.binding]);
   const attempts: AttemptRecord[] = [];
   const pending: EventRef[] =
     drive.kind === "http"

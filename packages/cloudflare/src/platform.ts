@@ -16,37 +16,20 @@ import {
   type RunHooks,
   type ScenarioSpec,
 } from "@eutaxy/core";
-import { alarmSource, deliverAlarm } from "./alarms.ts";
 import type { RunningWorker } from "./background.ts";
-import { isD1, type ProxyContext, proxyD1, resetD1, snapshotD1 } from "./d1.ts";
 import {
-  alarmRunner,
-  BindingState,
-  type DurableObjectTestHelpers,
-  evictObject,
-  isDurableObjectNamespace,
-  proxyNamespace,
-  resetNamespace,
-  snapshotNamespace,
-} from "./durable-objects.ts";
+  type Binding,
+  d1Binding,
+  durableObjectBinding,
+  ownedSetups,
+  r2Binding,
+  workflowBinding,
+} from "./bindings.ts";
+import type { ProxyContext } from "./d1.ts";
+import type { DurableObjectTestHelpers } from "./durable-objects.ts";
 import { deliverRequest } from "./http.ts";
 import { deliverMessage } from "./queues.ts";
-import { isR2, proxyR2, resetR2, snapshotR2, VersionBook } from "./r2.ts";
-import {
-  type DurableObjectSetup,
-  defaultAlarmsPerObject,
-  type HttpDrive,
-  type QueueDrive,
-  type R2Setup,
-  type WorkflowSetup,
-} from "./scenario.ts";
-import {
-  deliverWorkflow,
-  isWorkflowBinding,
-  proxyWorkflow,
-  WorkflowRegistry,
-  workflowSource,
-} from "./workflows.ts";
+import type { HttpDrive, QueueDrive } from "./scenario.ts";
 
 /** The Worker's default export, as far as the platform drives it. */
 export interface WorkerHandler {
@@ -115,100 +98,18 @@ export function createCloudflarePlatform(options: CloudflarePlatformOptions): Pl
     currentInvocation: () => ctx.hooks.running(),
   };
 
-  const d1Proxies = new Map<string, D1Database>();
-  const doProxies = new Map<string, DurableObjectNamespace>();
-  /** The Durable Object bindings the current scenario's setup resets before each run. */
-  let resetBindings = new Set<string>();
-  /** Per binding, what the current run knows about its objects. */
-  const bindingStates = new Map<string, BindingState>();
-  const stateFor = (binding: string): BindingState => {
-    let state = bindingStates.get(binding);
-    if (!state) {
-      state = new BindingState();
-      bindingStates.set(binding, state);
-    }
-    return state;
-  };
-  /** Per binding, alarm firings allowed per object in the current run. */
-  let alarmLimits = new Map<string, number>();
-  /** The Workflow bindings the current scenario sets up, with the class each runs. */
-  let workflowClasses = new Map<string, WorkflowSetup>();
-  const registries = new Map<string, WorkflowRegistry>();
-  const registryFor = (binding: string): WorkflowRegistry => {
-    let r = registries.get(binding);
-    if (!r) {
-      r = new WorkflowRegistry();
-      registries.set(binding, r);
-    }
-    return r;
-  };
-  const workflowProxies = new Map<string, object>();
-  /** The R2 buckets the current scenario sets up, and their proxies' version stand-ins. */
-  let r2Bindings = new Set<string>();
-  const r2Proxies = new Map<string, R2Bucket>();
-  const versions = new VersionBook();
-  const namespace = (binding: string): DurableObjectNamespace => {
-    const real = env[binding];
-    if (!isDurableObjectNamespace(real))
-      throw new Error(`env.${binding} is not a Durable Object namespace`);
-    return real;
-  };
-  const helpers = (): DurableObjectTestHelpers => {
-    if (!options.durableObjects)
-      throw new Error(
-        'Durable Object setup needs the Cloudflare test helpers: createCloudflarePlatform({ ..., durableObjects: await import("cloudflare:test") })',
-      );
-    return options.durableObjects;
-  };
+  /** The kinds of binding modelled, in the order an env value is tried against them. */
+  const bindings: readonly Binding[] = [
+    d1Binding(options.schemas),
+    durableObjectBinding({ ctx, helpers: options.durableObjects, real: (name) => env[name] }),
+    r2Binding(),
+    workflowBinding({ exports: options.exports, env: () => proxiedEnv }),
+  ];
   const proxiedEnv = new Proxy(env, {
     get(target, prop, receiver) {
       const value = Reflect.get(target, prop, receiver) as unknown;
       if (typeof prop !== "string") return value;
-      if (isD1(value)) {
-        let p = d1Proxies.get(prop);
-        if (!p) {
-          p = proxyD1(value, prop, ctx);
-          d1Proxies.set(prop, p);
-        }
-        return p;
-      }
-      if (isDurableObjectNamespace(value)) {
-        let p = doProxies.get(prop);
-        if (!p) {
-          p = proxyNamespace(value, prop, ctx, stateFor(prop), options.durableObjects, () =>
-            resetBindings.has(prop),
-          );
-          doProxies.set(prop, p);
-        }
-        return p;
-      }
-      if (isR2(value)) {
-        if (!r2Bindings.has(prop))
-          ctx.hooks.unsupported(
-            `R2 binding ${prop} needs an r2Bucket() setup step, which empties it before each run`,
-          );
-        let p = r2Proxies.get(prop);
-        if (!p) {
-          p = proxyR2(value, prop, ctx, versions);
-          r2Proxies.set(prop, p);
-        }
-        return p;
-      }
-      if (isWorkflowBinding(value)) {
-        if (!workflowClasses.has(prop)) {
-          ctx.hooks.unsupported(
-            `Workflow binding ${prop} needs a workflow() setup step naming its class`,
-          );
-          // Never the real binding: its engine would run the class on the real clock.
-          return proxyWorkflow(prop, ctx, new WorkflowRegistry());
-        }
-        let p = workflowProxies.get(prop);
-        if (!p) {
-          p = proxyWorkflow(prop, ctx, registryFor(prop));
-          workflowProxies.set(prop, p);
-        }
-        return p;
-      }
+      for (const binding of bindings) if (binding.is(value)) return binding.proxy(prop, value, ctx);
       if (isBindingLike(value)) ctx.hooks.unsupported(`binding ${prop} is not proxied`);
       return value;
     },
@@ -221,47 +122,9 @@ export function createCloudflarePlatform(options: CloudflarePlatformOptions): Pl
     concurrent: true,
 
     async reset(spec: ScenarioSpec): Promise<void> {
-      resetBindings = new Set();
-      alarmLimits = new Map();
-      workflowClasses = new Map();
-      r2Bindings = new Set();
-      versions.clear();
-      for (const state of bindingStates.values()) state.clear();
-      for (const registry of registries.values()) registry.clear();
-      for (const step of spec.setup) {
-        if (step.kind === "workflow") {
-          const setup = step as WorkflowSetup;
-          workflowClasses.set(setup.binding, setup);
-          continue;
-        }
-        if (step.kind === "r2") {
-          const setup = step as R2Setup;
-          const real = env[setup.binding];
-          if (!isR2(real)) throw new Error(`env.${setup.binding} is not an R2 bucket`);
-          r2Bindings.add(setup.binding);
-          await resetR2(real, setup.objects);
-          continue;
-        }
-        if (step.kind === "durable_object") {
-          const setup = step as DurableObjectSetup;
-          resetBindings.add(setup.binding);
-          alarmLimits.set(setup.binding, setup.alarmsPerObject ?? defaultAlarmsPerObject);
-          await resetNamespace(
-            namespace(setup.binding),
-            helpers(),
-            stateFor(setup.binding).names,
-            setup.objects,
-          );
-          continue;
-        }
-        if (step.kind !== "d1") continue;
-        const binding = String(step["binding"]);
-        const schema = options.schemas[binding];
-        if (schema === undefined) throw new Error(`no schema provided for D1 binding ${binding}`);
-        const real = env[binding];
-        if (!isD1(real)) throw new Error(`env.${binding} is not a D1 binding`);
-        await resetD1(real, schema);
-      }
+      for (const binding of bindings) binding.clear();
+      for (const [binding, setup] of ownedSetups(spec.setup, bindings))
+        await binding.reset(setup, env[setup.binding]);
     },
 
     restrictEvents(spec: ScenarioSpec, keepIds: readonly string[]): ScenarioSpec {
@@ -279,47 +142,12 @@ export function createCloudflarePlatform(options: CloudflarePlatformOptions): Pl
     },
 
     async finish(spec: ScenarioSpec, hooks: RunHooks): Promise<void> {
-      for (const step of spec.setup) {
-        if (step.kind === "r2") {
-          const binding = (step as R2Setup).binding;
-          const real = env[binding];
-          if (isR2(real))
-            hooks.snapshot(hooks.bookkeeping(), `R2:${binding}`, {
-              tables: { objects: await snapshotR2(real) },
-            });
-          continue;
-        }
-        if (step.kind === "workflow") {
-          const binding = (step as WorkflowSetup).binding;
-          hooks.snapshot(hooks.bookkeeping(), `Workflow:${binding}`, {
-            tables: { instances: registryFor(binding).rows() },
-          });
-          continue;
-        }
-        if (step.kind === "durable_object") {
-          const setup = step as DurableObjectSetup;
-          const binding = setup.binding;
-          const tables = await snapshotNamespace(
-            namespace(binding),
-            helpers(),
-            stateFor(binding).names,
-            stateFor(binding).touched,
-            setup.objects,
-            (object) =>
-              hooks.unsupported(
-                `Durable Object ${binding} ${object} was reached without a call Eutaxy saw (through another object's binding); calls between objects are not proxied yet`,
-              ),
-            (reason) => hooks.unsupported(reason),
-          );
-          hooks.snapshot(hooks.bookkeeping(), `DO:${binding}`, { tables });
-          continue;
-        }
-        if (step.kind !== "d1") continue;
-        const binding = String(step["binding"]);
-        const real = env[binding];
-        if (!isD1(real)) continue;
-        const tables = await snapshotD1(real);
-        hooks.snapshot(hooks.bookkeeping(), `D1:${binding}`, { tables });
+      for (const [binding, setup] of ownedSetups(spec.setup, bindings)) {
+        const tables = await binding.snapshot(setup, env[setup.binding], (reason) =>
+          hooks.unsupported(reason),
+        );
+        if (tables)
+          hooks.snapshot(hooks.bookkeeping(), `${binding.target}:${setup.binding}`, { tables });
       }
     },
 
@@ -339,60 +167,10 @@ export function createCloudflarePlatform(options: CloudflarePlatformOptions): Pl
       const drive = spec.drive as QueueDrive | HttpDrive;
       const invocation = invocationOf(event);
       hooksRef = hooks;
-      if (event.source === workflowSource) {
-        const { binding, id } = event.data as { binding: string; id: string };
-        const setup = workflowClasses.get(binding);
-        // A binding with no setup step was already reported when the Worker touched it.
-        if (!setup) return { status: "errored", followUps: [] };
-        const className = setup.className;
-        const cls = options.exports?.[className];
-        const instance = registryFor(binding).instances.get(id);
-        if (typeof cls !== "function" || !instance) {
-          hooks.unsupported(
-            `Workflow ${binding}: class ${className} is not among the Worker module's exports; pass them as createCloudflarePlatform({ ..., exports })`,
-          );
-          return { status: "errored", followUps: [] };
-        }
-        return deliverWorkflow(event, hooks, {
-          binding,
-          ...(setup.name === undefined ? {} : { name: setup.name }),
-          instance,
-          cls,
-          env: proxiedEnv,
-          maxFaultsPerRun: spec.bounds.maxFaultsPerRun,
-          maxRedeliveries: spec.bounds.maxRedeliveries,
-        });
-      }
-      if (event.source === alarmSource) {
-        const binding = String((event.data as { binding?: unknown }).binding ?? "");
-        return deliverAlarm(event, hooks, spec.bounds.maxRedeliveries, {
-          binding,
-          book: stateFor(binding).alarms,
-          limit: alarmLimits.get(binding) ?? defaultAlarmsPerObject,
-          runAlarm: alarmRunner(
-            namespace(binding),
-            binding,
-            ctx,
-            options.durableObjects,
-            stateFor(binding),
-          ),
-          abort: (id) => stateFor(binding).abort(id),
-          mayPark: (id) => stateFor(binding).mayPark(id),
-          evict: (id) => evictObject(namespace(binding), options.durableObjects, id),
-          bookkeep: (op, args) =>
-            hooks.effectSync(
-              {
-                invocation: hooks.bookkeeping(),
-                target: `DO:${binding}`,
-                op,
-                args,
-                allowed: [],
-              },
-              () => null,
-              () => null,
-            ),
-        });
-      }
+      // An event of a binding's own (an alarm, a Workflow run) is the binding's to deliver.
+      const owner =
+        event.source === undefined ? undefined : bindings.find((b) => b.source === event.source);
+      if (owner?.deliver) return owner.deliver(event, hooks, spec);
       return drive.kind === "http"
         ? await deliverRequest(event, hooks, spec, drive, invocation, worker)
         : await deliverMessage(event, hooks, spec, drive, invocation, worker, maxRetries);
