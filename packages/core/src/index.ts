@@ -1,5 +1,6 @@
 // @eutaxy/core: the pure simulation kernel. See README.md.
 export { canonicalJson, type JsonValue } from "./canonical-json.ts";
+export { invocationOf, redelivery } from "./delivery.ts";
 export { atLeastOnce, atLeastOncePerMessage, atMostOncePerKey } from "./delivery-invariants.ts";
 export {
   appendEffect,
@@ -41,7 +42,6 @@ export type {
   RunHooks,
 } from "./platform.ts";
 export { nextFloat, nextInt, nextU32, type PrngState, seedPrng } from "./prng.ts";
-export { redelivery } from "./redelivery.ts";
 export { decisionTarget, type Refines } from "./refines.ts";
 export {
   type Bounds,

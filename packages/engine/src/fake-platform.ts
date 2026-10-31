@@ -5,13 +5,14 @@
  * crashes, redelivery, replay) can be tested as pure logic.
  */
 
-import type {
-  DeliveryResult,
-  EventRef,
-  JsonValue,
-  Platform,
-  RunHooks,
-  ScenarioSpec,
+import {
+  type DeliveryResult,
+  type EventRef,
+  invocationOf,
+  type JsonValue,
+  type Platform,
+  type RunHooks,
+  type ScenarioSpec,
 } from "@eutaxy/core";
 import { CrashSignal } from "./run.ts";
 
@@ -91,7 +92,7 @@ export function createFakePlatform(
       return messages.map((m) => ({ id: m.id, attempt: 1, data: m.body }));
     },
     async deliver(event: EventRef, hooks: RunHooks, spec: ScenarioSpec): Promise<DeliveryResult> {
-      const invocation = `${event.id}#${event.attempt}`;
+      const invocation = invocationOf(event);
       const inv = hooks.startInvocation(invocation);
       let acked = false;
       const env: FakeEnv = {

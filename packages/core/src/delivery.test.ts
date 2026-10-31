@@ -1,10 +1,10 @@
 /**
- * The one redelivery rule, held to the four forms the platforms wrote
+ * The delivery conventions: the invocation name, and the one redelivery rule held to the four forms the platforms wrote
  * before it existed, over every small combination of attempt and limits.
  */
 import { describe, expect, test } from "vitest";
+import { invocationOf, redelivery } from "./delivery.ts";
 import type { EventRef } from "./platform.ts";
-import { redelivery } from "./redelivery.ts";
 
 const event = (attempt: number): EventRef => ({
   id: "m1",
@@ -12,6 +12,13 @@ const event = (attempt: number): EventRef => ({
   data: { orderId: "o-1" },
   at: 5_000,
   source: "test",
+});
+
+describe("invocationOf", () => {
+  test("names the attempt by its event and attempt number", () => {
+    expect(invocationOf(event(1))).toBe("m1#1");
+    expect(invocationOf(event(3))).toBe("m1#3");
+  });
 });
 
 describe("redelivery", () => {

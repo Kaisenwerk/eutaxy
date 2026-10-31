@@ -11,12 +11,18 @@ import {
   type DeliveryResult,
   type EventRef,
   type FaultKind,
+  invocationOf,
   type JsonValue,
   type RunHooks,
   toJson,
   writeFaults,
 } from "@eutaxy/core";
-import { CrashSignal, InjectedEffectError } from "@eutaxy/engine";
+import {
+  CrashSignal,
+  InjectedEffectError,
+  type Outcome as RunOutcome,
+  runInvocation,
+} from "@eutaxy/engine";
 import { drainBackground, executionContext } from "./background.ts";
 import type { ProxyContext } from "./d1.ts";
 
@@ -384,7 +390,7 @@ export async function deliverWorkflow(
   hooks: RunHooks,
   d: RunDelivery,
 ): Promise<DeliveryResult> {
-  const invocation = `${event.id}#${event.attempt}`;
+  const invocation = invocationOf(event);
   const inv = hooks.startInvocation(invocation);
   const target = `Workflow:${d.binding}`;
   const instance = d.instance;
@@ -626,53 +632,43 @@ export async function deliverWorkflow(
     instance.persisted.set(k, { ok: true, value: null });
   }
 
-  const outcome = Promise.resolve()
-    .then(() => {
-      const flow = constructWorkflow(d.cls, executionContext(background), d.env) as {
-        run(event: unknown, step: unknown): unknown;
-      };
-      const workflowEvent: Record<string, unknown> = {
-        payload: structuredClone(instance.params),
-        timestamp: new Date(instance.createdAt),
-        instanceId: instance.id,
-      };
-      if (d.name !== undefined) workflowEvent["workflowName"] = d.name;
-      else
-        Object.defineProperty(workflowEvent, "workflowName", {
-          enumerable: true,
-          get: () => {
-            hooks.unsupported(
-              `Workflow ${d.binding}: event.workflowName needs the Workflow's name, workflow(binding, className, { name })`,
-            );
-            return undefined;
-          },
-        });
-      return flow.run(workflowEvent, step);
-    })
-    .then(
-      (value) => {
-        // The engine keeps the result serialised: one it cannot keep fails the instance.
-        try {
-          return { status: "completed" as const, value: structuredClone(value) };
-        } catch {
+  const ran = await runInvocation(hooks, inv, () => {
+    const flow = constructWorkflow(d.cls, executionContext(background), d.env) as {
+      run(event: unknown, step: unknown): unknown;
+    };
+    const workflowEvent: Record<string, unknown> = {
+      payload: structuredClone(instance.params),
+      timestamp: new Date(instance.createdAt),
+      instanceId: instance.id,
+    };
+    if (d.name !== undefined) workflowEvent["workflowName"] = d.name;
+    else
+      Object.defineProperty(workflowEvent, "workflowName", {
+        enumerable: true,
+        get: () => {
           hooks.unsupported(
-            `Workflow ${d.binding}: run() returned a value that is not structured-cloneable`,
+            `Workflow ${d.binding}: event.workflowName needs the Workflow's name, workflow(binding, className, { name })`,
           );
-          return {
-            status: "errored" as const,
-            error: new Error("run() returned a value that is not structured-cloneable"),
-          };
-        }
-      },
-      (error: unknown) =>
-        error instanceof CrashSignal
-          ? { status: "crashed" as const }
-          : { status: "errored" as const, error },
-    );
-  const result = await Promise.race([
-    hooks.settle(outcome, invocation),
-    inv.crashed.then(() => ({ status: "crashed" as const })),
-  ]);
+          return undefined;
+        },
+      });
+    return flow.run(workflowEvent, step);
+  });
+  // The engine keeps the result serialised: one it cannot keep fails the instance.
+  const serialised = (value: unknown): RunOutcome<unknown> => {
+    try {
+      return { status: "completed", value: structuredClone(value) };
+    } catch {
+      hooks.unsupported(
+        `Workflow ${d.binding}: run() returned a value that is not structured-cloneable`,
+      );
+      return {
+        status: "errored",
+        error: new Error("run() returned a value that is not structured-cloneable"),
+      };
+    }
+  };
+  const result = ran.status === "completed" ? serialised(ran.value) : ran;
   let status = result.status;
   if (result.status === "completed") {
     instance.status = "complete";

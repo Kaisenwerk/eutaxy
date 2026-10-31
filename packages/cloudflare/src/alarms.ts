@@ -17,12 +17,13 @@
 import {
   type DeliveryResult,
   type EventRef,
+  invocationOf,
   type JsonValue,
   type RunHooks,
   readFaults,
   redelivery,
 } from "@eutaxy/core";
-import { CrashSignal } from "@eutaxy/engine";
+import { runInvocation } from "@eutaxy/engine";
 
 /** `EventRef.source` of an alarm event. */
 export const alarmSource = "durable_object_alarm";
@@ -292,11 +293,11 @@ export async function deliverAlarm(
     }
     entry.firings++;
   }
-  const invocation = `${event.id}#${event.attempt}`;
+  const invocation = invocationOf(event);
   const inv = hooks.startInvocation(invocation);
   const info = { retryCount: a.retryCount, isRetry: a.retryCount > 0 };
-  const outcome = hooks
-    .effect(
+  const { status } = await runInvocation(hooks, inv, () =>
+    hooks.effect(
       {
         invocation,
         target: `DO:${d.binding}`,
@@ -312,15 +313,8 @@ export async function deliverAlarm(
       },
       () => null,
       { onAbandon: () => d.abort(a.id), mayPark: () => d.mayPark(a.id) },
-    )
-    .then(
-      () => "completed" as const,
-      (err: unknown) => (err instanceof CrashSignal ? ("crashed" as const) : ("errored" as const)),
-    );
-  const status = await Promise.race([
-    hooks.settle(outcome, invocation),
-    inv.crashed.then(() => "crashed" as const),
-  ]);
+    ),
+  );
   // A crash is the object's: its in-memory state goes with the instance, whatever the handler did.
   if (status === "crashed") await d.evict(a.id);
   if (status !== "completed") {

@@ -10,6 +10,7 @@
 import {
   type EventRef,
   getPath,
+  invocationOf,
   type JsonValue,
   redelivery,
   type ScenarioSpec,
@@ -184,7 +185,7 @@ async function eutaxySide(
     spec,
     createCloudflarePlatform(options),
     (event, result, entries): AttemptRecord => {
-      const invocation = `${event.id}#${event.attempt}`;
+      const invocation = invocationOf(event);
       const mine = entries.filter((e) => e.invocation === invocation);
       const decision = mine.find(
         (e) =>

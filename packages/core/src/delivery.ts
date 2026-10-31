@@ -1,11 +1,17 @@
 /**
- * The redelivery rule, written once for every platform and for the
- * differential runner's raw sides, which apply the same reading of a
- * platform's limit without any of its proxy code.
+ * The delivery conventions every platform shares, and the differential
+ * runner's raw sides with them: how an attempt names its invocation, and
+ * the redelivery rule, which applies the same reading of a platform's limit
+ * without any of its proxy code.
  */
 
 import type { EventRef } from "./platform.ts";
 import type { Bounds } from "./scenario.ts";
+
+/** The invocation one attempt of an event runs as: `<event>#<attempt>`, so a schedule's faults stay keyed when other events are removed. */
+export function invocationOf(event: EventRef): string {
+  return `${event.id}#${event.attempt}`;
+}
 
 /**
  * The next attempt of an event that was not handled (a message not

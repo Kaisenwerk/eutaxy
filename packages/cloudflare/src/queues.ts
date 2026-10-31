@@ -9,7 +9,7 @@ import {
   redelivery,
   type ScenarioSpec,
 } from "@eutaxy/core";
-import { CrashSignal } from "@eutaxy/engine";
+import { CrashSignal, runInvocation } from "@eutaxy/engine";
 import { drainBackground, executionContext, type RunningWorker } from "./background.ts";
 import type { QueueDrive } from "./scenario.ts";
 
@@ -65,16 +65,11 @@ export async function deliverMessage(
 
   const handler = worker.handler.queue;
   if (!handler) throw new Error("the Worker has no queue() handler");
-  const outcome = Promise.resolve()
-    .then(() => handler.call(worker.handler, batch, worker.env, execution))
-    .then(
-      () => "completed" as const,
-      (err: unknown) => (err instanceof CrashSignal ? ("crashed" as const) : ("errored" as const)),
-    );
-  let status = await Promise.race([
-    hooks.settle(outcome, invocation),
-    inv.crashed.then(() => "crashed" as const),
-  ]);
+  let status: DeliveryResult["status"] = (
+    await runInvocation(hooks, inv, () =>
+      handler.call(worker.handler, batch, worker.env, execution),
+    )
+  ).status;
 
   if (status === "completed" && state.decision === null) {
     try {

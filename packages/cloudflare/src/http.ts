@@ -9,7 +9,7 @@ import {
   redelivery,
   type ScenarioSpec,
 } from "@eutaxy/core";
-import { CrashSignal, InjectedEffectError } from "@eutaxy/engine";
+import { CrashSignal, InjectedEffectError, runInvocation } from "@eutaxy/engine";
 import { drainBackground, executionContext, type RunningWorker } from "./background.ts";
 import { type HttpDrive, type HttpRequestSpec, retryDelayMs } from "./scenario.ts";
 
@@ -103,36 +103,22 @@ export async function deliverRequest(
   const deadlineTimer =
     lateAt === undefined ? undefined : setTimeout(() => giveUp(lateAt), deadline);
 
-  let response: Response | undefined;
-  const outcome = Promise.resolve()
-    .then(() =>
-      handler.call(worker.handler, requestFor(req), worker.env, executionContext(background)),
-    )
-    .then(
-      (r) => {
-        response = r;
-        return "completed" as const;
-      },
-      (err: unknown) => (err instanceof CrashSignal ? ("crashed" as const) : ("errored" as const)),
-    );
-  let status = await Promise.race([
-    hooks.settle(outcome, invocation),
-    inv.crashed.then(() => "crashed" as const),
-  ]);
+  const handled = await runInvocation(hooks, inv, () =>
+    handler.call(worker.handler, requestFor(req), worker.env, executionContext(background)),
+  );
+  const response = handled.status === "completed" ? handled.value : undefined;
+  let status: DeliveryResult["status"] = handled.status;
 
   let summary: { status: number; ok: boolean } | null = null;
   let read: { status: number; ok: boolean; body: JsonValue } | "crashed" | "errored" = "errored";
   if (status === "completed" && response) {
     // The body is read before the point so the record is complete; the point itself is the send.
     // Streaming bodies run handler code: a crash inside it abandons the read, an error fails the delivery.
-    read = await Promise.race([
-      hooks.settle(summarizeResponse(response), invocation).then(
-        (s) => s as { status: number; ok: boolean; body: JsonValue },
-        (err: unknown) =>
-          err instanceof CrashSignal ? ("crashed" as const) : ("errored" as const),
-      ),
-      inv.crashed.then(() => "crashed" as const),
-    ]);
+    const body = await runInvocation(hooks, inv, () => summarizeResponse(response));
+    read =
+      body.status === "completed"
+        ? (body.value as { status: number; ok: boolean; body: JsonValue })
+        : body.status;
     if (read === "crashed" || read === "errored") status = read;
   }
   let late = lateAt !== undefined && Date.now() > lateAt;

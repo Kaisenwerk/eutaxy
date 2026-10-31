@@ -12,13 +12,14 @@ import {
   type DeliveryResult,
   decisionFaults,
   type EventRef,
+  invocationOf,
   type JsonValue,
   type Platform,
   type RunHooks,
   redelivery,
   type ScenarioSpec,
 } from "@eutaxy/core";
-import { CrashSignal } from "@eutaxy/engine";
+import { CrashSignal, runInvocation } from "@eutaxy/engine";
 import { resetTables, scenarioTables, snapshotTables } from "./dynamodb.ts";
 import {
   batchFailed,
@@ -115,7 +116,7 @@ export function createAwsPlatform(options: AwsPlatformOptions): Platform {
       ensureProxy(hooks);
       const drive = spec.drive as SqsDrive;
       const queueTarget = `SQS:${drive.queue}`;
-      const invocation = `${event.id}#${event.attempt}`;
+      const invocation = invocationOf(event);
       currentInvocation = invocation;
       const inv = hooks.startInvocation(invocation);
       const now = Date.now();
@@ -125,22 +126,14 @@ export function createAwsPlatform(options: AwsPlatformOptions): Platform {
         now,
       );
 
-      const outcome = Promise.resolve()
-        .then(() => options.handler({ Records: [record] }, context))
-        .then(
-          (response) => ({
-            status: "completed" as const,
-            response: (response ?? undefined) as SqsBatchResponse | undefined,
-          }),
-          (err: unknown) => ({
-            status: err instanceof CrashSignal ? ("crashed" as const) : ("errored" as const),
-            response: undefined,
-          }),
-        );
-      let { status, response } = await Promise.race([
-        hooks.settle(outcome, invocation),
-        inv.crashed.then(() => ({ status: "crashed" as const, response: undefined })),
-      ]);
+      const handled = await runInvocation(hooks, inv, () =>
+        options.handler({ Records: [record] }, context),
+      );
+      let status: DeliveryResult["status"] = handled.status;
+      const response =
+        handled.status === "completed"
+          ? ((handled.value ?? undefined) as SqsBatchResponse | undefined)
+          : undefined;
 
       let deleted = false;
       const failed = batchFailed(response, event.id, [event.id]);

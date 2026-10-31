@@ -7,13 +7,14 @@
  * declared in the drive.
  */
 
-import type {
-  DeliveryResult,
-  EventRef,
-  JsonValue,
-  Platform,
-  RunHooks,
-  ScenarioSpec,
+import {
+  type DeliveryResult,
+  type EventRef,
+  invocationOf,
+  type JsonValue,
+  type Platform,
+  type RunHooks,
+  type ScenarioSpec,
 } from "@eutaxy/core";
 import { alarmSource, deliverAlarm } from "./alarms.ts";
 import type { RunningWorker } from "./background.ts";
@@ -336,7 +337,7 @@ export function createCloudflarePlatform(options: CloudflarePlatformOptions): Pl
 
     async deliver(event: EventRef, hooks: RunHooks, spec: ScenarioSpec): Promise<DeliveryResult> {
       const drive = spec.drive as QueueDrive | HttpDrive;
-      const invocation = `${event.id}#${event.attempt}`;
+      const invocation = invocationOf(event);
       hooksRef = hooks;
       if (event.source === workflowSource) {
         const { binding, id } = event.data as { binding: string; id: string };
