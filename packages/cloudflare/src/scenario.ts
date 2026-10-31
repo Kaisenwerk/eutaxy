@@ -28,6 +28,8 @@ import {
   validateScenario,
   type WorkerRef,
 } from "@eutaxy/core";
+import { virtualEpoch } from "@eutaxy/engine";
+import { cronTicks, parseCron } from "./cron.ts";
 import type { R2Seed } from "./r2.ts";
 
 /** One queue message to deliver; `id` defaults to its position. */
@@ -169,8 +171,44 @@ export function rpcTarget(drive: Pick<RpcDrive, "entrypoint">, method: string): 
   return `Rpc:${drive.entrypoint === undefined ? method : `${drive.entrypoint}.${method}`}`;
 }
 
+/** One tick of a Cron Trigger: its id and the virtual time it fires, which the handler sees as `scheduledTime`. */
+export type CronTickSpec = { readonly id: string; readonly at: number };
+
+/**
+ * Drive the Worker's `scheduled()` handler with the ticks of a Cron Trigger:
+ * the expression's first `ticks` matches from the virtual epoch on, in UTC,
+ * each an event delivered at its virtual time. Cloudflare documents
+ * `noRetry()` but no retry count, so the drive declares how many times a
+ * tick whose handler failed is re-run (`retries`, default 0); a handler that
+ * called `noRetry()` is not re-run.
+ */
+export interface CronDrive extends PlatformData {
+  readonly kind: "cron";
+  readonly cron: string;
+  readonly ticks: readonly CronTickSpec[];
+  readonly retries: number;
+}
+
+export interface CronOptions {
+  /** How many ticks to drive, from the first match on (default 1). */
+  readonly ticks?: number;
+  readonly retries?: number;
+}
+
+export function cron(expression: string, options: CronOptions = {}): CronDrive {
+  const count = options.ticks ?? 1;
+  const times =
+    Number.isInteger(count) && count >= 1 ? cronTicks(expression, virtualEpoch, count) : [];
+  return {
+    kind: "cron",
+    cron: expression,
+    ticks: times.map((at, i) => ({ id: `tick-${i + 1}`, at })),
+    retries: options.retries ?? 0,
+  };
+}
+
 /** The drives a Cloudflare scenario can have. */
-export type Drive = QueueDrive | HttpDrive | RpcDrive;
+export type Drive = QueueDrive | HttpDrive | RpcDrive | CronDrive;
 
 /** The drive's events as they are first delivered: one per message, request or call, attempt 1. */
 export function driveEvents(drive: Drive): readonly EventRef[] {
@@ -181,6 +219,14 @@ export function driveEvents(drive: Drive): readonly EventRef[] {
       return drive.requests.map((r) => ({ id: r.id, attempt: 1, data: r as unknown as JsonValue }));
     case "rpc":
       return drive.calls.map((c) => ({ id: c.id, attempt: 1, data: c as unknown as JsonValue }));
+    case "cron":
+      // Delivered at its virtual time: the clock moves there once nothing else can.
+      return drive.ticks.map((t) => ({
+        id: t.id,
+        attempt: 1,
+        data: { cron: drive.cron, scheduledTime: t.at },
+        at: t.at,
+      }));
   }
 }
 
@@ -194,6 +240,8 @@ export function restrictDrive(drive: Drive, keepIds: readonly string[]): Drive {
       return { ...drive, requests: drive.requests.filter((r) => keep(r.id)) };
     case "rpc":
       return { ...drive, calls: drive.calls.filter((c) => keep(c.id)) };
+    case "cron":
+      return { ...drive, ticks: drive.ticks.filter((t) => keep(t.id)) };
   }
 }
 
@@ -392,6 +440,7 @@ export interface CloudflareScenarioInput {
     | QueueDrive
     | HttpDrive
     | RpcDrive
+    | CronDrive
     | {
         readonly kind: "queue";
         readonly queue: string;
@@ -475,6 +524,13 @@ export function atLeastOncePerMessage(
 ): AtLeastOnce {
   if (drive.kind === "queue")
     return coreAtLeastOncePerMessage(name, drive.messages, effect, key, bodyKey);
+  if (drive.kind === "cron") {
+    const ticks = drive.ticks.map((t) => ({
+      id: t.id,
+      body: { cron: drive.cron, scheduledTime: t.at },
+    }));
+    return coreAtLeastOncePerMessage(name, ticks, effect, key, bodyKey);
+  }
   if (drive.kind === "rpc") {
     const calls = drive.calls.map((c) => ({ id: c.id, body: c.args }));
     const inv = coreAtLeastOncePerMessage(name, calls, effect, key, bodyKey);
@@ -637,6 +693,27 @@ function validateCaller(
   return errors;
 }
 
+function validateCronDrive(drive: CronDrive): readonly string[] {
+  const errors: string[] = [];
+  try {
+    parseCron(drive.cron);
+  } catch (err) {
+    errors.push(`cron drive: ${(err as Error).message}`);
+  }
+  if (drive.ticks.length === 0) errors.push("cron drive ticks must be a positive integer");
+  const ids = new Set<string>();
+  drive.ticks.forEach((t, i) => {
+    if (ids.has(t.id)) errors.push(`duplicate tick id ${JSON.stringify(t.id)}`);
+    ids.add(t.id);
+    const previous = drive.ticks[i - 1];
+    if (previous && !(t.at > previous.at))
+      errors.push(`ticks[${i}] does not come after ticks[${i - 1}]`);
+  });
+  if (!(Number.isInteger(drive.retries) && drive.retries >= 0))
+    errors.push("cron drive retries must be a non-negative integer");
+  return errors;
+}
+
 /** A method name the entrypoint can have: an identifier that is not the constructor. */
 const methodName = /^[A-Za-z_$][\w$]*$/;
 
@@ -677,6 +754,7 @@ export function defineScenario(input: CloudflareScenarioInput): ScenarioSpec {
     ...validateScenario(spec),
     ...(drive.kind === "http" ? validateHttpDrive(drive) : []),
     ...(drive.kind === "rpc" ? validateRpcDrive(drive) : []),
+    ...(drive.kind === "cron" ? validateCronDrive(drive) : []),
   ];
   if (errors.length > 0) {
     throw new Error(`invalid scenario ${JSON.stringify(input.name)}:\n- ${errors.join("\n- ")}`);

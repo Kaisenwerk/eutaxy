@@ -31,11 +31,17 @@ import { deliverRequest } from "./http.ts";
 import { deliverMessage } from "./queues.ts";
 import { deliverCall, entrypointClass } from "./rpc.ts";
 import { type Drive, driveEvents, restrictDrive } from "./scenario.ts";
+import { deliverTick } from "./scheduled.ts";
 
 /** The Worker's default export, as far as the platform drives it. */
 export interface WorkerHandler {
   queue?(batch: MessageBatch<unknown>, env: unknown, ctx: ExecutionContext): void | Promise<void>;
   fetch?(request: Request, env: unknown, ctx: ExecutionContext): Response | Promise<Response>;
+  scheduled?(
+    controller: ScheduledController,
+    env: unknown,
+    ctx: ExecutionContext,
+  ): void | Promise<void>;
 }
 
 /** A `WorkerEntrypoint` subclass: the Worker's default export when it exposes RPC methods. Its env is its own. */
@@ -91,6 +97,7 @@ const assumptions: readonly string[] = [
   "work passed to ctx.waitUntil runs after the handler returns and never affects acknowledgement or the response; a cut_off fault at that point loses work not yet started, and an effect in flight commits without its continuation",
   "concurrent invocations (maxConcurrentInvocations above 1) share one isolate's module state and bindings, and another may run while one awaits I/O (developers.cloudflare.com/workers/reference/how-workers-works/); queue consumers run concurrently up to max_concurrency (developers.cloudflare.com/queues/configuration/consumer-concurrency/)",
   "inbound requests: one invocation per attempt; an uncaught exception is a 500 response; the drive's caller resends a request it got no acceptable response for (crash before the response, an answer after its deadlineMs, or a status its retryOn policy rejects) up to its retries, each resend after its delaysMs entry of virtual time; the handler's own time is virtual, so a late answer is the ambiguous fault at the response point or an answer later than deadlineMs in virtual time",
+  "cron triggers: each tick of the drive's expression is one invocation of scheduled(), with scheduledTime the tick's virtual time (UTC, the expression's matches from the virtual epoch on, in Cloudflare's dialect where weekdays run 1 = Sunday to 7 = Saturday; L, W and # are not modelled) and cron the expression (developers.cloudflare.com/workers/runtime-apis/handlers/scheduled/, /workers/configuration/cron-triggers/); Cloudflare documents noRetry() but no retry count, so the drive declares how many times a tick whose handler failed is re-run, and none after noRetry()",
   "inbound RPC: one invocation per call attempt, the entrypoint constructed anew for each with a fresh ExecutionContext (developers.cloudflare.com/workers/runtime-apis/bindings/service-bindings/rpc/); the return value is the response effect, and an exception reaches the caller as a new error with its name and message (developers.cloudflare.com/workers/runtime-apis/rpc/error-handling/); Cloudflare does not retry a call, so the drive's caller resends a call that threw or got no answer as the http drive's caller does; a result that is not plain data (a stub, a function, a stream) makes the run UNSUPPORTED",
 ];
 
@@ -173,6 +180,8 @@ export function createCloudflarePlatform(options: CloudflarePlatformOptions): Pl
       switch (drive.kind) {
         case "http":
           return deliverRequest(event, hooks, spec, drive, invocation, worker);
+        case "cron":
+          return deliverTick(event, hooks, spec, drive, invocation, worker);
         case "rpc": {
           const cls = entrypointClass(options.handler, options.exports, drive.entrypoint);
           if (typeof cls !== "function") {

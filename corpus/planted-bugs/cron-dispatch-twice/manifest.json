@@ -1,0 +1,8 @@
+{
+  "expect": {
+    "verdict": "VIOLATED",
+    "invariant": "dispatched-once"
+  },
+  "fault": "the invocation dying after a dispatch left and before its row is marked sent: crash_after on the dispatcher fetch, ambiguous on it, or the UPDATE that follows failing (crash_before or error on the D1 run; the seed decides which is found first); the re-run dispatches the row again",
+  "description": "A reconciliation job on a Cron Trigger dispatches each pending row to an external service and marks it sent. A crash between the dispatch and the mark leaves the row pending, so the re-run the operator declared for failed ticks dispatches it a second time."
+}

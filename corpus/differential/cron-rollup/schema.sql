@@ -1,0 +1,10 @@
+CREATE TABLE events (
+  at INTEGER NOT NULL
+);
+CREATE TABLE rollups (
+  tick INTEGER PRIMARY KEY,
+  cron TEXT NOT NULL,
+  n INTEGER NOT NULL
+);
+INSERT INTO events (at) VALUES (1);
+INSERT INTO events (at) VALUES (2);

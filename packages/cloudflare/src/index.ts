@@ -19,6 +19,10 @@ export {
 export {
   atLeastOncePerMessage,
   type CloudflareScenarioInput,
+  type CronDrive,
+  type CronOptions,
+  type CronTickSpec,
+  cron,
   type D1Setup,
   type DurableObjectSetup,
   d1Param,

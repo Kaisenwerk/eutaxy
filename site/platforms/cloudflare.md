@@ -1,5 +1,5 @@
 ---
-description: How Eutaxy simulates Cloudflare Workers - D1, Queues, inbound HTTP and RPC, outbound fetch, Durable Objects with alarms, R2 and Workflows, the documented semantics each follows, the effects each records, and what makes a run UNSUPPORTED.
+description: How Eutaxy simulates Cloudflare Workers - D1, Queues, inbound HTTP and RPC, Cron Triggers, outbound fetch, Durable Objects with alarms, R2 and Workflows, the documented semantics each follows, the effects each records, and what makes a run UNSUPPORTED.
 ---
 
 # Cloudflare Workers
@@ -19,6 +19,7 @@ the verdict's assumptions cite.
 | Queues (consumer) | the `queue` drive | `ack`, `retry`, background work               | At-least-once delivery; first ack or retry per message wins; redelivered up to `max_retries`, then dead-lettered |
 | Inbound HTTP      | the `http` drive  | the response                                  | One invocation per attempt; an uncaught exception is a 500; the declared caller decides resends                  |
 | Inbound RPC       | the `rpc` drive   | the response                                  | One invocation per call attempt, the entrypoint constructed per call; an exception is the error the caller sees  |
+| Cron Triggers     | the `cron` drive  | `no_retry`, background work                   | One invocation per tick attempt at the tick's virtual time; the declared re-runs of a failed tick, none after `noRetry()` |
 | Outbound `fetch`  | `external`        | each request                                  | Answered from the declared externals; never reaches the network                                                  |
 | Durable Objects   | `durableObject`   | each stub call, each alarm                    | The real objects: storage, transactions, input and output gates are the runtime's own                            |
 | R2                | `r2Bucket`        | `put`, `delete`, `get`, `head`, `list`        | Miniflare's buckets; strongly consistent, last writer wins, conditional operations as documented                 |
@@ -60,6 +61,14 @@ never retries an RPC call, so the caller policy you declare (`retries`,
 `delaysMs`, `deadlineMs`) decides resends. A result that is not plain data
 (a stub, a function, a stream) makes the run `UNSUPPORTED`; an entrypoint's
 own `fetch()` method is not driven by `http()` yet.
+
+### Cron Triggers
+
+The `cron` drive fires the expression's ticks from the virtual epoch on,
+each at its virtual time, so `scheduledTime` and the clock agree. Cloudflare
+documents `noRetry()` but not how a failed invocation is retried, so the
+drive declares the re-runs; `noRetry()` is recorded as a decision and ends
+them. `L`, `W` and `#` in an expression are not modelled.
 
 ### Service bindings
 

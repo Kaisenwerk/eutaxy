@@ -381,6 +381,17 @@ without `retryOn`: a call that threw or got no answer is resent up to
 A result that is not plain data (a stub, a function, a stream) makes the run
 `UNSUPPORTED`. `rpcResponse(method, { ok })` selects the answers.
 
+`cron(expression, { ticks, retries })` drives the `scheduled()` handler: the
+expression's first `ticks` matches from the virtual epoch on (Cloudflare's
+dialect, in UTC, weekdays 1 = Sunday to 7 = Saturday; `L`, `W` and `#` are
+refused) are events delivered at their virtual time, so the handler sees
+`scheduledTime` as the tick's time, `cron` as the expression, and the clock
+at that minute. Cloudflare documents `noRetry()` but no retry count, so the
+drive declares how many times a tick whose handler failed is re-run (as the
+same tick, default 0); `noRetry()` is a decision effect (`Cron:<expression>`,
+op `no_retry`) after which no re-run follows, and spent re-runs record
+`gave_up`.
+
 Invariants are plain data over the effect log, checked by pure functions.
 An _effect selector_ picks records by target, op, kind and payload fields;
 a _key_ is a dot path into the payload. The library starts with
@@ -521,6 +532,10 @@ shares the reading of the limit and none of the proxy code.
   effect answered from the scenario's script, with a Durable Object stub
   call's fault meanings; the call runs on the same thread and Cloudflare
   retries nothing (service bindings).
+- Cron Triggers: one invocation of `scheduled()` per tick attempt, with
+  `scheduledTime` the tick's time and `cron` the expression (Scheduled
+  handler; Cron Triggers); `noRetry()` is documented, a retry count is
+  not, so the drive declares the re-runs of a failed tick.
 - Durable Objects (v0.5): input gates block new events during storage
   operations but not during outbound `fetch`; output gates hold responses
   _and outgoing requests_ until pending writes are confirmed; consecutive

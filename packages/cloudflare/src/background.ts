@@ -12,14 +12,24 @@ export interface RunningWorker {
   readonly env: object;
 }
 
-/** The `ExecutionContext` handed to a handler; `waitUntil` work is collected to run after it returns. */
-export function executionContext(background: Promise<unknown>[]): ExecutionContext {
+/**
+ * The `ExecutionContext` handed to a handler; `waitUntil` work is collected to
+ * run after it returns. A rejection is kept in `failures` when given: a
+ * scheduled invocation's status is that of its first failed `waitUntil`
+ * (Cloudflare, Scheduled handler); a queue or HTTP delivery's is not.
+ */
+export function executionContext(
+  background: Promise<unknown>[],
+  failures?: unknown[],
+): ExecutionContext {
   return {
     waitUntil: (promise: Promise<unknown>) => {
       background.push(
         promise.then(
           () => undefined,
-          () => undefined,
+          (error: unknown) => {
+            failures?.push(error);
+          },
         ),
       );
     },

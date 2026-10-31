@@ -1,0 +1,7 @@
+{
+  "name": "differential-cron-rollup",
+  "main": "worker.ts",
+  "compatibility_date": "2026-10-01",
+  "d1_databases": [{ "binding": "DB", "database_name": "rollup", "database_id": "local" }],
+  "triggers": { "crons": ["*/10 * * * *"] }
+}

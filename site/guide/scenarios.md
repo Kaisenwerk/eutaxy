@@ -1,5 +1,5 @@
 ---
-description: How to write an Eutaxy scenario for a Cloudflare Worker - queue, HTTP and RPC drives, caller retry policies, setup for D1, Durable Objects, R2 and Workflows, declared externals, bounds and core specs.
+description: How to write an Eutaxy scenario for a Cloudflare Worker - queue, HTTP, RPC and cron drives, caller retry policies, setup for D1, Durable Objects, R2 and Workflows, declared externals, bounds and core specs.
 ---
 
 # Scenarios
@@ -110,6 +110,27 @@ return value that is not plain data (a stub, a function, a stream) makes
 the run `UNSUPPORTED`. `rpcResponse(method, { ok })` selects the answers
 for invariants, and `atLeastOncePerMessage` reads each call's arguments by
 path (`"0.orderId"`).
+
+### `cron(expression, options)`
+
+Drives the Worker's `scheduled()` handler with the ticks of a Cron
+Trigger: the expression's first matches from the virtual epoch on, in UTC,
+each an event delivered at its virtual time. The handler sees
+`controller.scheduledTime` as the tick's time, `controller.cron` as the
+expression, and `Date.now()` at that minute.
+
+```ts
+const reconcile = cron("*/5 * * * *", {
+  ticks: 3, // how many ticks to drive (default 1)
+  retries: 1, // re-runs of a tick whose handler failed (default 0)
+});
+```
+
+Cloudflare documents `controller.noRetry()` but no retry count for a failed
+invocation, so the re-runs are yours to declare; a handler that called
+`noRetry()` is not re-run. Cloudflare's dialect is parsed as documented
+(weekdays run 1 = Sunday to 7 = Saturday; names, lists, ranges and steps);
+`L`, `W` and `#` are refused.
 
 ## Setup
 

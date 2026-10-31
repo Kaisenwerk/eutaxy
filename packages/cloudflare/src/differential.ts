@@ -35,14 +35,15 @@ import { type CloudflarePlatformOptions, createCloudflarePlatform } from "./plat
 import { isR2 } from "./r2.ts";
 import { callMethod, describeError, entrypointClass } from "./rpc.ts";
 import { type Drive, driveEvents, type HttpRequestSpec, type RpcCallSpec } from "./scenario.ts";
+import type { TickData } from "./scheduled.ts";
 
 /** A type, not an interface, so it is JSON data the comparison takes as it is. */
 export type AttemptRecord = {
   readonly event: string;
   readonly attempt: number;
   readonly status: "completed" | "errored";
-  /** Queue drive: the acknowledgement that took effect. */
-  readonly decision: "ack" | "retry" | null;
+  /** Queue drive: the acknowledgement that took effect. Cron drive: `no_retry` when the handler asked for none. */
+  readonly decision: "ack" | "retry" | "no_retry" | null;
   /** HTTP drive: the response status the caller saw (500 for an uncaught exception). */
   readonly response?: number;
   /** RPC drive: the answer the caller saw, `{ ok: true, value }` or `{ ok: false, error }`. */
@@ -196,12 +197,14 @@ async function eutaxySide(
     (event, result, entries): AttemptRecord => {
       const invocation = invocationOf(event);
       const mine = entries.filter((e) => e.invocation === invocation);
-      const decision = mine.find(
-        (e) =>
-          e.kind === "result" &&
-          (e.op === "ack" || e.op === "retry") &&
-          getPath(e.payload, "result.effective") === true,
-      )?.op as "ack" | "retry" | undefined;
+      const decision = mine.some((e) => e.kind === "result" && e.op === "no_retry")
+        ? "no_retry"
+        : (mine.find(
+            (e) =>
+              e.kind === "result" &&
+              (e.op === "ack" || e.op === "retry") &&
+              getPath(e.payload, "result.effective") === true,
+          )?.op as "ack" | "retry" | undefined);
       const response = mine.find((e) => e.kind === "result" && e.op === "response");
       const answer = (): Partial<AttemptRecord> => {
         if (!response) return {};
@@ -227,6 +230,14 @@ function flatten(state: Side["state"]): { readonly [name: string]: readonly Json
   for (const [binding, tables] of Object.entries(state))
     for (const [table, rows] of Object.entries(tables)) out[`${binding}.${table}`] = rows;
   return out;
+}
+
+/** The next event as the engine picks it: the earliest due, the first inserted among equals. */
+function takeEarliest(pending: EventRef[]): EventRef {
+  let best = 0;
+  for (let i = 1; i < pending.length; i++)
+    if ((pending[i]?.at ?? 0) < (pending[best]?.at ?? 0)) best = i;
+  return pending.splice(best, 1)[0] as EventRef;
 }
 
 /** The raw side: the handler called directly with the real bindings and plain message or Request objects. */
@@ -281,7 +292,7 @@ async function rawSide(spec: ScenarioSpec, options: CloudflarePlatformOptions): 
       const cls = entrypointClass(options.handler, options.exports, drive.entrypoint);
       if (typeof cls !== "function") throw new Error("the Worker has no WorkerEntrypoint class");
       while (pending.length > 0) {
-        const event = pending.shift() as EventRef;
+        const event = takeEarliest(pending);
         const call = event.data as unknown as RpcCallSpec;
         const background: Promise<unknown>[] = [];
         let status: "completed" | "errored";
@@ -304,11 +315,60 @@ async function rawSide(spec: ScenarioSpec, options: CloudflarePlatformOptions): 
         const next = status === "completed" ? null : redelivery(event, drive.retries, spec.bounds);
         if (next) pending.push(next);
       }
+    } else if (drive.kind === "cron") {
+      const handler = handlers.scheduled;
+      if (!handler) throw new Error("the Worker has no scheduled() handler");
+      while (pending.length > 0) {
+        const event = takeEarliest(pending);
+        const tick = event.data as unknown as TickData;
+        // The proxied side's clock moved to the tick; so does this one.
+        if (event.at !== undefined && event.at > patched.clock.now())
+          patched.clock.advance(event.at - patched.clock.now());
+        const background: Promise<unknown>[] = [];
+        const failures: unknown[] = [];
+        let noRetry = false;
+        const controller: ScheduledController = {
+          scheduledTime: tick.scheduledTime,
+          cron: tick.cron,
+          noRetry: () => {
+            noRetry = true;
+          },
+        };
+        let status: "completed" | "errored";
+        try {
+          await settle(
+            Promise.resolve().then(() =>
+              handler.call(
+                handlers,
+                controller,
+                countedEnv,
+                executionContext(background, failures),
+              ),
+            ),
+          );
+          status = "completed";
+        } catch (err) {
+          if (err instanceof CrashSignal || err instanceof DifferentialStuck) throw err;
+          status = "errored";
+        }
+        await settle(Promise.all(background));
+        // A failed waitUntil is the invocation's status, as for the proxied side.
+        if (status === "completed" && failures.length > 0) status = "errored";
+        attempts.push({
+          event: event.id,
+          attempt: event.attempt,
+          status,
+          decision: noRetry ? "no_retry" : null,
+        });
+        const next =
+          status === "completed" || noRetry ? null : redelivery(event, drive.retries, spec.bounds);
+        if (next) pending.push(next);
+      }
     } else if (drive.kind === "http") {
       const handler = handlers.fetch;
       if (!handler) throw new Error("the Worker has no fetch() handler");
       while (pending.length > 0) {
-        const event = pending.shift() as EventRef;
+        const event = takeEarliest(pending);
         const req = event.data as unknown as HttpRequestSpec;
         const background: Promise<unknown>[] = [];
         let status: "completed" | "errored";
@@ -343,7 +403,7 @@ async function rawSide(spec: ScenarioSpec, options: CloudflarePlatformOptions): 
       const handler = handlers.queue;
       if (!handler) throw new Error("the Worker has no queue() handler");
       while (pending.length > 0) {
-        const event = pending.shift() as EventRef;
+        const event = takeEarliest(pending);
         let decision: "ack" | "retry" | null = null;
         const background: Promise<unknown>[] = [];
         const message: Message<unknown> = {
