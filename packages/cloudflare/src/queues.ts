@@ -1,18 +1,16 @@
 /** Queue delivery: one invocation per delivery of a message, redelivered until acked or dead-lettered. */
 
-import type {
-  DeliveryResult,
-  EventRef,
-  FaultKind,
-  JsonValue,
-  RunHooks,
-  ScenarioSpec,
+import {
+  type DeliveryResult,
+  decisionFaults,
+  type EventRef,
+  type JsonValue,
+  type RunHooks,
+  type ScenarioSpec,
 } from "@eutaxy/core";
 import { CrashSignal } from "@eutaxy/engine";
 import { drainBackground, executionContext, type RunningWorker } from "./background.ts";
 import type { QueueDrive } from "./scenario.ts";
-
-const ACK: readonly FaultKind[] = ["crash_before", "crash_after"];
 
 /** Deep-copy JSON data so a handler that mutates its message cannot leak into other runs. */
 function cloneJson(value: JsonValue): JsonValue {
@@ -38,7 +36,7 @@ export async function deliverMessage(
   /** Records the call; the result says whether it took effect (the first decision wins). */
   const decide = (op: "ack" | "retry", args: JsonValue): void => {
     hooks.effectSync(
-      { invocation, target: queueTarget, op, args, allowed: ACK },
+      { invocation, target: queueTarget, op, args, allowed: decisionFaults },
       () => {
         if (state.decision !== null) return false;
         state.decision = op;

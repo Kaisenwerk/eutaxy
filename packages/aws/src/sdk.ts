@@ -7,13 +7,17 @@
  * clients never reach the network.
  */
 
-import type { EffectPoint, FaultKind, JsonValue, RunHooks } from "@eutaxy/core";
+import {
+  type EffectPoint,
+  type JsonValue,
+  type RunHooks,
+  readFaults,
+  writeFaults,
+} from "@eutaxy/core";
 import { patchProperty } from "@eutaxy/engine";
 import { Client } from "@smithy/smithy-client";
 import { toJson } from "./json.ts";
 
-const WRITE: readonly FaultKind[] = ["crash_before", "crash_after", "ambiguous", "error"];
-const READ: readonly FaultKind[] = ["crash_before", "crash_after", "error"];
 const READS = new Set([
   "GetItem",
   "BatchGetItem",
@@ -176,7 +180,7 @@ export function installSdkProxy(options: SdkProxyOptions): () => void {
       target: targetOf(serviceId, op, input),
       op,
       args: toJson(input),
-      allowed: READS.has(op) ? READ : WRITE,
+      allowed: READS.has(op) ? readFaults : writeFaults,
     };
     return options.hooks.effect(point, perform, (r) => summarize(op, r, input));
   };

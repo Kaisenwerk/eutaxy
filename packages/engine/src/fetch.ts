@@ -11,10 +11,14 @@
  * response answers, makes the run unsupported.
  */
 
-import type { ExternalDecl, FaultKind, JsonValue, RunHooks, ScriptedResponse } from "@eutaxy/core";
+import {
+  type ExternalDecl,
+  type JsonValue,
+  type RunHooks,
+  type ScriptedResponse,
+  writeFaults,
+} from "@eutaxy/core";
 import { patchProperty } from "./patch.ts";
-
-const FAULTS: readonly FaultKind[] = ["crash_before", "crash_after", "ambiguous", "error"];
 
 export interface FetchHooks {
   readonly hooks: RunHooks;
@@ -161,7 +165,7 @@ export function createScriptedFetch(
         target: `Fetch:${external.name}`,
         op: method,
         args,
-        allowed: FAULTS,
+        allowed: writeFaults,
       },
       perform,
       (r) => ({ status: r.reply.status, effective: r.effective, dedupeKey }),

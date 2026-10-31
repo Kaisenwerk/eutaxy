@@ -14,6 +14,7 @@ import {
   type JsonValue,
   type RunHooks,
   toJson,
+  writeFaults,
 } from "@eutaxy/core";
 import { CrashSignal, InjectedEffectError } from "@eutaxy/engine";
 import { drainBackground, executionContext } from "./background.ts";
@@ -22,8 +23,6 @@ import type { ProxyContext } from "./d1.ts";
 /** The `EventRef.source` of a Workflow instance's run. */
 export const workflowSource = "workflow";
 
-/** `create` is a call to the engine: it may never arrive, or arrive with its answer lost. */
-const CREATE: readonly FaultKind[] = ["crash_before", "crash_after", "ambiguous", "error"];
 /** Before a step's callback: the engine restarts before the step runs. */
 const STEP_START: readonly FaultKind[] = ["crash_before"];
 /**
@@ -155,7 +154,8 @@ export function proxyWorkflow(
           target,
           op: "create",
           args: { id, params: toJson(params) },
-          allowed: CREATE,
+          // A call to the engine: it may never arrive, or arrive with its answer lost.
+          allowed: writeFaults,
         },
         async () => {
           if (!validInstanceId(id)) throw new Error("Workflow instance has invalid id");

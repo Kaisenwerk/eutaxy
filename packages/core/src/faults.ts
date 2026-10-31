@@ -12,6 +12,23 @@ import { nextFloat, nextInt, type PrngState } from "./prng.ts";
  */
 export type FaultKind = "crash_before" | "crash_after" | "ambiguous" | "error" | "cut_off";
 
+/**
+ * The ladders of faults an effect's kind admits, written once; a proxy names
+ * one as a point's `allowed` faults. A point with a meaning of its own (the
+ * response point, a Workflow step, the background point) lists its own.
+ */
+/** An effect that may commit and whose answer may be lost: a write, a call into another system, an outbound request. */
+export const writeFaults: readonly FaultKind[] = [
+  "crash_before",
+  "crash_after",
+  "ambiguous",
+  "error",
+];
+/** An effect with nothing to be ambiguous about: a read, or a handler run whose failure is seen either way. */
+export const readFaults: readonly FaultKind[] = ["crash_before", "crash_after", "error"];
+/** A decision a platform records on the invocation's behalf (an ack, a delete): the invocation may die either side of it; it neither errors nor goes missing. */
+export const decisionFaults: readonly FaultKind[] = ["crash_before", "crash_after"];
+
 export interface FaultDecision {
   /** The invocation the effect belongs to, e.g. "msg-1#2". */
   readonly invocation: string;

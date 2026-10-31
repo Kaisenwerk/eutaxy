@@ -10,11 +10,10 @@ import {
   type FaultKind,
   type JsonValue,
   type RunHooks,
+  readFaults,
   toJson,
+  writeFaults,
 } from "@eutaxy/core";
-
-const WRITE: readonly FaultKind[] = ["crash_before", "crash_after", "ambiguous", "error"];
-const READ: readonly FaultKind[] = ["crash_before", "crash_after", "error"];
 
 /** Whether a binding is a D1 database (what the proxies and the differential wrap). */
 export function isD1(value: unknown): value is D1Database {
@@ -82,7 +81,7 @@ class StatementProxy {
 
   run<T = Record<string, unknown>>(): Promise<D1Result<T>> {
     return this.ctx.hooks.effect(
-      point(this.ctx, this.target, "run", this.args(), WRITE),
+      point(this.ctx, this.target, "run", this.args(), writeFaults),
       () => this.real.run<T>(),
       (r) => metaOf(r),
     );
@@ -90,7 +89,7 @@ class StatementProxy {
 
   all<T = Record<string, unknown>>(): Promise<D1Result<T>> {
     return this.ctx.hooks.effect(
-      point(this.ctx, this.target, "all", this.args(), READ),
+      point(this.ctx, this.target, "all", this.args(), readFaults),
       () => this.real.all<T>(),
       (r) => ({ rows: r.results.length, changes: r.meta.changes ?? 0 }),
     );
@@ -103,7 +102,7 @@ class StatementProxy {
         this.target,
         "first",
         { ...(this.args() as object), column: colName ?? null } as JsonValue,
-        READ,
+        readFaults,
       ),
       () => (colName === undefined ? this.real.first<T>() : this.real.first<T>(colName)),
       (r) => ({ row: toJson(r) }),
@@ -112,7 +111,7 @@ class StatementProxy {
 
   raw<T = unknown[]>(options?: { columnNames?: boolean }): Promise<T[]> {
     return this.ctx.hooks.effect(
-      point(this.ctx, this.target, "raw", this.args(), READ),
+      point(this.ctx, this.target, "raw", this.args(), readFaults),
       () =>
         (options
           ? this.real.raw<T>(options as { columnNames: true })
@@ -141,7 +140,7 @@ export function proxyD1(real: D1Database, binding: string, ctx: ProxyContext): D
         ),
       };
       return ctx.hooks.effect(
-        point(ctx, target, "batch", args, WRITE),
+        point(ctx, target, "batch", args, writeFaults),
         () => real.batch<T>(unwrapped as D1PreparedStatement[]),
         (rs) => ({
           changes: rs.reduce((n, r) => n + (r.meta.changes ?? 0), 0),
@@ -151,7 +150,7 @@ export function proxyD1(real: D1Database, binding: string, ctx: ProxyContext): D
     },
     exec(sql: string): Promise<D1ExecResult> {
       return ctx.hooks.effect(
-        point(ctx, target, "exec", { sql }, WRITE),
+        point(ctx, target, "exec", { sql }, writeFaults),
         () => real.exec(sql),
         (r) => ({ count: r.count, duration: 0 }),
       );

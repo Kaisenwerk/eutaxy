@@ -7,11 +7,15 @@
  * by stand-ins (see `VersionBook`), so traces stay byte-identical.
  */
 
-import { type EffectPoint, type FaultKind, type JsonValue, toJson } from "@eutaxy/core";
+import {
+  type EffectPoint,
+  type FaultKind,
+  type JsonValue,
+  readFaults,
+  toJson,
+  writeFaults,
+} from "@eutaxy/core";
 import type { ProxyContext } from "./d1.ts";
-
-const WRITE: readonly FaultKind[] = ["crash_before", "crash_after", "ambiguous", "error"];
-const READ: readonly FaultKind[] = ["crash_before", "crash_after", "error"];
 
 /** Whether a binding is an R2 bucket (Miniflare's `R2Bucket`). */
 export function isR2(value: unknown): value is R2Bucket {
@@ -178,7 +182,7 @@ export function proxyR2(
   return {
     put: (key: string, value: unknown, options?: R2PutOptions) =>
       ctx.hooks.effect(
-        point("put", { key, ...(putArgs(options) as object) }, WRITE),
+        point("put", { key, ...(putArgs(options) as object) }, writeFaults),
         async () => {
           checkConditions(options?.onlyIf);
           const read = value instanceof ReadableStream ? buffered.get(value) : undefined;
@@ -189,13 +193,13 @@ export function proxyR2(
       ),
     delete: (keys: string | string[]) =>
       ctx.hooks.effect(
-        point("delete", { keys: typeof keys === "string" ? [keys] : [...keys] }, WRITE),
+        point("delete", { keys: typeof keys === "string" ? [keys] : [...keys] }, writeFaults),
         () => real.delete(keys),
         () => null,
       ),
     get: (key: string, options?: R2GetOptions) =>
       ctx.hooks.effect(
-        point("get", getArgs(key, options), READ),
+        point("get", getArgs(key, options), readFaults),
         async () => {
           checkConditions(options?.onlyIf);
           const o = await real.get(key, options);
@@ -209,7 +213,7 @@ export function proxyR2(
       ),
     head: (key: string) =>
       ctx.hooks.effect(
-        point("head", { key }, READ),
+        point("head", { key }, readFaults),
         async () => {
           const o = await real.head(key);
           return o === null ? null : metadata(o, book, Date.now());
@@ -218,7 +222,7 @@ export function proxyR2(
       ),
     list: (options?: R2ListOptions) =>
       ctx.hooks.effect(
-        point("list", toJson(options ?? {}), READ),
+        point("list", toJson(options ?? {}), readFaults),
         async () => {
           const listed = await real.list(options);
           const at = Date.now();

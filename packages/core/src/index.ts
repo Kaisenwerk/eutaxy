@@ -12,11 +12,14 @@ export {
 } from "./effect-log.ts";
 export {
   decideFault,
+  decisionFaults,
   type FaultDecision,
   type FaultKind,
   type FaultPolicy,
   planFaults,
+  readFaults,
   type Schedule,
+  writeFaults,
 } from "./faults.ts";
 export {
   type AtLeastOnce,

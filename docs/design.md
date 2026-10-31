@@ -434,6 +434,16 @@ Faults injected at every effect boundary:
 | Redelivery          | A queue message or alarm is delivered again; an inbound request is resent by its caller                                                                          | At-least-once semantics        |
 | Cut-off             | The acknowledgement or response was sent; work scheduled with `waitUntil` that has not started is lost, and an effect in flight commits without its continuation | Background work that never ran |
 
+Which of these an effect admits follows its kind, and `core` writes each
+kind's ladder once (`writeFaults`, `readFaults`, `decisionFaults`) for
+every proxy to name: a write, a call into another system or an outbound
+request admits the first four; a read admits all but the ambiguous outcome,
+since nothing is lost when its answer is; a decision a platform records on
+the invocation's behalf (an acknowledgement, a message's delete) admits only
+the crashes either side of it. A point with a meaning of its own, the
+response point, a Workflow step, the background point, lists exactly the
+faults that mean something there.
+
 **Platform semantics to encode, with a documentation source for each:**
 - D1: `batch()` is all-or-nothing; separate `run()`/`first()`/`all()` calls
   are each one effect and can be cut between statements; prepared statements

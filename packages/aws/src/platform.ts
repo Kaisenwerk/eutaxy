@@ -8,14 +8,14 @@
  */
 
 import type { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import type {
-  DeliveryResult,
-  EventRef,
-  FaultKind,
-  JsonValue,
-  Platform,
-  RunHooks,
-  ScenarioSpec,
+import {
+  type DeliveryResult,
+  decisionFaults,
+  type EventRef,
+  type JsonValue,
+  type Platform,
+  type RunHooks,
+  type ScenarioSpec,
 } from "@eutaxy/core";
 import { CrashSignal } from "@eutaxy/engine";
 import { resetTables, scenarioTables, snapshotTables } from "./dynamodb.ts";
@@ -30,8 +30,6 @@ import {
 } from "./lambda.ts";
 import type { SqsDrive } from "./scenario.ts";
 import { installSdkProxy } from "./sdk.ts";
-
-const DELETE: readonly FaultKind[] = ["crash_before", "crash_after"];
 
 export type { LambdaContext, SqsBatchResponse, SqsEvent, SqsHandler, SqsRecord };
 
@@ -153,7 +151,7 @@ export function createAwsPlatform(options: AwsPlatformOptions): Platform {
               target: queueTarget,
               op: "delete",
               args: { messageId: event.id, implicit: true } as JsonValue,
-              allowed: DELETE,
+              allowed: decisionFaults,
             },
             () => {
               deleted = true;

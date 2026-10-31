@@ -13,12 +13,10 @@
  * fire in virtual time (see alarms.ts).
  */
 
-import { type FaultKind, type JsonValue, toJson } from "@eutaxy/core";
+import { type JsonValue, toJson, writeFaults } from "@eutaxy/core";
 import { withoutNetwork } from "@eutaxy/engine";
 import { AlarmBook, alarmControl, takenOver, takeOverAlarms } from "./alarms.ts";
 import type { ProxyContext } from "./d1.ts";
-
-const CALL: readonly FaultKind[] = ["crash_before", "crash_after", "ambiguous", "error"];
 
 /**
  * The Cloudflare Vitest plugin's test helpers, as exported by
@@ -249,7 +247,7 @@ export function proxyNamespace(
           target,
           op,
           args,
-          allowed: CALL,
+          allowed: writeFaults,
           hostsEffects: true,
         },
         perform,

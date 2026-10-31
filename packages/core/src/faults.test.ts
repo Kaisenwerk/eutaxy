@@ -1,5 +1,12 @@
 import { describe, expect, test } from "vitest";
-import { decideFault, type FaultKind, planFaults } from "./faults.ts";
+import {
+  decideFault,
+  decisionFaults,
+  type FaultKind,
+  planFaults,
+  readFaults,
+  writeFaults,
+} from "./faults.ts";
 
 const allFaults: readonly FaultKind[] = [
   "crash_before",
@@ -10,6 +17,19 @@ const allFaults: readonly FaultKind[] = [
 ];
 
 import { seedPrng } from "./prng.ts";
+
+describe("fault ladders", () => {
+  test("each kind's ladder is a subset of the model in its order; cut_off belongs to the background point alone", () => {
+    expect(writeFaults).toEqual(["crash_before", "crash_after", "ambiguous", "error"]);
+    expect(readFaults).toEqual(writeFaults.filter((f) => f !== "ambiguous"));
+    expect(decisionFaults).toEqual(["crash_before", "crash_after"]);
+    for (const ladder of [writeFaults, readFaults, decisionFaults]) {
+      expect(ladder).not.toContain("cut_off");
+      expect([...ladder].sort()).toEqual([...new Set(ladder)].sort());
+      expect(allFaults.filter((f) => ladder.includes(f))).toEqual(ladder);
+    }
+  });
+});
 
 describe("decideFault", () => {
   test("never injects when nothing is allowed or the budget is spent, and leaves the state alone", () => {

@@ -14,14 +14,17 @@
  * transaction takes effect only if the transaction commits.
  */
 
-import type { DeliveryResult, EventRef, FaultKind, JsonValue, RunHooks } from "@eutaxy/core";
+import {
+  type DeliveryResult,
+  type EventRef,
+  type JsonValue,
+  type RunHooks,
+  readFaults,
+} from "@eutaxy/core";
 import { CrashSignal } from "@eutaxy/engine";
 
 /** `EventRef.source` of an alarm event. */
 export const alarmSource = "durable_object_alarm";
-
-/** Crash before: the handler never ran. Crash after: it ran and committed, but counts as failed. */
-const ALARM: readonly FaultKind[] = ["crash_before", "crash_after", "error"];
 
 /** Cloudflare retries a failed alarm handler up to six times, after 2 s, 4 s, 8 s, ... */
 const maxRetries = 6;
@@ -298,7 +301,8 @@ export async function deliverAlarm(
         target: `DO:${d.binding}`,
         op: "alarm",
         args: { object: a.object, retryCount: a.retryCount },
-        allowed: ALARM,
+        // Crash before: the handler never ran. Crash after: it ran and committed, but counts as failed.
+        allowed: readFaults,
         hostsEffects: true,
       },
       async () => {
