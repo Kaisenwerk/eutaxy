@@ -15,6 +15,7 @@ import {
   type JsonValue,
   type Platform,
   type RunHooks,
+  redelivery,
   type ScenarioSpec,
 } from "@eutaxy/core";
 import { CrashSignal } from "@eutaxy/engine";
@@ -166,11 +167,10 @@ export function createAwsPlatform(options: AwsPlatformOptions): Platform {
 
       const followUps: EventRef[] = [];
       if (!deleted) {
-        if (
-          event.attempt < drive.maxReceiveCount &&
-          event.attempt - 1 < spec.bounds.maxRedeliveries
-        ) {
-          followUps.push({ ...event, attempt: event.attempt + 1 });
+        // maxReceiveCount counts deliveries, the first one included.
+        const next = redelivery(event, drive.maxReceiveCount - 1, spec.bounds);
+        if (next) {
+          followUps.push(next);
         } else {
           hooks.effectSync(
             {

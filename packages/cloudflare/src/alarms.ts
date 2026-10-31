@@ -20,6 +20,7 @@ import {
   type JsonValue,
   type RunHooks,
   readFaults,
+  redelivery,
 } from "@eutaxy/core";
 import { CrashSignal } from "@eutaxy/engine";
 
@@ -323,17 +324,14 @@ export async function deliverAlarm(
   // A crash is the object's: its in-memory state goes with the instance, whatever the handler did.
   if (status === "crashed") await d.evict(a.id);
   if (status !== "completed") {
-    if (a.retryCount < maxRetries && a.retryCount < maxRedeliveries) {
+    // The retries so far are the attempt less one: retryCount counts them too.
+    const next = redelivery(event, maxRetries, { maxRedeliveries });
+    if (next) {
       const retryAt = Date.now() + firstRetryMs * 2 ** a.retryCount;
       const data: AlarmData = { ...a, retryCount: a.retryCount + 1 };
       // The alarm stays set, for its retry, until a later change supersedes it.
       if (entry.gen === a.gen) entry.time = retryAt;
-      hooks.enqueue({
-        ...event,
-        attempt: event.attempt + 1,
-        data: data as unknown as JsonValue,
-        at: retryAt,
-      });
+      hooks.enqueue({ ...next, data: data as unknown as JsonValue, at: retryAt });
     } else {
       // Given up on: no longer pending, unless a newer alarm replaced it meanwhile.
       if (entry.gen === a.gen) entry.time = null;

@@ -6,6 +6,7 @@ import {
   type EventRef,
   type JsonValue,
   type RunHooks,
+  redelivery,
   type ScenarioSpec,
 } from "@eutaxy/core";
 import { CrashSignal } from "@eutaxy/engine";
@@ -88,9 +89,9 @@ export async function deliverMessage(
 
   const followUps: EventRef[] = [];
   if (state.decision !== "ack") {
-    const redeliveries = event.attempt - 1;
-    if (event.attempt <= maxRetries && redeliveries < spec.bounds.maxRedeliveries) {
-      followUps.push({ ...event, attempt: event.attempt + 1 });
+    const next = redelivery(event, maxRetries, spec.bounds);
+    if (next) {
+      followUps.push(next);
     } else {
       hooks.effectSync(
         {

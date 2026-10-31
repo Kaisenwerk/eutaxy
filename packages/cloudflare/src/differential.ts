@@ -1,13 +1,19 @@
 /**
  * Differential check: the same fault-free scenario run once through Eutaxy's
  * proxies and once against the raw bindings, with the queue model (or the
- * HTTP caller's retry policy) applied by hand on the raw side. Any difference in the per-attempt decisions or in
+ * HTTP caller's retry policy) applied on the raw side itself. Any difference in the per-attempt decisions or in
  * the final D1 and R2 state is a bug in the proxies or the platform model, not in
  * the Worker. The raw side shares Eutaxy's *reading* of Cloudflare's queue
- * semantics; what it does not share is any proxy code.
+ * semantics (core's redelivery rule among it); what it does not share is any proxy code.
  */
 
-import { type EventRef, getPath, type JsonValue, type ScenarioSpec } from "@eutaxy/core";
+import {
+  type EventRef,
+  getPath,
+  type JsonValue,
+  redelivery,
+  type ScenarioSpec,
+} from "@eutaxy/core";
 import {
   CrashSignal,
   compareSides,
@@ -303,13 +309,8 @@ async function rawSide(spec: ScenarioSpec, options: CloudflarePlatformOptions): 
         });
         const accepted =
           drive.retryOn === "5xx" ? response < 500 : response >= 200 && response < 300;
-        if (
-          !accepted &&
-          event.attempt - 1 < drive.retries &&
-          event.attempt - 1 < spec.bounds.maxRedeliveries
-        ) {
-          pending.push({ ...event, attempt: event.attempt + 1 });
-        }
+        const next = accepted ? null : redelivery(event, drive.retries, spec.bounds);
+        if (next) pending.push(next);
       }
     } else {
       const handler = options.handler.queue;
@@ -351,13 +352,8 @@ async function rawSide(spec: ScenarioSpec, options: CloudflarePlatformOptions): 
         if (status === "completed") decision ??= "ack";
         await settle(Promise.all(background));
         attempts.push({ event: event.id, attempt: event.attempt, status, decision });
-        if (
-          decision !== "ack" &&
-          event.attempt <= maxRetries &&
-          event.attempt - 1 < spec.bounds.maxRedeliveries
-        ) {
-          pending.push({ ...event, attempt: event.attempt + 1 });
-        }
+        const next = decision === "ack" ? null : redelivery(event, maxRetries, spec.bounds);
+        if (next) pending.push(next);
       }
     }
   } finally {

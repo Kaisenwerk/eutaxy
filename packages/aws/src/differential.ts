@@ -6,7 +6,7 @@
  */
 
 import type { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import type { EventRef, JsonValue, ScenarioSpec } from "@eutaxy/core";
+import { type EventRef, type JsonValue, redelivery, type ScenarioSpec } from "@eutaxy/core";
 import {
   compareSides,
   DifferentialStuck,
@@ -128,13 +128,8 @@ async function rawSide(spec: ScenarioSpec, options: AwsPlatformOptions): Promise
       const failed = batchFailed(response, event.id, [event.id]);
       const deleted = status === "completed" && !failed;
       attempts.push({ event: event.id, attempt: event.attempt, status, deleted });
-      if (
-        !deleted &&
-        event.attempt < drive.maxReceiveCount &&
-        event.attempt - 1 < spec.bounds.maxRedeliveries
-      ) {
-        pending.push({ ...event, attempt: event.attempt + 1 });
-      }
+      const next = deleted ? null : redelivery(event, drive.maxReceiveCount - 1, spec.bounds);
+      if (next) pending.push(next);
     }
   } finally {
     restoreSdk();

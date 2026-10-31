@@ -41,6 +41,7 @@ export type {
   RunHooks,
 } from "./platform.ts";
 export { nextFloat, nextInt, nextU32, type PrngState, seedPrng } from "./prng.ts";
+export { redelivery } from "./redelivery.ts";
 export { decisionTarget, type Refines } from "./refines.ts";
 export {
   type Bounds,

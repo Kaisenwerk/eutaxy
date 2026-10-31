@@ -444,6 +444,14 @@ the crashes either side of it. A point with a meaning of its own, the
 response point, a Workflow step, the background point, lists exactly the
 faults that mean something there.
 
+Redelivery follows one rule, written once in `core` (`redelivery`): an
+event that was not handled is delivered again while the platform's own
+limit on redeliveries (Queues' `max_retries`, the caller's `retries`, SQS's
+`maxReceiveCount` less the first delivery, an alarm's six retries) and the
+scenario's `maxRedeliveries` both leave room. The platforms and the
+differential runner's raw sides call the same function, so the raw side
+shares the reading of the limit and none of the proxy code.
+
 **Platform semantics to encode, with a documentation source for each:**
 - D1: `batch()` is all-or-nothing; separate `run()`/`first()`/`all()` calls
   are each one effect and can be cut between statements; prepared statements

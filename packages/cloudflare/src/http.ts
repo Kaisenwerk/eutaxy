@@ -1,12 +1,13 @@
 /** Inbound HTTP delivery: one invocation per attempt of a request the drive's caller sends. */
 
-import type {
-  DeliveryResult,
-  EventRef,
-  FaultKind,
-  JsonValue,
-  RunHooks,
-  ScenarioSpec,
+import {
+  type DeliveryResult,
+  type EventRef,
+  type FaultKind,
+  type JsonValue,
+  type RunHooks,
+  redelivery,
+  type ScenarioSpec,
 } from "@eutaxy/core";
 import { CrashSignal, InjectedEffectError } from "@eutaxy/engine";
 import { drainBackground, executionContext, type RunningWorker } from "./background.ts";
@@ -80,14 +81,10 @@ export async function deliverRequest(
   const giveUp = (at: number): void => {
     if (decided) return;
     decided = true;
-    const redeliveries = event.attempt - 1;
-    if (redeliveries < drive.retries && redeliveries < spec.bounds.maxRedeliveries) {
+    const next = redelivery(event, drive.retries, spec.bounds);
+    if (next) {
       const resendAt = Math.max(at + retryDelayMs(drive, event.attempt), Date.now());
-      hooks.enqueue({
-        ...event,
-        attempt: event.attempt + 1,
-        ...(resendAt > Date.now() ? { at: resendAt } : {}),
-      });
+      hooks.enqueue({ ...next, ...(resendAt > Date.now() ? { at: resendAt } : {}) });
     } else {
       hooks.effectSync(
         {
