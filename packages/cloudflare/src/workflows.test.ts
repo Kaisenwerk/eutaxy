@@ -839,6 +839,9 @@ describe("a Workflow started from a webhook", () => {
       createdAt: 0,
       status: "complete",
       output: { label: "kept" },
+      events: new Map(),
+      waiting: undefined,
+      waitGen: 0,
       persisted: new Map(),
       attempts: new Map(),
       configs: new Map(),
@@ -871,6 +874,9 @@ describe("a Workflow started from a webhook", () => {
       params: { badName } as unknown,
       createdAt: 0,
       status: "queued" as const,
+      events: new Map(),
+      waiting: undefined,
+      waitGen: 0,
       persisted: new Map(),
       attempts: new Map(),
       configs: new Map(),
@@ -1201,8 +1207,14 @@ describe("a Workflow started from a webhook", () => {
   });
 
   test("what is not modelled makes the run UNSUPPORTED", async () => {
+    // A wait with no event suspends the instance; it waits at the end of the run, which is not UNSUPPORTED.
     const r = await run(scenario("WaitingFlow"));
-    expect(r.unsupportedReasons.join()).toContain("waitForEvent is not modelled");
+    expect(r.unsupportedReasons).toEqual([]);
+    // With nothing else to run, the clock reaches the wait's 24-hour deadline: the instance ends errored.
+    expect(instances(r)[0]).toMatchObject({
+      status: "errored",
+      error: "WorkflowTimeoutError: Execution timed out after 86400000ms",
+    });
     const noSetup = { ...scenario("ReplyFlow"), setup: [] };
     const r2 = await run(noSetup);
     expect(r2.unsupportedReasons.join()).toContain("needs a workflow() setup step");

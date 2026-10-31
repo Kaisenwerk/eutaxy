@@ -47,16 +47,50 @@ const STEP_RESULT: readonly FaultKind[] = ["crash_after", "ambiguous"];
  */
 const defaultRetries = { limit: 5, delay: 10_000, backoff: "exponential" } as const;
 
-/** A persisted step result; a failure is kept as the engine keeps it, serialised (built-in types survive). */
+/**
+ * A persisted step result; a failure is kept as the engine keeps it, serialised
+ * (built-in types survive; a custom error name does not survive the clone, so
+ * it is kept beside and put back on replay).
+ */
 type Outcome =
   | { readonly ok: true; readonly value: unknown }
-  | { readonly ok: false; readonly error: unknown };
+  | { readonly ok: false; readonly error: unknown; readonly errorName?: string };
+
+/** Keep a thrown value as the engine keeps it, with an Error's name, which the clone would lose. */
+function failure(thrown: unknown): Outcome {
+  let kept: unknown;
+  try {
+    kept = structuredClone(thrown);
+  } catch {
+    kept = new Error(String(thrown));
+  }
+  return thrown instanceof Error
+    ? { ok: false, error: kept, errorName: thrown.name }
+    : { ok: false, error: kept };
+}
+
+/** An event sent to an instance, as `waitForEvent` returns it. */
+export interface InstanceEvent {
+  readonly type: string;
+  readonly payload: unknown;
+  readonly timestamp: Date;
+}
 
 export interface Instance {
   readonly id: string;
   readonly params: unknown;
   readonly createdAt: number;
-  status: "queued" | "running" | "complete" | "errored";
+  /** The engine's statuses the model reaches; `waiting` while a wait for an event is pending. */
+  status: "queued" | "running" | "waiting" | "complete" | "errored";
+  /** Events sent and not yet consumed by a wait, in order, per type (the engine's buffer). */
+  readonly events: Map<string, InstanceEvent[]>;
+  /**
+   * The pending wait, while the instance is `waiting`: its type, its generation, which a wake
+   * must match, and whether an event already woke it (a second event is buffered, not a second wake).
+   */
+  waiting: { readonly type: string; readonly gen: number; woken: boolean } | undefined;
+  /** Generations of waits so far, so a stale wake (the timeout of a wait an event ended) is told apart. */
+  waitGen: number;
   /** What `run` returned, as the engine keeps it; summarised only where it is recorded. */
   output?: unknown;
   error?: { readonly name: string; readonly message: string };
@@ -145,7 +179,46 @@ export function proxyWorkflow(
     resume: () => unsupported("resume()"),
     terminate: () => unsupported("terminate()"),
     restart: () => unsupported("restart()"),
-    sendEvent: () => unsupported("sendEvent()"),
+    sendEvent: (args: { readonly type?: unknown; readonly payload?: unknown } = {}) =>
+      ctx.hooks.effect(
+        {
+          invocation: ctx.currentInvocation(),
+          target,
+          op: "send_event",
+          args: { id, type: toJson(args.type), payload: toJson(args.payload) },
+          // A call to the engine: it may never arrive, or arrive with its answer lost.
+          allowed: writeFaults,
+        },
+        async () => {
+          const type = validEventType(args.type);
+          const i = registry.instances.get(id);
+          if (!i) throw new Error("instance.not_found");
+          if (i.status === "complete" || i.status === "errored")
+            throw new Error(
+              `(instance.not_running) Workflow instance with id "${id}" is ${i.status} and takes no events`,
+            );
+          const event: InstanceEvent = {
+            type,
+            payload: structuredClone(args.payload),
+            timestamp: new Date(),
+          };
+          const queue = i.events.get(type) ?? [];
+          queue.push(event);
+          i.events.set(type, queue);
+          // A wait for this type is pending: wake the instance once; its timeout wake becomes stale.
+          if (i.status === "waiting" && i.waiting?.type === type && !i.waiting.woken) {
+            i.waiting.woken = true;
+            ctx.hooks.enqueue({
+              id: `workflow:${binding}:${id}:event-${i.waiting.gen}`,
+              attempt: 1,
+              source: workflowSource,
+              data: { binding, id, wake: i.waiting.gen },
+            });
+          }
+          return null;
+        },
+        () => null,
+      ),
     delete: () => unsupported("delete()"),
     subscribe: () => unsupported("subscribe()"),
   });
@@ -175,6 +248,9 @@ export function proxyWorkflow(
             params,
             createdAt: Date.now(),
             status: "queued",
+            events: new Map(),
+            waiting: undefined,
+            waitGen: 0,
             persisted: new Map(),
             attempts: new Map(),
             configs: new Map(),
@@ -209,6 +285,41 @@ export function proxyWorkflow(
 /** The binding's rule for an instance id (Miniflare): up to 100 of these characters. */
 function validInstanceId(id: unknown): boolean {
   return typeof id === "string" && id.length <= 100 && /^[a-zA-Z0-9_][a-zA-Z0-9-_]*$/.test(id);
+}
+
+/** An event type as Workflows accept it (Events and parameters): up to 100 of these characters, else `workflow.invalid_event_type`. */
+function validEventType(type: unknown): string {
+  if (typeof type === "string" && type.length <= 100 && /^[a-zA-Z0-9_][a-zA-Z0-9-_]*$/.test(type))
+    return type;
+  throw new Error(
+    `(workflow.invalid_event_type) event type must be up to 100 letters, digits, - or _, got ${JSON.stringify(type)}`,
+  );
+}
+
+/** Thrown through `run()` to suspend an instance waiting for an event; never meant to be caught. */
+class Suspension {
+  readonly gen: number;
+  constructor(gen: number) {
+    this.gen = gen;
+  }
+}
+
+/** A wake event's data: which wait's generation it ends. */
+interface WakeData {
+  readonly binding: string;
+  readonly id: string;
+  readonly wake?: number;
+}
+
+/**
+ * Whether a run event wakes the instance: not a wake at all, the restart of a
+ * run a wake began (its first delivery resumed the instance), or the wake of
+ * the wait still pending.
+ */
+export function wakes(instance: Instance, event: EventRef): boolean {
+  const wake = (event.data as unknown as WakeData).wake;
+  if (wake === undefined || event.attempt > 1) return true;
+  return instance.status === "waiting" && instance.waiting?.gen === wake;
 }
 
 /** Construct a `WorkflowEntrypoint` subclass outside the runtime, for the one `new` per instance run. */
@@ -364,7 +475,10 @@ export async function deliverWorkflow(
   const inv = hooks.startInvocation(invocation);
   const target = `Workflow:${d.binding}`;
   const instance = d.instance;
+  // A wake of a wait that already ended (an event came before the timeout, or the reverse): nothing to do.
+  if (!wakes(instance, event)) return { status: "completed", followUps: [] };
   instance.status = "running";
+  instance.waiting = undefined;
   const background: Promise<unknown>[] = [];
   const counts = new Map<string, number>();
   const key = (kind: string, name: string): string => {
@@ -374,7 +488,9 @@ export async function deliverWorkflow(
   };
   const replay = (o: Outcome): unknown => {
     if (o.ok) return structuredClone(o.value);
-    throw structuredClone(o.error);
+    const error: unknown = structuredClone(o.error);
+    if (o.errorName !== undefined && error instanceof Error) error.name = o.errorName;
+    throw error;
   };
 
   const step = {
@@ -384,6 +500,7 @@ export async function deliverWorkflow(
         (ctx: unknown) => unknown,
         { rollback?: unknown } | undefined,
       ];
+      if (suspending !== undefined) continuedAfterSuspension("step.do");
       if (options?.rollback !== undefined) {
         hooks.unsupported(`Workflow ${d.binding}: rollback handlers are not modelled`);
         throw new Error("eutaxy: rollback handlers are not modelled");
@@ -523,13 +640,7 @@ export async function deliverWorkflow(
         )
           throw thrown;
         if (attempt > limit) {
-          let kept: unknown;
-          try {
-            kept = structuredClone(thrown);
-          } catch {
-            kept = new Error(String(thrown));
-          }
-          instance.persisted.set(k, { ok: false, error: kept });
+          instance.persisted.set(k, failure(thrown));
           throw thrown;
         }
         let wait: number;
@@ -573,12 +684,87 @@ export async function deliverWorkflow(
         throw new Error("You can't sleep until a time in the past, time-traveler");
       await sleepStep(k, name, Math.max(0, at - Date.now()), at);
     },
-    waitForEvent: () => {
-      hooks.unsupported(`Workflow ${d.binding}: step.waitForEvent is not modelled`);
-      throw new Error("eutaxy: step.waitForEvent is not modelled");
+    waitForEvent: async (
+      name: string,
+      options: { readonly type?: unknown; readonly timeout?: unknown } = {},
+    ): Promise<unknown> => {
+      if (suspending !== undefined) continuedAfterSuspension("step.waitForEvent");
+      const type = validEventType(options.type);
+      const timeoutMs = durationMs(options.timeout ?? "24 hours");
+      if (!(timeoutMs >= 1000 && timeoutMs <= 365 * 24 * 3_600_000)) {
+        hooks.unsupported(
+          `Workflow ${d.binding}: waitForEvent "${name}" timeout must be between 1 second and 365 days`,
+        );
+        const err = new Error(`Invalid timeout for waitForEvent "${name}"`);
+        err.name = "WorkflowFatalError";
+        throw err;
+      }
+      // Keyed by name and count, as the engine keys waits.
+      const k = key("waitForEvent", name);
+      const done = instance.persisted.get(k);
+      if (done) return replay(done);
+      const args = { instance: instance.id, step: name, type };
+      const existing = instance.deadlines.get(k);
+      // An event already sent: the first of its type, as the engine's queue gives it, if it came
+      // before the wait's deadline; one sent after it finds the wait timed out and stays buffered.
+      const queue = instance.events.get(type) ?? [];
+      const inTime = queue.findIndex(
+        (e) => existing === undefined || e.timestamp.getTime() < existing,
+      );
+      const received = inTime < 0 ? undefined : queue.splice(inTime, 1)[0];
+      if (received) {
+        hooks.effectSync(
+          {
+            invocation,
+            target,
+            op: "event",
+            args: { ...args, timestamp: received.timestamp.getTime() },
+            allowed: [],
+          },
+          () => received,
+          (e) => ({ payload: toJson(e.payload) }),
+        );
+        instance.persisted.set(k, { ok: true, value: received });
+        return structuredClone(received);
+      }
+      if (existing !== undefined && Date.now() >= existing) {
+        // The wait's time is up: the error is the step's, persisted, and the instance fails unless the code catches it.
+        const error = Object.assign(new Error(`Execution timed out after ${timeoutMs}ms`), {
+          name: "WorkflowTimeoutError",
+        });
+        hooks.effectSync(
+          { invocation, target, op: "wait_timeout", args, allowed: [] },
+          () => null,
+          () => null,
+        );
+        instance.persisted.set(k, failure(error));
+        throw error;
+      }
+      const deadline = existing ?? Date.now() + timeoutMs;
+      if (existing === undefined) {
+        instance.deadlines.set(k, deadline);
+        hooks.effectSync(
+          { invocation, target, op: "wait", args: { ...args, timeoutMs }, allowed: [] },
+          () => null,
+          () => null,
+        );
+      }
+      // Nothing to wait on yet: the instance hibernates until the event or the deadline wakes it.
+      const gen = ++instance.waitGen;
+      instance.waiting = { type, gen, woken: false };
+      suspending = { gen, deadline };
+      throw new Suspension(gen);
     },
   };
+  /** Set once a wait suspended this run: anything the code does after it caught the suspension is not modelled. */
+  let suspending: { readonly gen: number; readonly deadline: number } | undefined;
+  const continuedAfterSuspension = (what: string): never => {
+    const reason = `Workflow ${d.binding}: ${what} after step.waitForEvent suspended the instance; the code caught the suspension (catch only the wait's WorkflowTimeoutError)`;
+    hooks.unsupported(reason);
+    throw new Error(`eutaxy: ${reason}`);
+  };
   async function sleepStep(k: string, name: string, ms: number, until?: number): Promise<void> {
+    if (suspending !== undefined) continuedAfterSuspension("step.sleep");
     if (instance.persisted.has(k)) return;
     const pending = instance.deadlines.get(k);
     if (pending !== undefined) {
@@ -638,8 +824,42 @@ export async function deliverWorkflow(
       };
     }
   };
-  const result = ran.status === "completed" ? serialised(ran.value) : ran;
+  let result: RunOutcome<unknown> = ran.status === "completed" ? serialised(ran.value) : ran;
+  if (suspending !== undefined) {
+    // The run ended by suspending: its outcome is the wait, whatever the code made of the sentinel.
+    if (!(ran.status === "errored" && ran.error instanceof Suspension) && ran.status !== "crashed")
+      hooks.unsupported(
+        `Workflow ${d.binding}: run() ${ran.status === "completed" ? "returned" : "threw"} after step.waitForEvent suspended the instance; the code caught the suspension (catch only the wait's WorkflowTimeoutError)`,
+      );
+    if (ran.status !== "crashed") result = { status: "completed", value: undefined };
+  }
   let status = result.status;
+  if (suspending !== undefined && result.status === "completed") {
+    instance.status = "waiting";
+    const suspended = suspending;
+    if (await drainBackground(hooks, inv, invocation, target, background)) status = "crashed";
+    if (status === "crashed") {
+      // The crash ends the run; the restart below suspends again with a new generation.
+      instance.status = "running";
+      instance.waiting = undefined;
+    }
+    const followUps: EventRef[] =
+      status === "crashed"
+        ? instance.status === "running" && event.attempt <= d.maxFaultsPerRun
+          ? [{ ...event, attempt: event.attempt + 1 }]
+          : []
+        : [
+            // The timeout wake, due at the deadline; an event sent earlier wakes the instance first.
+            {
+              id: `workflow:${d.binding}:${instance.id}:timeout-${suspended.gen}`,
+              attempt: 1,
+              source: workflowSource,
+              data: { binding: d.binding, id: instance.id, wake: suspended.gen },
+              at: suspended.deadline,
+            },
+          ];
+    return { status, followUps };
+  }
   if (result.status === "completed") {
     instance.status = "complete";
     instance.output = result.value;

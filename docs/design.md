@@ -688,12 +688,23 @@ shares the reading of the limit and none of the proxy code.
   is known by its name and duration, as the engine keys it, so a restart
   that computes another duration sleeps again. Each
   instance's id, status, params and output are snapshotted after the run
-  (`Workflow:<binding>`, table `instances`). Current limits: step
+  (`Workflow:<binding>`, table `instances`). `step.waitForEvent(name, {
+  type, timeout })` and `instance.sendEvent({ type, payload })` follow
+  Workflows, Events and parameters: an event sent before the wait is
+  buffered and the wait returns it at once (`event`, with the payload); a
+  wait with no event suspends the instance (`wait`; status `waiting`) until
+  the event wakes it or its deadline passes (default 24 hours, in virtual
+  time), when the wait throws a `WorkflowTimeoutError` the code may catch
+  (`wait_timeout`); resuming re-runs `run()` with the persisted results, as
+  every restart does, and the wait's result or error is persisted by step
+  name and count, so a later restart replays it. `sendEvent` is one effect
+  with a stub call's faults (`send_event`), refused for a complete or
+  errored instance or an invalid type. Current limits: step
   timeouts are not measured (a timed-out attempt is the `ambiguous`
   fault); a finished `sleepUntil` replayed after its time (Miniflare's
   engine throws there, and production behaviour is not documented), a step
   returning a stream or more than about 1 MiB (the engine refuses it, and
-  Eutaxy cannot measure the stored size exactly), a retry delay function that throws, `waitForEvent`, `sendEvent`, rollback handlers, `createBatch`
+  Eutaxy cannot measure the stored size exactly), a retry delay function that throws, rollback handlers, `createBatch`
   and pausing, resuming, terminating or restarting an instance make the
   run `UNSUPPORTED`, as does a Workflow binding without a `workflow`
   setup step naming its class.

@@ -1,0 +1,9 @@
+{
+  "name": "planted-workflow-approval-notify-twice",
+  "main": "worker.ts",
+  "compatibility_date": "2026-10-01",
+  "workflows": [
+    { "name": "approvals", "binding": "APPROVALS", "class_name": "ApprovalFlow" },
+    { "name": "echo", "binding": "ECHO", "class_name": "EchoFlow" }
+  ]
+}

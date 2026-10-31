@@ -1,0 +1,8 @@
+{
+  "expect": {
+    "verdict": "VIOLATED",
+    "invariant": "notified-once"
+  },
+  "fault": "the engine restarting after the notification left: crash_after on the notify fetch, or ambiguous on it (the seed decides which is found first); the replay returns the stored decision and notifies again",
+  "description": "A Workflow waits for the approver's decision as an event and then notifies the requester outside a step. The engine replays run() from the start after a restart, with the wait's event stored, so a crash after the notification left makes the replay notify again."
+}

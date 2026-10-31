@@ -142,6 +142,14 @@ attempt is retried after its delay in virtual time (by default 5 retries,
 outside steps repeats. `step.sleep` and `step.sleepUntil` wait in virtual
 time.
 
+`step.waitForEvent` and `instance.sendEvent` are modelled as documented: an
+event sent before the wait is buffered and returned at once; a wait with no
+event suspends the instance (status `waiting`) until the event or its
+deadline (default 24 hours, in virtual time) wakes it, when the wait throws
+the catchable `WorkflowTimeoutError`. Resuming re-runs `run()` with the
+persisted results, so code outside steps repeats here too, and the wait's
+result is replayed, not consumed again.
+
 ## What makes a run `UNSUPPORTED`
 
 Eutaxy refuses to pass a run it cannot control:
@@ -161,7 +169,7 @@ Eutaxy refuses to pass a run it cannot control:
   capability), `setAlarm` inside `transactionSync()`.
 - R2: multipart uploads, conditions on the upload time, a bucket without an
   `r2Bucket` setup.
-- Workflows: `waitForEvent`, `sendEvent`, rollback handlers, `createBatch`,
+- Workflows: rollback handlers, `createBatch`,
   pausing, resuming, terminating or restarting an instance, and a binding
   without a `workflow` setup.
 
