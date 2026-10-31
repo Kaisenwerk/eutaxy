@@ -7,8 +7,8 @@
  */
 import { schedules } from "@eutaxy/core";
 import { describe, expect, test } from "vitest";
+import type { ChoiceOption } from "./chooser.ts";
 import { Enumerator } from "./exhaustive.ts";
-import type { ChoiceOption } from "./run.ts";
 
 /** A tree of choices: each node's children, one per option; a leaf has none. */
 interface Tree {

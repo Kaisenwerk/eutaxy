@@ -1,7 +1,7 @@
 /**
  * One run of a scenario: the effect log being built, the fault decisions
- * (drawn during exploration, looked up during replay), and the invocations
- * in flight. Proxies in the platform package call `effect`/`effectSync`
+ * (made by the run's chooser, see `chooser.ts`), and the invocations in
+ * flight. Proxies in the platform package call `effect`/`effectSync`
  * around every real effect; everything else is engine-internal.
  *
  * With `maxConcurrentInvocations` above 1 the run is concurrent: several
@@ -15,7 +15,6 @@
 import {
   appendEffect,
   type Bounds,
-  decideFault,
   decisionTarget,
   type EffectLog,
   type EffectOptions,
@@ -27,12 +26,10 @@ import {
   type FaultKind,
   type Invocation,
   type JsonValue,
-  nextInt,
-  type PrngState,
   type RunHooks,
   type Schedule,
-  seedPrng,
 } from "@eutaxy/core";
+import type { Chooser } from "./chooser.ts";
 import {
   effectLatencyMs,
   eventLoopTurn,
@@ -70,37 +67,16 @@ export class InjectedEffectError extends Error {
   }
 }
 
-/** One option at a decision the run cannot make by itself. */
-export interface ChoiceOption {
-  /** Names the option the same way in every run that reaches it, e.g. "req-1#1@2" or "crash_after". */
-  readonly label: string;
-  /** For a turn: the invocation it continues and the target of the effect it performs. */
-  readonly invocation?: string;
-  readonly target?: string;
-}
-
-/**
- * Makes a run's choices instead of the seed: which fault (or none) at an
- * effect point, and which turn next in a concurrent run. Exhaustive
- * exploration drives runs through one of these.
- */
-export interface Chooser {
-  choose(kind: "fault" | "turn", options: readonly ChoiceOption[]): number;
-}
-
 export interface RunOptions {
-  readonly mode: "explore" | "replay";
-  readonly schedule: Schedule;
   readonly bounds: Bounds;
-  readonly faultProbability: number;
-  /** Makes the choices (explore mode): faults and turns are picked, not drawn from the seed. */
-  readonly chooser?: Chooser;
   /**
-   * Explore mode: the eligible points (counted from 0) to fault, kinds drawn
-   * from the seed (see `planFaults`). Without one, each eligible point takes
-   * a fault with probability `faultProbability`.
+   * Makes the run's choices, faults and turns alike, and gives the seed of
+   * its virtual globals. The run applies no fault policy of its own: how many
+   * faults a run takes is the chooser's (`seededChooser` places them, a
+   * replayed schedule has them, `limitFaults` bounds any other), so a
+   * chooser built by hand is unbounded unless wrapped.
    */
-  readonly faultPlan?: readonly number[];
+  readonly chooser: Chooser;
 }
 
 class InvocationState implements Invocation {
@@ -176,7 +152,6 @@ export class Run implements RunHooks {
   private readonly faults: FaultDecision[] = [];
   private effectIndex = 0;
   private eligibleSeen = 0;
-  private prng: PrngState;
   private readonly invocations = new Map<string, InvocationState>();
   private readonly reasons: string[] = [];
   private readonly frames = new Frames();
@@ -196,9 +171,8 @@ export class Run implements RunHooks {
 
   constructor(options: RunOptions) {
     this.options = options;
-    this.prng = seedPrng(options.schedule.seed);
     this.turns = new Turns(
-      options,
+      options.chooser,
       this.frames,
       (id) => this.runAs(id),
       () => this.patched?.reads,
@@ -210,14 +184,13 @@ export class Run implements RunHooks {
     return this.logState;
   }
 
-  /** The schedule as actually executed: input decisions during replay, drawn ones during exploration. */
+  /** The schedule as actually executed: the faults taken and, when they do not follow the seed, the turns. */
   get schedule(): Schedule {
-    const recorded =
-      this.options.chooser !== undefined || this.options.schedule.turns !== undefined;
+    const { seed, recordsTurns } = this.options.chooser;
     return {
-      seed: this.options.schedule.seed,
+      seed,
       faults: [...this.faults],
-      ...(recorded ? { turns: [...this.turns.picks] } : {}),
+      ...(recordsTurns ? { turns: [...this.turns.picks] } : {}),
     };
   }
 
@@ -258,7 +231,7 @@ export class Run implements RunHooks {
   install(externals: readonly ExternalDecl[] = []): void {
     installed = this;
     if (!this.patched) {
-      this.patched = patchGlobals(this.options.schedule.seed, {
+      this.patched = patchGlobals(this.options.chooser.seed, {
         // Web Crypto is real work the handler waits on: the run waits for it like an effect's I/O.
         trackIo: (work) => {
           this.frames.inFlight++;
@@ -365,43 +338,21 @@ export class Run implements RunHooks {
     return inv;
   }
 
-  /** Effect points so far that could take a fault (see `RunOptions.faultPlan`). */
+  /** Effect points so far that could take a fault (the positions a seeded chooser's plan counts). */
   get eligiblePoints(): number {
     return this.eligibleSeen;
   }
 
+  /** The fault at an eligible point, if any: the chooser's pick among none and the allowed kinds. */
   private decide(point: EffectPoint, ordinal: number): FaultKind | null {
-    const position = point.allowed.length > 0 ? this.eligibleSeen++ : -1;
-    const plan = this.options.faultPlan;
-    if (plan && this.options.mode === "explore" && !this.options.chooser) {
-      if (position < 0 || this.faults.length >= this.options.bounds.maxFaultsPerRun) return null;
-      if (!plan.includes(position)) return null;
-      const [i, next] = nextInt(this.prng, point.allowed.length);
-      this.prng = next;
-      return point.allowed[i] ?? null;
-    }
-    const chooser = this.options.chooser;
-    if (chooser && this.options.mode === "explore") {
-      if (point.allowed.length === 0 || this.faults.length >= this.options.bounds.maxFaultsPerRun)
-        return null;
-      const i = chooser.choose("fault", [
-        { label: "none" },
-        ...point.allowed.map((f) => ({ label: f })),
-      ]);
-      return i === 0 ? null : (point.allowed[i - 1] ?? null);
-    }
-    if (this.options.mode === "replay") {
-      const d = this.options.schedule.faults.find(
-        (f) => f.invocation === point.invocation && f.ordinal === ordinal,
-      );
-      return d && point.allowed.includes(d.fault) ? d.fault : null;
-    }
-    const [fault, next] = decideFault(this.prng, point.allowed, this.faults.length, {
-      maxFaultsPerRun: this.options.bounds.maxFaultsPerRun,
-      faultProbability: this.options.faultProbability,
-    });
-    this.prng = next;
-    return fault;
+    if (point.allowed.length === 0) return null;
+    this.eligibleSeen++;
+    const at = { invocation: point.invocation, ordinal };
+    const i = this.options.chooser.choose("fault", [
+      { label: "none", ...at },
+      ...point.allowed.map((fault) => ({ label: fault, ...at })),
+    ]);
+    return i === 0 ? null : (point.allowed[i - 1] ?? null);
   }
 
   private record(point: EffectPoint, kind: "call" | "result" | "fault", payload: JsonValue): void {

@@ -3,8 +3,8 @@
  * a scenario with no setup needs no bindings, so delivery, acknowledgement,
  * redelivery, dead-lettering and background work can be checked directly.
  */
-import type { AtLeastOnce, EffectLog, ScenarioSpec } from "@eutaxy/core";
-import { explore, Run, restrictSpec, runOnce } from "@eutaxy/engine";
+import type { AtLeastOnce, EffectLog, ScenarioSpec, Schedule } from "@eutaxy/core";
+import { explore, Run, replayChooser, restrictSpec, runOnce } from "@eutaxy/engine";
 import { describe, expect, test } from "vitest";
 import { createCloudflarePlatform, type WorkerHandler } from "./platform.ts";
 import { atLeastOncePerMessage, http, queue } from "./scenario.ts";
@@ -45,13 +45,11 @@ function platformFor(handler: Handler, env: object = {}) {
 async function logOf(
   s: ScenarioSpec,
   handler: Handler,
-  faults: Run["options"]["schedule"]["faults"] = [],
+  faults: Schedule["faults"] = [],
 ): Promise<EffectLog> {
   const run = new Run({
-    mode: "replay",
-    schedule: { seed: 1, faults },
+    chooser: replayChooser({ seed: 1, faults }),
     bounds: s.bounds,
-    faultProbability: 0,
   });
   return runOnce(s, platformFor(handler), run);
 }
@@ -282,13 +280,11 @@ describe("inbound requests", () => {
   async function logOf(
     s: ScenarioSpec,
     fetch: Fetch,
-    faults: Run["options"]["schedule"]["faults"] = [],
+    faults: Schedule["faults"] = [],
   ): Promise<EffectLog> {
     const run = new Run({
-      mode: "replay",
-      schedule: { seed: 1, faults },
+      chooser: replayChooser({ seed: 1, faults }),
       bounds: s.bounds,
-      faultProbability: 0,
     });
     return runOnce(s, platformFor(fetch), run);
   }
@@ -529,10 +525,8 @@ describe("concurrent queue consumers", () => {
     });
     for (const seed of [1, 2, 3, 4]) {
       const run = new Run({
-        mode: "replay",
-        schedule: { seed, faults: [] },
+        chooser: replayChooser({ seed, faults: [] }),
         bounds: s.bounds,
-        faultProbability: 0,
       });
       const log = await runOnce(s, platformFor(handler), run);
       expect(run.unsupportedReasons).toEqual([]);
@@ -572,14 +566,12 @@ describe("caller timing on the http drive", () => {
   async function runOf(
     s: ScenarioSpec,
     fetch: Fetch,
-    faults: Run["options"]["schedule"]["faults"] = [],
+    faults: Schedule["faults"] = [],
     seed = 1,
   ): Promise<{ log: EffectLog; run: Run }> {
     const run = new Run({
-      mode: "replay",
-      schedule: { seed, faults },
+      chooser: replayChooser({ seed, faults }),
       bounds: s.bounds,
-      faultProbability: 0,
     });
     const log = await runOnce(
       s,

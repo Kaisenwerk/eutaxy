@@ -12,7 +12,7 @@ import {
   type JsonValue,
   type ScenarioSpec,
 } from "@eutaxy/core";
-import { Run, runOnce, virtualEpoch } from "@eutaxy/engine";
+import { Run, replayChooser, runOnce, virtualEpoch } from "@eutaxy/engine";
 import { describe, expect, test } from "vitest";
 import { FakeR2 } from "./fake-r2.ts";
 import { createCloudflarePlatform, type WorkerHandler } from "./platform.ts";
@@ -117,10 +117,8 @@ async function run(
 ) {
   seen = [];
   const r = new Run({
-    mode: "replay",
-    schedule: { seed: 1, faults: [...faults] },
+    chooser: replayChooser({ seed: 1, faults: [...faults] }),
     bounds: spec.bounds,
-    faultProbability: 0,
   });
   await runOnce(
     spec,
@@ -292,10 +290,8 @@ describe("R2 bucket", () => {
         spec,
         createCloudflarePlatform({ env: { BUCKET: new FakeR2() }, handler, schemas: {} }),
         new Run({
-          mode: "replay",
-          schedule: { seed: 1, faults: [] },
+          chooser: replayChooser({ seed: 1, faults: [] }),
           bounds: spec.bounds,
-          faultProbability: 0,
         }),
       );
       return out;

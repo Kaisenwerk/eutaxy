@@ -710,6 +710,18 @@ text report as in the JSON, reports whether enumeration completed, how many
 schedules ran (the run that turned the reduction off among them), and
 whether the reduction stayed on.
 
+How a run chooses is one object, the engine's `Chooser`: at each decision the
+run puts the options to it, a fault (or none) at an effect point that may
+take one, the next turn in a concurrent run, and takes the index it returns.
+Seeded exploration, replay and exhaustive exploration are its three
+implementations, built in `explore`: the seeded one draws from two streams
+seeded by the run's seed (faults placed by the plan above, turns apart from
+them), the replaying one looks a recorded schedule up, the enumerator picks.
+The chooser also owns the seed of the run's virtual globals and whether its
+turns must be recorded, and the fault bound (`maxFaultsPerRun`) is applied
+to it, so the run loop holds no policy, and a new kind of decision is one
+more question to the same object.
+
 **Concurrent invocations.** With `maxConcurrentInvocations` above 1, up to
 that many invocations are in flight, as concurrent requests are in one
 isolate ("other requests may (or may not) be processed during awaiting any

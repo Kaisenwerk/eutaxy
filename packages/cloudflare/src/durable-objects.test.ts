@@ -4,8 +4,8 @@
  * over, and reset, seeding and snapshots. The real objects run in workerd in
  * the corpus (lease-pool-lost-response).
  */
-import type { EffectLog, ScenarioSpec } from "@eutaxy/core";
-import { Run, runOnce } from "@eutaxy/engine";
+import type { EffectLog, ScenarioSpec, Schedule } from "@eutaxy/core";
+import { Run, replayChooser, runOnce } from "@eutaxy/engine";
 import { describe, expect, test } from "vitest";
 import { Backing, FakeStorage } from "./fake-durable-objects.ts";
 import { createCloudflarePlatform, type WorkerHandler } from "./platform.ts";
@@ -205,13 +205,11 @@ async function runWith(
           ? "open"
           : "bump";
   const run = new Run({
-    mode: "replay",
-    schedule: {
+    chooser: replayChooser({
       seed: 1,
       faults: fault ? [{ invocation: "req-1#1", ordinal: 0, fault, target: "DO:COUNTER", op }] : [],
-    },
+    }),
     bounds: s.bounds,
-    faultProbability: 0,
   });
   if (options.withHelpers === false) {
     // Without helpers there is no setup to apply: drop it so reset does not demand them.
@@ -287,10 +285,8 @@ describe("Durable Object stub calls", () => {
     const s = spec();
     for (let i = 0; i < 2; i++) {
       const run = new Run({
-        mode: "replay",
-        schedule: { seed: 1, faults: [] },
+        chooser: replayChooser({ seed: 1, faults: [] }),
         bounds: s.bounds,
-        faultProbability: 0,
       });
       await runOnce(s, platform, run);
       expect(stored(storages)).toBe(42);
@@ -319,10 +315,8 @@ describe("Durable Object stub calls", () => {
     });
     const s = { ...spec(), setup: [] };
     const run = new Run({
-      mode: "replay",
-      schedule: { seed: 1, faults: [] },
+      chooser: replayChooser({ seed: 1, faults: [] }),
       bounds: s.bounds,
-      faultProbability: 0,
     });
     await runOnce(s, platform, run);
     expect(run.unsupportedReasons.join()).toContain("COUNTER has no durableObject setup");
@@ -365,10 +359,8 @@ describe("Durable Object stub calls", () => {
     });
     const s = spec();
     const run = new Run({
-      mode: "replay",
-      schedule: { seed: 1, faults: [] },
+      chooser: replayChooser({ seed: 1, faults: [] }),
       bounds: s.bounds,
-      faultProbability: 0,
     });
     await runOnce(s, platform, run);
     expect(run.unsupportedReasons.join()).toContain("jurisdiction");
@@ -388,12 +380,10 @@ describe("Durable Object stub calls", () => {
       durableObjects: helpers,
     });
     const s = spec("/other");
-    const snapshotOf = async (faults: Run["options"]["schedule"]["faults"]) => {
+    const snapshotOf = async (faults: Schedule["faults"]) => {
       const run = new Run({
-        mode: "replay",
-        schedule: { seed: 1, faults },
+        chooser: replayChooser({ seed: 1, faults }),
         bounds: s.bounds,
-        faultProbability: 0,
       });
       const log = await runOnce(s, platform, run);
       return log.entries.find((e) => e.kind === "snapshot" && e.target === "DO:COUNTER")?.payload;
@@ -424,10 +414,8 @@ describe("Durable Object stub calls", () => {
     const objectIn = async (path: string) => {
       const s = spec(path);
       const run = new Run({
-        mode: "replay",
-        schedule: { seed: 1, faults: [] },
+        chooser: replayChooser({ seed: 1, faults: [] }),
         bounds: s.bounds,
-        faultProbability: 0,
       });
       const log = await runOnce(s, platform, run);
       return (log.entries[0]?.payload as { args?: { object?: string } } | undefined)?.args?.object;
@@ -486,10 +474,8 @@ describe("snapshot tables", () => {
     const seed = JSON.parse('{"__proto__": {"n": 1}, "c": {"n": 40}}');
     const s = { ...spec(), setup: [durableObject("COUNTER", seed)] };
     const run = new Run({
-      mode: "replay",
-      schedule: { seed: 1, faults: [] },
+      chooser: replayChooser({ seed: 1, faults: [] }),
       bounds: s.bounds,
-      faultProbability: 0,
     });
     const log = await runOnce(s, platform, run);
     const snapshot = log.entries.find((e) => e.kind === "snapshot" && e.target === "DO:COUNTER");
@@ -515,10 +501,8 @@ describe("seeds by name", () => {
         setup: [durableObject("COUNTER", { "": { n: 5 }, c: { n: 40 } })],
       };
       const run = new Run({
-        mode: "replay",
-        schedule: { seed: 1, faults: [] },
+        chooser: replayChooser({ seed: 1, faults: [] }),
         bounds: s.bounds,
-        faultProbability: 0,
       });
       await runOnce(s, platform, run);
     };

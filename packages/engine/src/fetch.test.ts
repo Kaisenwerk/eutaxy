@@ -1,5 +1,6 @@
 import type { ExternalDecl, ScenarioSpec } from "@eutaxy/core";
 import { describe, expect, test } from "vitest";
+import { replayChooser } from "./chooser.ts";
 import { explore, replay } from "./explore.ts";
 import { buggyConsumer, createFakePlatform } from "./fake-platform.ts";
 import { createScriptedFetch, findResponse, hostMatches, withoutNetwork } from "./fetch.ts";
@@ -229,10 +230,8 @@ describe("scripted fetch as effect points", () => {
     );
     expect(verdict.kind).not.toBe("VIOLATED");
     const run = new Run({
-      mode: "replay",
-      schedule: { seed: 1, faults: [] },
+      chooser: replayChooser({ seed: 1, faults: [] }),
       bounds: spec.bounds,
-      faultProbability: 0,
     });
     run.install();
     run.uninstall();

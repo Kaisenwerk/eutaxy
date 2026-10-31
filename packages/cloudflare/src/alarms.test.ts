@@ -6,7 +6,7 @@
  * corpus.
  */
 import type { EffectLog, FaultDecision, RunHooks, ScenarioSpec } from "@eutaxy/core";
-import { Run, runOnce, virtualEpoch } from "@eutaxy/engine";
+import { Run, replayChooser, runOnce, virtualEpoch } from "@eutaxy/engine";
 import { describe, expect, test } from "vitest";
 import { alarmRunner, BindingState } from "./durable-objects.ts";
 import { Backing, FakeStorage } from "./fake-durable-objects.ts";
@@ -292,10 +292,8 @@ async function runWith(
     },
   };
   const run = new Run({
-    mode: "replay",
-    schedule: { seed: 1, faults: options.faults ?? [] },
+    chooser: replayChooser({ seed: 1, faults: options.faults ?? [] }),
     bounds: spec.bounds,
-    faultProbability: 0,
   });
   const log = await runOnce(spec, platform, run);
   const fired = (backings.get("id-r")?.data.get("fired") ?? []) as {

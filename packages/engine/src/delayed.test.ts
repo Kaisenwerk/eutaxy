@@ -1,5 +1,6 @@
 import type { EventRef, Platform, RunHooks, ScenarioSpec } from "@eutaxy/core";
 import { describe, expect, test } from "vitest";
+import { replayChooser } from "./chooser.ts";
 import { virtualEpoch } from "./clock.ts";
 import { runOnce } from "./explore.ts";
 import { Run } from "./run.ts";
@@ -56,10 +57,8 @@ async function startsOf(maxConcurrentInvocations: number): Promise<string[]> {
   const spec = specFor(maxConcurrentInvocations);
   const platform = delayingPlatform(maxConcurrentInvocations > 1);
   const run = new Run({
-    mode: "replay",
-    schedule: { seed: 1, faults: [] },
+    chooser: replayChooser({ seed: 1, faults: [] }),
     bounds: spec.bounds,
-    faultProbability: 0,
   });
   await runOnce(spec, platform, run);
   return platform.starts;
@@ -80,10 +79,8 @@ describe("delayed events", () => {
 
   test("a timer's continuation runs before time moves on to the next timer", async () => {
     const run = new Run({
-      mode: "replay",
-      schedule: { seed: 1, faults: [] },
+      chooser: replayChooser({ seed: 1, faults: [] }),
       bounds: specFor(1).bounds,
-      faultProbability: 0,
     });
     run.install();
     const seen: string[] = [];
@@ -102,10 +99,8 @@ describe("delayed events", () => {
 
   test("letting time pass fires the timers due before the event, in due order", async () => {
     const run = new Run({
-      mode: "replay",
-      schedule: { seed: 1, faults: [] },
+      chooser: replayChooser({ seed: 1, faults: [] }),
       bounds: specFor(1).bounds,
-      faultProbability: 0,
     });
     run.install();
     const fired: number[] = [];

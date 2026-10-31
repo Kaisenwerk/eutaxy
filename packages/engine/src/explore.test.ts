@@ -7,6 +7,7 @@ import {
   type ScenarioSpec,
 } from "@eutaxy/core";
 import { describe, expect, test } from "vitest";
+import { replayChooser } from "./chooser.ts";
 import { explore, replay } from "./explore.ts";
 import { buggyConsumer, createFakePlatform } from "./fake-platform.ts";
 import { Run } from "./run.ts";
@@ -454,10 +455,8 @@ describe("shrinking", () => {
 describe("Run", () => {
   test("bookkeeping is one invocation per run that never becomes the running one", () => {
     const run = new Run({
-      mode: "replay",
-      schedule: { seed: 1, faults: [] },
+      chooser: replayChooser({ seed: 1, faults: [] }),
       bounds: spec.bounds,
-      faultProbability: 0,
     });
     run.startInvocation("i");
     const id = run.bookkeeping();
@@ -471,16 +470,14 @@ describe("Run", () => {
 
   test("replay mode follows the schedule exactly and ignores disallowed faults", async () => {
     const run = new Run({
-      mode: "replay",
-      schedule: {
+      chooser: replayChooser({
         seed: 1,
         faults: [
           { invocation: "i", ordinal: 0, fault: "error", target: "T", op: "o" },
           { invocation: "i", ordinal: 1, fault: "ambiguous", target: "T", op: "o" },
         ],
-      },
+      }),
       bounds: spec.bounds,
-      faultProbability: 0,
     });
     run.startInvocation("i");
     await expect(
@@ -506,13 +503,11 @@ describe("Run", () => {
 
   test("after a crash, further effects of that invocation hang or throw and record nothing", async () => {
     const run = new Run({
-      mode: "replay",
-      schedule: {
+      chooser: replayChooser({
         seed: 1,
         faults: [{ invocation: "i", ordinal: 0, fault: "crash_after", target: "T", op: "w" }],
-      },
+      }),
       bounds: spec.bounds,
-      faultProbability: 0,
     });
     const inv = run.startInvocation("i");
     let performed = 0;
@@ -539,13 +534,11 @@ describe("Run", () => {
 
   test("an effect in flight when a cut_off lands commits but its continuation never runs", async () => {
     const run = new Run({
-      mode: "replay",
-      schedule: {
+      chooser: replayChooser({
         seed: 1,
         faults: [{ invocation: "j", ordinal: 1, fault: "cut_off", target: "Q", op: "background" }],
-      },
+      }),
       bounds: spec.bounds,
-      faultProbability: 0,
     });
     const j = run.startInvocation("j");
     let release: () => void = () => {};
@@ -584,10 +577,8 @@ describe("Run", () => {
 
   test("a real error from the effect is recorded as a result with the error, then rethrown", async () => {
     const run = new Run({
-      mode: "replay",
-      schedule: { seed: 1, faults: [] },
+      chooser: replayChooser({ seed: 1, faults: [] }),
       bounds: spec.bounds,
-      faultProbability: 0,
     });
     run.startInvocation("i");
     await expect(

@@ -1,11 +1,10 @@
 /**
  * The concurrent scheduler. Each asynchronous effect of a concurrent run is
  * a turn: the invocation parks there, and once every invocation has parked,
- * finished or gone idle the run picks which parked one goes next (or whether
- * a new event starts): from the recorded turns when replaying them, from the
- * chooser when exploring exhaustively, else from a stream seeded by the
- * schedule's seed. It also tracks whether turns told apart by their parked
- * effects' targets may not commute, which partial-order reduction needs.
+ * finished or gone idle the run's chooser picks which parked one goes next
+ * (or whether a new event starts). It also tracks whether turns told apart
+ * by their parked effects' targets may not commute, which partial-order
+ * reduction needs.
  *
  * Between turns the run waits for the code it released to come to rest
  * (`quiesce`): progress (a park, a delivery's end, real I/O completing)
@@ -18,10 +17,9 @@
  * the event loop and costs about a millisecond.
  */
 
-import { nextInt, type PrngState, seedPrng } from "@eutaxy/core";
+import type { ChoiceOption, Chooser } from "./chooser.ts";
 import { cheapEventLoopTurn, realDeadline } from "./clock.ts";
 import type { Frame, Frames } from "./frames.ts";
-import type { ChoiceOption, RunOptions } from "./run.ts";
 
 /** What the scheduler needs of an invocation. */
 export interface Turner {
@@ -42,7 +40,7 @@ interface Parked {
 }
 
 export class Turns {
-  private readonly options: RunOptions;
+  private readonly chooser: Chooser;
   private readonly frames: Frames;
   /** Makes an invocation the running one. */
   private readonly runAs: (id: string | null) => void;
@@ -53,8 +51,6 @@ export class Turns {
   private parkSeq = 0;
   /** The turns picked at decisions with more than one option, in order (see Schedule.turns). */
   private readonly picked: number[] = [];
-  /** Turns taken from `schedule.turns` so far, when replaying recorded turns. */
-  private replayed = 0;
   /** Events started so far, to name the next start the same in every run. */
   private starts = 0;
   /** The target of the turn running since the last decision; null for an event's start or none. */
@@ -70,20 +66,17 @@ export class Turns {
   private restsAtStep = 0;
   /** The order invocations started in, which orders the parked ones. */
   private readonly startOrder = new Map<string, number>();
-  /** The picks among parked invocations, drawn apart from fault decisions. */
-  private prng: PrngState;
 
   constructor(
-    options: RunOptions,
+    chooser: Chooser,
     frames: Frames,
     runAs: (id: string | null) => void,
     reads: () => { count: number } | undefined,
   ) {
-    this.options = options;
+    this.chooser = chooser;
     this.frames = frames;
     this.runAs = runAs;
     this.reads = reads;
-    this.prng = seedPrng(`turns:${options.schedule.seed}`);
   }
 
   /** The turns picked so far, as a copy. */
@@ -212,14 +205,12 @@ export class Turns {
     this.turnTarget = null;
     this.step();
     if (options === 0) return "none";
-    let pick = 0;
-    if (options > 1) {
-      pick = this.pickTurn(options, canStart);
-      this.picked.push(pick);
-    } else if (this.options.chooser && this.options.mode === "explore") {
-      // Not a choice, but the enumerator sees it: a single turn can still repeat an explored order.
-      this.options.chooser.choose("turn", this.turnOptions(canStart));
-    }
+    // Put to the chooser even with one option (the enumerator sees it: a single turn can still
+    // repeat an explored order); recorded only when it was a choice. An answer past the options
+    // (a recorded turn from a run that had more) means the first.
+    const answer = this.chooser.choose("turn", this.turnOptions(canStart));
+    const pick = answer < options ? answer : 0;
+    if (options > 1) this.picked.push(pick);
     const [chosen] = pick < this.parked.length ? this.parked.splice(pick, 1) : [];
     if (!chosen) {
       this.starts++;
@@ -240,20 +231,5 @@ export class Turns {
       ...this.parked.map((p) => p.option),
       ...(canStart ? [{ label: `start:${this.starts}` }] : []),
     ];
-  }
-
-  /** The turn at a decision with more than one option: recorded, chosen, or drawn from the seed. */
-  private pickTurn(options: number, canStart: boolean): number {
-    const recorded = this.options.schedule.turns;
-    if (this.options.mode === "replay" && recorded) {
-      const i = recorded[this.replayed++] ?? 0;
-      return i < options ? i : 0;
-    }
-    const chooser = this.options.chooser;
-    if (chooser && this.options.mode === "explore")
-      return chooser.choose("turn", this.turnOptions(canStart));
-    const [i, next] = nextInt(this.prng, options);
-    this.prng = next;
-    return i;
   }
 }

@@ -15,6 +15,7 @@ import {
   type Platform,
   type ScenarioSpec,
 } from "@eutaxy/core";
+import { replayChooser } from "./chooser.ts";
 import { runOnce } from "./explore.ts";
 import { Run } from "./run.ts";
 
@@ -39,10 +40,8 @@ export async function proxiedSide<A>(
   attempt: (event: EventRef, result: DeliveryResult, entries: readonly EffectRecord[]) => A,
 ): Promise<{ readonly attempts: readonly A[]; readonly unsupported: readonly string[] }> {
   const run = new Run({
-    mode: "replay",
-    schedule: { seed: 0, faults: [] },
     bounds: { ...spec.bounds, maxConcurrentInvocations: 1 },
-    faultProbability: 0,
+    chooser: replayChooser({ seed: 0, faults: [] }),
   });
   const attempts: A[] = [];
   // Every member forwarded to the platform itself, so a class's methods keep their `this`.

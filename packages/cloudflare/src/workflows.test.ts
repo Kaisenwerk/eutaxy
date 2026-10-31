@@ -6,7 +6,7 @@
  * corpus checks the model against that engine inside workerd.
  */
 import type { EffectRecord, RunHooks, ScenarioSpec } from "@eutaxy/core";
-import { explore, Run, runOnce, virtualEpoch } from "@eutaxy/engine";
+import { explore, Run, replayChooser, runOnce, virtualEpoch } from "@eutaxy/engine";
 import { describe, expect, test } from "vitest";
 import { createCloudflarePlatform, type WorkerHandler } from "./platform.ts";
 import { defineScenario, external, fetchCall, http, workflow, workflowRows } from "./scenario.ts";
@@ -533,10 +533,8 @@ const platform = () =>
 async function run(spec: ScenarioSpec, faults: Run["schedule"]["faults"] = []) {
   outside = [];
   const r = new Run({
-    mode: "replay",
-    schedule: { seed: 1, faults: [...faults] },
+    chooser: replayChooser({ seed: 1, faults: [...faults] }),
     bounds: spec.bounds,
-    faultProbability: 0,
   });
   await runOnce(spec, platform(), r);
   return r;
@@ -821,10 +819,8 @@ describe("a Workflow started from a webhook", () => {
         },
       };
       const r = new Run({
-        mode: "replay",
-        schedule: { seed: 1, faults: [] },
+        chooser: replayChooser({ seed: 1, faults: [] }),
         bounds: scenario("ReplyFlow").bounds,
-        faultProbability: 0,
       });
       await runOnce(
         scenario("ReplyFlow"),
@@ -882,10 +878,8 @@ describe("a Workflow started from a webhook", () => {
     });
     const deliver = async (i: ReturnType<typeof instance>) => {
       const r = new Run({
-        mode: "replay",
-        schedule: { seed: 1, faults: [] },
+        chooser: replayChooser({ seed: 1, faults: [] }),
         bounds: scenario("DeepFlow").bounds,
-        faultProbability: 0,
       });
       const event = {
         id: "workflow:FLOW:d1",

@@ -1,6 +1,7 @@
 import { type AtMostOncePerKey, digestLog, type ScenarioSpec } from "@eutaxy/core";
 import { describe, expect, test, vi } from "vitest";
-import { explore, replayRun } from "./explore.ts";
+import { replayChooser } from "./chooser.ts";
+import { explore, replayRun, runOnce } from "./explore.ts";
 import { checkThenInsertConsumer, createFakePlatform, type FakeHandler } from "./fake-platform.ts";
 import { Run } from "./run.ts";
 
@@ -181,11 +182,10 @@ describe("concurrent invocations", () => {
       // scenario sets no timers and nothing in it gets stuck, so every step is such a decision.)
       let decisions = 0;
       const run = new FreshRun({
-        mode: "explore",
-        schedule: { seed: 7, faults: [] },
         bounds: raceSpec(2).bounds,
-        faultProbability: 0,
         chooser: {
+          seed: 7,
+          recordsTurns: false,
           choose: (kind) => {
             if (kind === "turn") decisions++;
             return 0;
@@ -212,6 +212,20 @@ describe("concurrent invocations", () => {
   test("the same seed explores the same interleavings", async () => {
     const run = () => explore(raceSpec(2), concurrent(), { seed: 7, now: fixedClock, maxRuns: 20 });
     expect(JSON.stringify(await run())).toBe(JSON.stringify(await run()));
+  });
+
+  test("a turn pick past the options on offer is taken as the first, and the run still finishes", async () => {
+    // A chooser that always answers past the end (a recorded turn from a run that had more options there).
+    const run = new Run({
+      bounds: raceSpec(2).bounds,
+      chooser: { seed: 1, recordsTurns: false, choose: () => 99 },
+    });
+    await runOnce(raceSpec(2), concurrent(), run);
+    expect(run.unsupportedReasons).toEqual([]);
+    expect(calls(run.log.entries).filter((c) => c.endsWith(" ack"))).toEqual([
+      "m1#1 ack",
+      "m2#1 ack",
+    ]);
   });
 
   test("redeliveries take a free slot and every delivery still finishes", async () => {
@@ -568,18 +582,16 @@ describe("attribution under concurrency", () => {
 describe("nested effects", () => {
   test("a crash three effects deep ends every enclosing effect, without waiting for the deadline", async () => {
     const run = new Run({
-      mode: "replay",
-      schedule: {
+      chooser: replayChooser({
         seed: 1,
         faults: [{ invocation: "i#1", ordinal: 2, fault: "crash_before", target: "T", op: "c" }],
-      },
+      }),
       bounds: {
         maxFaultsPerRun: 1,
         maxRedeliveries: 0,
         maxConcurrentInvocations: 1,
         budgetMs: 100,
       },
-      faultProbability: 0,
     });
     const inv = run.startInvocation("i#1");
     const point = (op: string) => ({
@@ -606,20 +618,18 @@ describe("nested effects", () => {
 
   test("user code cannot catch a crash injected into a nested effect and carry on", async () => {
     const run = new Run({
-      mode: "replay",
-      schedule: {
+      chooser: replayChooser({
         seed: 1,
         faults: [
           { invocation: "i#1", ordinal: 1, fault: "crash_before", target: "T", op: "inner" },
         ],
-      },
+      }),
       bounds: {
         maxFaultsPerRun: 1,
         maxRedeliveries: 0,
         maxConcurrentInvocations: 1,
         budgetMs: 1_000,
       },
-      faultProbability: 0,
     });
     const inv = run.startInvocation("i#1");
     const point = (op: string) => ({
@@ -659,18 +669,16 @@ describe("nested effects", () => {
 
   test("an async context left over from a finished effect does not count as the enclosing one", async () => {
     const run = new Run({
-      mode: "replay",
-      schedule: {
+      chooser: replayChooser({
         seed: 1,
         faults: [{ invocation: "i#2", ordinal: 1, fault: "crash_after", target: "T", op: "inner" }],
-      },
+      }),
       bounds: {
         maxFaultsPerRun: 1,
         maxRedeliveries: 0,
         maxConcurrentInvocations: 1,
         budgetMs: 1_000,
       },
-      faultProbability: 0,
     });
     const point = (invocation: string, op: string, hostsEffects = false) => ({
       invocation,
@@ -721,15 +729,13 @@ describe("nested effects", () => {
     timeout: 10_000,
   }, async () => {
     const run = new Run({
-      mode: "replay",
-      schedule: { seed: 1, faults: [] },
+      chooser: replayChooser({ seed: 1, faults: [] }),
       bounds: {
         maxFaultsPerRun: 0,
         maxRedeliveries: 0,
         maxConcurrentInvocations: 2,
         budgetMs: 2_000,
       },
-      faultProbability: 0,
     });
     run.install();
     try {

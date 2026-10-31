@@ -16,7 +16,7 @@
  * counted as a schedule and nothing below it is explored.
  */
 
-import type { ChoiceOption, Chooser } from "./run.ts";
+import { type ChoiceOption, type Chooser, limitFaults } from "./chooser.ts";
 
 interface Node {
   readonly kind: "fault" | "turn";
@@ -64,11 +64,15 @@ export class Enumerator {
     return this.mismatchReason;
   }
 
-  /** The chooser for the next run: the explored prefix, then the first option not asleep. */
+  /**
+   * The chooser for the next run: the explored prefix, then the first option
+   * not asleep. Enumerated runs pick their choices and share one seed for
+   * the virtual globals; their turns are recorded, since they do not follow it.
+   */
   next(): Chooser {
     this.depth = 0;
     this.blockedAt = null;
-    return { choose: (kind, options) => this.choose(kind, options) };
+    return { seed: 0, recordsTurns: true, choose: (kind, options) => this.choose(kind, options) };
   }
 
   private choose(kind: "fault" | "turn", options: readonly ChoiceOption[]): number {
@@ -138,12 +142,14 @@ export class Enumerator {
 export class ExhaustiveDriver {
   private reduction: boolean;
   private enumerator: Enumerator;
+  private readonly maxFaultsPerRun: number;
   private schedules = 0;
   private more = true;
   private restart = false;
 
-  constructor(reduction: boolean) {
+  constructor(reduction: boolean, maxFaultsPerRun: number) {
     this.reduction = reduction;
+    this.maxFaultsPerRun = maxFaultsPerRun;
     this.enumerator = new Enumerator({ reduction });
   }
 
@@ -157,9 +163,9 @@ export class ExhaustiveDriver {
     return this.enumerator.mismatch;
   }
 
-  /** The chooser for the next run. */
+  /** The chooser for the next run, under the run's fault bound. */
   next(): Chooser {
-    return this.enumerator.next();
+    return limitFaults(this.enumerator.next(), this.maxFaultsPerRun);
   }
 
   /**

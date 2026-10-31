@@ -21,6 +21,7 @@ import {
   type Schedule,
   seedPrng,
 } from "@eutaxy/core";
+import { replayChooser, seededChooser } from "./chooser.ts";
 import { ExhaustiveDriver } from "./exhaustive.ts";
 import { concurrencySupported, Run, type StartedDelivery } from "./run.ts";
 import { shrink } from "./shrink.ts";
@@ -221,7 +222,7 @@ export async function replayRun(
   platform: Platform,
   schedule: Schedule,
 ): Promise<Run> {
-  const run = new Run({ mode: "replay", schedule, bounds: spec.bounds, faultProbability: 0 });
+  const run = new Run({ bounds: spec.bounds, chooser: replayChooser(schedule) });
   await runOnce(spec, platform, run);
   return run;
 }
@@ -291,6 +292,7 @@ export async function explore(
   const exhaustive = options.exhaustive
     ? new ExhaustiveDriver(
         typeof options.exhaustive === "object" ? (options.exhaustive.reduction ?? true) : true,
+        spec.bounds.maxFaultsPerRun,
       )
     : null;
   const doneNow = (): BoundsReached => ({
@@ -316,12 +318,14 @@ export async function explore(
       );
     }
     const run = new Run({
-      mode: "explore",
-      // Enumerated runs pick their choices; they share one seed for the virtual globals.
-      schedule: { seed: exhaustive ? 0 : runSeed, faults: [] },
       bounds: spec.bounds,
-      faultProbability,
-      ...(exhaustive ? { chooser: exhaustive.next() } : { faultPlan }),
+      chooser: exhaustive
+        ? exhaustive.next()
+        : seededChooser(runSeed, {
+            faultPlan,
+            faultProbability,
+            maxFaultsPerRun: spec.bounds.maxFaultsPerRun,
+          }),
     });
     const log = await runOnce(spec, platform, run);
     reached.runs++;
