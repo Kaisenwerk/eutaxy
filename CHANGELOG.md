@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.10.0](https://github.com/Kaisenwerk/eutaxy/compare/v0.9.1...v0.10.0) (2026-10-31)
+
+
+### Features
+
+* **cloudflare:** drive a WorkerEntrypoint over RPC ([7b70e88](https://github.com/Kaisenwerk/eutaxy/commit/7b70e88b4a9fb9f0a7d966c6f71f4f2ae808a1a1))
+* **cloudflare:** drive the scheduled handler with a Cron Trigger's ticks ([9624144](https://github.com/Kaisenwerk/eutaxy/commit/96241448e20979e455a9b10cdddea0f29cd5eef6))
+* **cloudflare:** service bindings with the callee scripted ([222d87d](https://github.com/Kaisenwerk/eutaxy/commit/222d87da8fbc973227c8089737c8a04d97cedebd))
+* **cloudflare:** Workflow events, a wait that suspends the instance until its event or deadline ([b169e22](https://github.com/Kaisenwerk/eutaxy/commit/b169e22b0235639e29679834c5dd8e1660089e99))
+
 ## [0.9.1](https://github.com/Kaisenwerk/eutaxy/compare/v0.9.0...v0.9.1) (2026-10-30)
 
 
