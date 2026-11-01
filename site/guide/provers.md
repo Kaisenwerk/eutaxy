@@ -30,17 +30,38 @@ npx eutaxy report ./src --prover smt
 ## Installing the toolchains
 
 Each engine is pinned to one release, and nothing is downloaded during a
-check.
-- **Lean**: install [elan](https://elan.lean-lang.org), Lean's toolchain
-  manager, then the pinned release:
+check. One command puts the pinned release on the machine:
 
-  ```sh
-  elan toolchain install leanprover/lean4:v4.35.0
-  ```
+```sh
+npx eutaxy prover install lean
+npx eutaxy prover install smt
+```
 
-- **Z3**: version 5.3.2 on the `PATH`, from the
+It downloads the release file for your platform (Linux and macOS on x64
+and arm64, Windows on x64) from the upstream GitHub release, checks its
+SHA-256 against the one Eutaxy ships before unpacking anything, and
+unpacks it into Eutaxy's cache (`EUTAXY_CACHE_DIR`, else `~/.cache/eutaxy`
+on Linux, `~/Library/Caches/eutaxy` on macOS, `%LOCALAPPDATA%\eutaxy\Cache`
+on Windows), where `--prover` looks first. Lean's release is about 600 MB
+to download and 2.8 GB unpacked, the same as elan installs; Z3's about
+60 MB and 150 MB. Behind a proxy or offline,
+`--from <url or directory>` names a mirror or a directory holding the same
+file under its upstream name; the checksum check is the same. `--json`
+prints what was installed, from where, and the checksum. A toolchain
+already in the cache is reported and not downloaded again; to reinstall,
+delete its directory under `toolchains/` in the cache.
+
+A toolchain installed another way still serves, after the cache:
+- **Lean**: [elan](https://elan.lean-lang.org), Lean's toolchain manager,
+  with the pinned release (`elan toolchain install leanprover/lean4:v4.35.0`),
+  or a `lean` of exactly that version on the `PATH`.
+- **Z3**: version 5.3.2 on the `PATH` (or `EUTAXY_Z3`), from the
   [Z3 releases](https://github.com/Z3Prover/z3/releases/tag/z3-5.3.2) or
-  `brew install z3`.
+  `brew install z3`. The Linux releases need glibc 2.39 (x64) or 2.38
+  (arm64).
+
+In CI, cache the toolchains directory and run the two commands before the
+check; an installed toolchain costs no download.
 
 ## The Lean engine
 

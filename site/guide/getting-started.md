@@ -16,8 +16,8 @@ in the repository.
   `.toml`).
 - TypeScript 7.1. Until its release, that is `typescript@7.1.0-beta`: the
   spec reader asks your compiler for the types of your functions.
-- Optional: [elan](https://elan.lean-lang.org) for the Lean engine and
-  Z3 on the `PATH` for the SMT engine. See [Provers](/guide/provers).
+- Optional: a prover toolchain, installed with one command
+  (`npx eutaxy prover install lean`, `… smt`). See [Provers](/guide/provers).
 
 ## Install
 

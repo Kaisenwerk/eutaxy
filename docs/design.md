@@ -1156,7 +1156,8 @@ what the TypeScript computes on inputs drawn from its parameter types,
 checked by Lean's kernel (`example … := by decide`).
 
 Lean runs over a process boundary. The engine is pinned to one release
-(`leanToolchain`), found through `elan`, Lean's toolchain manager, only
+(`leanToolchain`), found in Eutaxy's cache first, where `eutaxy prover
+install lean` puts it, then through `elan`, Lean's toolchain manager, only
 when it already has that release, or through a bare `lean` of exactly that
 version; nothing is downloaded during a check, and a missing toolchain is
 `unavailable` with the command that installs it. One Lean run checks a
@@ -1196,7 +1197,8 @@ engine proves the same contract corpus, so a disagreement is `CONFLICT`.
 Nonlinear arithmetic over doubles, recursion and induction are where the
 solver gives up and Lean takes over; `total` is Lean's alone, since a
 solver does not decide termination. The engine is pinned to one Z3
-release (`z3Version`), found on the PATH and required to report that
+release (`z3Version`), found in Eutaxy's cache first, where `eutaxy prover
+install smt` puts it, then on the PATH, and required to report that
 version; nothing is downloaded during a check.
 
 **A further engine** would be a sibling package behind `Prover`, selected
@@ -1250,19 +1252,47 @@ Engine rules:
 - Peer dependencies only for what users already have: Vitest and the
   Cloudflare Vitest plugin, pinned to tested major versions because that
   integration's API has moved more than once.
-- Provers opt-in: `eutaxy prover install lean` (and `… smt`, roadmap)
-  fetches a pinned, checksum-verified toolchain. Projects list engines in
-  `eutaxy.config.ts`; a listed engine that is not installed yields
-  `UNKNOWN`. Never `optionalDependencies`, never a silent download during a
-  check.
+- Provers opt-in: `eutaxy prover install lean` and `eutaxy prover install
+  smt` put the pinned toolchain on the machine, and nothing else does:
+  never `optionalDependencies`, never a download during a check or on
+  `npm install`; an engine named but not installed yields `UNKNOWN`
+  (`unavailable`) with the command. Each engine's module holds, beside its
+  version pin, a table of the upstream release files for the platforms
+  Eutaxy runs on (Linux and macOS on x64 and arm64, Windows on x64): the
+  URL, the SHA-256 and the size of the file in the upstream GitHub release
+  (Lean's `tar.zst`, Z3's `zip`), and a test holds the table to the pin.
+  The command downloads the file for the current platform into Eutaxy's
+  cache directory (`EUTAXY_CACHE_DIR`, else the platform's user cache:
+  `$XDG_CACHE_HOME/eutaxy` or `~/.cache/eutaxy` on Linux,
+  `~/Library/Caches/eutaxy` on macOS, `%LOCALAPPDATA%\eutaxy\Cache` on
+  Windows), checks the SHA-256 before unpacking anything (a mismatch deletes
+  the download and installs nothing), unpacks into
+  `toolchains/<name>/<version>` beside a marker file naming the file and
+  its checksum, and deletes the archive. `--from <url or directory>`
+  replaces the download host with a mirror or an offline copy holding the
+  same file names, for CI behind a proxy or an air-gapped machine, the
+  checksum check unchanged; `--json` prints what was installed, from where
+  and the checksum checked, and a toolchain already in the cache is reported
+  and not downloaded again. The engines look in the cache first, then where
+  they looked before (elan and the `PATH` for Lean; `EUTAXY_Z3`, the `PATH`
+  and the package managers' prefixes for Z3), so a toolchain installed by
+  hand still serves. Upstream files are taken as published because
+  rebuilding the toolchains would mean a build matrix and hosting to secure;
+  Lean's release file is 570 to 620 MB per platform and about 2.8 GB unpacked
+  (the compiler ships its C toolchain), the same download elan makes, and a trimmed bundle (the
+  binary and `Init`, all the emitted modules load) is built only if a
+  target's CI minutes call for it. Eutaxy reads the archives itself (tar
+  over Node's zstd, zip over its inflate), so the command needs nothing but
+  Node; an entry that would write outside the toolchain directory is
+  refused. Projects list engines in `eutaxy.config.ts`.
 - Split into separate packages later only for a reason, most likely a
   prover engine. Released in lockstep with exact version pins.
 
-| Command                        | Does                                                                            |
-| ------------------------------ | ------------------------------------------------------------------------------- |
-| `eutaxy check <spec>`          | Run a scenario; print the verdict and the shrunk trace, write a regression test |
-| `eutaxy report [dir]`          | Run the spec ladder on every spec file under a directory, without a scenario    |
-| `eutaxy prover install <name>` | Download a pinned prover toolchain                                              |
+| Command                        | Does                                                                                |
+| ------------------------------ | ----------------------------------------------------------------------------------- |
+| `eutaxy check <spec>`          | Run a scenario; print the verdict and the shrunk trace, write a regression test     |
+| `eutaxy report [dir]`          | Run the spec ladder on every spec file under a directory, without a scenario        |
+| `eutaxy prover install <name>` | Put the pinned Lean or Z3 release for this platform in the cache, checksum-verified |
 
 `report` covers the pure core and needs only Node: it imports each module
 and its spec file, runs `TESTED` and, with `--prover`, `PROVEN`, and prints
