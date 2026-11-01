@@ -5,7 +5,8 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./reader": "./src/reader/index.ts"
+    "./reader": "./src/reader/index.ts",
+    "./toolchain": "./src/toolchain.ts"
   },
   "types": "./src/index.ts",
   "dependencies": {

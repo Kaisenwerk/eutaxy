@@ -83,11 +83,24 @@ that takes fewer types sees it. `readArrowBody` reads a spec file's arrow
 `renameVars` renames its parameters to the binders', `typeOf` types an
 expression. `closeCompiler` stops the compiler process.
 
-**May import.** `@eutaxy/core`, `@eutaxy/spec`, and the compiler API
+**The toolchain cache** (`@eutaxy/prover/toolchain`, a subpath that reads
+the file system, so workerd never loads it): what `eutaxy prover install`
+and the engines share. `Toolchain` (an engine's name, version, executable
+and `ReleaseFile` per `Platform`: the upstream file's name, URL, SHA-256
+and size), `platforms` and `platformOf`, `cacheDir` (`EUTAXY_CACHE_DIR`,
+else the platform's user cache), `toolchainDir`
+(`<cache>/toolchains/<name>/<version>`), `markerFile` and
+`InstallMarker` (written last by the install, so its presence means the
+install completed), `executableName` (`.exe` on Windows), `installed` (the
+toolchain in the cache, when its marker and executable are both there),
+and `host` (the platform, architecture, environment and home the lookup
+depends on, so tests hand in another).
+
+**May import.** `@eutaxy/core`, `@eutaxy/spec`, the compiler API
 (`typescript/sync`, `typescript/ast`, `typescript/fs`) from the reader
-alone. Only these are declared in `package.json`, and
+alone, and Node's file system from the toolchain cache alone. Only these are declared in `package.json`, and
 pnpm links only declared workspace dependencies, so an import of any other
 package does not resolve. The project references in `tsconfig.json` mirror the
 list; a test keeps the two in sync with the design.
 
-**Phase.** v0.5 (`CHECKED`), v0.6 (`TESTED`, `PROVEN`, aggregation), v0.7 (the reader, typed binders), v0.9 (the reader on the compiler API). See `docs/design.md` and `docs/roadmap.md`.
+**Phase.** v0.5 (`CHECKED`), v0.6 (`TESTED`, `PROVEN`, aggregation), v0.7 (the reader, typed binders), v0.9 (the reader on the compiler API), v0.11 (the toolchain cache). See `docs/design.md` and `docs/roadmap.md`.

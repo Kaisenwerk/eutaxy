@@ -17,13 +17,18 @@ lives so that every first-party engine reads the same tree; `emitModule`, `state
 `ident` (the Lean text: `f_` functions, `R_` records, `v_` variables, `t_`
 theorems, so nothing collides with Lean's prelude or with another kind of
 name); `findLean`, `checkLean`,
-`diagnostics`, `leanToolchain`, `leanVersion`, `installHint`.
+`diagnostics`, `leanToolchain`, `leanVersion`, `leanDownloads` (the
+upstream release file per platform `eutaxy prover install lean` downloads,
+with its checksum), `installHint`.
 
-**Toolchain.** Pinned to `leanToolchain` in `src/lean.ts`, found through
-`elan` (only when it already has that release: nothing is downloaded during
-a check) or a bare `lean` of exactly that version. The contract corpus in
-`corpus/prover-contracts` is what the subset means; CI installs the pinned
-toolchain and runs it with `EUTAXY_REQUIRE_LEAN=1`.
+**Toolchain.** Pinned to `leanToolchain` in `src/lean.ts`, found in
+Eutaxy's cache first (where `eutaxy prover install lean` put the release
+named in `leanDownloads`, when it answers with the pinned version), then
+through `elan` (only when it already has that release: nothing is
+downloaded during a check), then as a bare `lean` of exactly that version.
+The contract corpus in `corpus/prover-contracts` is what the subset means;
+CI installs the pinned toolchain with the command and runs it with
+`EUTAXY_REQUIRE_LEAN=1`.
 
 **May import.** `@eutaxy/prover`, `@eutaxy/spec`. Only these are declared in `package.json`, and
 pnpm links only declared workspace dependencies, so an import of any other

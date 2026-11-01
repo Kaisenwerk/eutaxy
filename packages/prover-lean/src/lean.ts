@@ -1,16 +1,19 @@
 /**
  * Running Lean over a process boundary. The engine is pinned to one Lean
- * release: `elan` (Lean's toolchain manager) is asked for it by name, and a
- * `lean` found without `elan` must report that version. Nothing is ever
- * downloaded during a check; a missing toolchain is `unavailable`, with the
- * command that installs it. Diagnostics come back as `file:line:col:
- * severity: message` lines, which the engine maps to theorems.
+ * release, looked for in Eutaxy's cache first (where `eutaxy prover install
+ * lean` puts the upstream release named in `leanDownloads`), then through
+ * `elan` (Lean's toolchain manager), asked for it by name, then as a bare
+ * `lean` that must report that version. Nothing is ever downloaded during
+ * a check; a missing toolchain is `unavailable`, with the command that
+ * installs it. Diagnostics come back as `file:line:col: severity: message`
+ * lines, which the engine maps to theorems.
  */
 
 import { spawn } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
+import { type Host, host, installed, type Toolchain } from "@eutaxy/prover/toolchain";
 
 /**
  * The Lean release the engine's contract corpus is checked against. On a
@@ -23,7 +26,54 @@ import { join } from "node:path";
 export const leanToolchain = "leanprover/lean4:v4.35.0";
 export const leanVersion = "4.35.0";
 /** How to put the pinned toolchain on this machine. */
-export const installHint = `install elan (https://elan.lean-lang.org) and run: elan toolchain install ${leanToolchain}`;
+export const installHint = `run: eutaxy prover install lean (or install elan, https://elan.lean-lang.org, and run: elan toolchain install ${leanToolchain})`;
+
+const leanRelease = `https://github.com/leanprover/lean4/releases/download/v${leanVersion}`;
+const leanFile = (name: string, sha256: string, bytes: number) => ({
+  file: name,
+  url: `${leanRelease}/${name}`,
+  sha256,
+  bytes,
+});
+/**
+ * The upstream release files `eutaxy prover install lean` downloads, one per
+ * platform, as published on Lean's GitHub release with the checksums it
+ * reports; the file names carry the version, and a test holds them to
+ * `leanVersion`. The compiler ships its C toolchain, so each is 570 to
+ * 620 MB, the same download elan makes.
+ */
+export const leanDownloads: Toolchain = {
+  name: "lean",
+  version: leanVersion,
+  executable: "bin/lean",
+  files: {
+    "linux-x64": leanFile(
+      "lean-4.35.0-linux.tar.zst",
+      "7289597a44543246c9227b8cae501767e095ce17f6d448b95fc4a8dc97268f6d",
+      594481375,
+    ),
+    "linux-arm64": leanFile(
+      "lean-4.35.0-linux_aarch64.tar.zst",
+      "c8f0f8a3920e839718b1343e6781fd80a3e9b1024fbcd7078eb30f54e806b028",
+      594868592,
+    ),
+    "darwin-x64": leanFile(
+      "lean-4.35.0-darwin.tar.zst",
+      "0b43be5c7ecfb36016566a41005ab62bdb04743e6bfd5837e45f796ef4750b4e",
+      576516478,
+    ),
+    "darwin-arm64": leanFile(
+      "lean-4.35.0-darwin_aarch64.tar.zst",
+      "c0c6f34f35ba1dcc5c4a5fd106fefab9eb5e8469712624dd2c868d51b63177c2",
+      570422530,
+    ),
+    "win32-x64": leanFile(
+      "lean-4.35.0-windows.tar.zst",
+      "893fde3f52b48c647e3edcf33844cbb61f8ef70fcd88e0536bfc83f29844081e",
+      622724192,
+    ),
+  },
+};
 
 export interface LeanRun {
   readonly code: number | null;
@@ -101,17 +151,30 @@ function candidates(name: string): string[] {
 }
 
 /**
- * The pinned toolchain if it is installed: through `elan run <toolchain>`
- * when elan is present (and only when it already has the toolchain, so
- * nothing is downloaded), else a bare `lean` of exactly that version.
+ * The pinned toolchain if it is installed: the one `eutaxy prover install
+ * lean` put in the cache, when it answers with the pinned version; else
+ * through `elan run <toolchain>` when elan is present (and only when it
+ * already has the toolchain, so nothing is downloaded); else a bare `lean`
+ * of exactly that version.
  */
-export async function findLean(): Promise<LeanToolchain | { readonly unavailable: string }> {
+export async function findLean(
+  h: Host = host(),
+): Promise<LeanToolchain | { readonly unavailable: string }> {
+  let cached: string | undefined;
+  const fromCache = installed(leanDownloads, h);
+  if (fromCache) {
+    const v = await run(fromCache.executable, ["--version"], { timeoutMs: 20_000 });
+    const m = /Lean \(version ([^,]+),/.exec(v.stdout);
+    if (v.code === 0 && m?.[1] === leanVersion)
+      return { command: fromCache.executable, args: [], version: leanVersion };
+    cached = `the toolchain in ${fromCache.dir} did not answer as Lean ${leanVersion} (delete it and run: eutaxy prover install lean)`;
+  }
   for (const elan of candidates("elan")) {
     const list = await run(elan, ["toolchain", "list"], { timeoutMs: 20_000 });
     if (list.code !== 0) continue;
     if (!list.stdout.split("\n").some((l) => l.trim().split(" ")[0] === leanToolchain))
       return {
-        unavailable: `elan has no ${leanToolchain}; run: elan toolchain install ${leanToolchain}`,
+        unavailable: `elan has no ${leanToolchain}; ${installHint}${cached ? `; ${cached}` : ""}`,
       };
     return { command: elan, args: ["run", leanToolchain, "lean"], version: leanVersion };
   }
@@ -121,10 +184,10 @@ export async function findLean(): Promise<LeanToolchain | { readonly unavailable
     const m = /Lean \(version ([^,]+),/.exec(v.stdout);
     if (m?.[1] === leanVersion) return { command: lean, args: [], version: leanVersion };
     return {
-      unavailable: `lean ${m?.[1] ?? "of unknown version"} found, but the engine is pinned to ${leanVersion}; ${installHint}`,
+      unavailable: `lean ${m?.[1] ?? "of unknown version"} found, but the engine is pinned to ${leanVersion}; ${installHint}${cached ? `; ${cached}` : ""}`,
     };
   }
-  return { unavailable: `no Lean toolchain found; ${installHint}` };
+  return { unavailable: `no Lean toolchain found; ${installHint}${cached ? `; ${cached}` : ""}` };
 }
 
 /** Parse Lean's diagnostics for the one file it was given. */

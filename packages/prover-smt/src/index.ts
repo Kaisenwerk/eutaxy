@@ -41,5 +41,6 @@ export {
   solve,
   type Z3Run,
   type Z3Solver,
+  z3Downloads,
   z3Version,
 } from "./z3.ts";

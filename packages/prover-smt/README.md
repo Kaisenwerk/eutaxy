@@ -29,17 +29,20 @@ emit without running Z3); `prelude`, `propertyScript`, `term`, `value`,
 `equal` and `ident` (the SMT-LIB text: `f_` functions, `R_` datatypes,
 `mk_` constructors, `fld_` selectors, `v_` variables); `parseSExprs`,
 `readAnswer`, `decode` (Z3's answers and model values back to JavaScript
-values); `findZ3`, `solve`, `z3Version`, `defaultResourceLimit`,
-`installHint`.
+values); `findZ3`, `solve`, `z3Version`, `z3Downloads` (the upstream release file
+per platform `eutaxy prover install smt` downloads, with its checksum),
+`defaultResourceLimit`, `installHint`.
 
-**Solver.** Pinned to `z3Version` in `src/z3.ts`, found on the PATH (or
-`EUTAXY_Z3`, or the usual install prefixes) and required to report that
-version; nothing is downloaded during a check. Every run carries Z3's
+**Solver.** Pinned to `z3Version` in `src/z3.ts`, found in Eutaxy's cache
+first (where `eutaxy prover install smt` put the release named in
+`z3Downloads`), then through `EUTAXY_Z3`, the PATH and the usual install
+prefixes, and required to report that version; nothing is downloaded during
+a check. Every run carries Z3's
 resource limit (`rlimit`), a machine-independent budget, so the same script
 gives the same outcome everywhere; the wall-clock timeout is only a safety
 net. The contract corpus in `corpus/prover-contracts` names what this
-engine must prove, refute and give up on; CI installs the pinned Z3 and
-runs it with `EUTAXY_REQUIRE_Z3=1`.
+engine must prove, refute and give up on; CI installs the pinned Z3 with
+the command and runs it with `EUTAXY_REQUIRE_Z3=1`.
 
 **May import.** `@eutaxy/prover`, `@eutaxy/spec`. Only these are declared in `package.json`, and
 pnpm links only declared workspace dependencies, so an import of any other

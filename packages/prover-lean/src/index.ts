@@ -19,6 +19,7 @@ export {
   installHint,
   type LeanDiagnostic,
   type LeanToolchain,
+  leanDownloads,
   leanToolchain,
   leanVersion,
 } from "./lean.ts";

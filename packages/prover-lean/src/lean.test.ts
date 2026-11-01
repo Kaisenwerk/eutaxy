@@ -42,3 +42,75 @@ describe("jsonDiagnostics", () => {
     ]);
   });
 });
+
+describe("leanDownloads", () => {
+  test("one upstream file per platform, each named after the pinned version, with its checksum", async () => {
+    const { leanDownloads, leanVersion } = await import("./lean.ts");
+    const { platforms } = await import("@eutaxy/prover/toolchain");
+    expect(leanDownloads.name).toBe("lean");
+    expect(leanDownloads.version).toBe(leanVersion);
+    expect(Object.keys(leanDownloads.files).sort()).toEqual([...platforms].sort());
+    for (const f of Object.values(leanDownloads.files)) {
+      expect(f.file).toContain(`lean-${leanVersion}-`);
+      expect(f.url).toBe(
+        `https://github.com/leanprover/lean4/releases/download/v${leanVersion}/${f.file}`,
+      );
+      expect(f.sha256).toMatch(/^[0-9a-f]{64}$/);
+      expect(f.bytes).toBeGreaterThan(100_000_000);
+    }
+  });
+});
+
+describe("findLean", () => {
+  test("the cached toolchain comes first when it answers as the pinned Lean, and is named when it does not", async () => {
+    const { mkdirSync, mkdtempSync, rmSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { findLean, leanDownloads, leanVersion } = await import("./lean.ts");
+    const { markerFile, toolchainDir } = await import("@eutaxy/prover/toolchain");
+    const cache = mkdtempSync(join(tmpdir(), "eutaxy-lean-cache-"));
+    try {
+      const h = {
+        platform: process.platform,
+        arch: process.arch,
+        env: { EUTAXY_CACHE_DIR: cache },
+        home: cache,
+      };
+      const dir = toolchainDir(cache, leanDownloads);
+      mkdirSync(join(dir, "bin"), { recursive: true });
+      const fake = (version: string) =>
+        writeFileSync(
+          join(dir, "bin", "lean"),
+          `#!/bin/sh\necho "Lean (version ${version}, x86_64-unknown-linux-gnu, commit 0, Release)"\n`,
+          { mode: 0o755 },
+        );
+      fake(leanVersion);
+      writeFileSync(
+        join(dir, markerFile),
+        JSON.stringify({
+          name: "lean",
+          version: leanVersion,
+          platform: `${process.platform}-${process.arch}`,
+          file: "f",
+          sha256: "s",
+          source: "u",
+        }),
+      );
+      expect(await findLean(h)).toEqual({
+        command: join(dir, "bin", "lean"),
+        args: [],
+        version: leanVersion,
+      });
+      fake("4.0.0");
+      const found = await findLean(h);
+      // Whatever else this machine has, the cached toolchain is reported by its directory.
+      if ("unavailable" in found)
+        expect(found.unavailable).toContain(
+          `the toolchain in ${dir} did not answer as Lean ${leanVersion}`,
+        );
+      else expect(found.command).not.toBe(join(dir, "bin", "lean"));
+    } finally {
+      rmSync(cache, { recursive: true, force: true });
+    }
+  });
+});
