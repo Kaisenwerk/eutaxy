@@ -9,7 +9,7 @@ passes, not on a date. The planted-bug and differential corpora grow with
 every phase. The JSON report schema is versioned, so CI and coding agents
 can rely on it.
 
-## v0.10 — Workers that call each other (done)
+## v0.11 — Prover install (done)
 
 v0.4 (the simulator), v0.5 (Durable Objects and specs), v0.6 (provers:
 the `TESTED` rung, the first-party `prover-lean` engine with its contract
@@ -36,14 +36,19 @@ from scripted replies with the fault meanings of a stub call, every
 verdict stating that the callee was scripted; a drive for the
 `scheduled` handler with its ticks from the cron expression and the
 virtual clock; `step.waitForEvent` and `instance.sendEvent`, an instance
-waiting in virtual time up to its timeout) are done; the design
-describes what they built. The v0.10 gate: a Worker driven over RPC and
-by cron, which calls another Worker through a service binding and hands
-each order to a Workflow that waits for its event, runs with no
-`UNSUPPORTED` verdict (the Worker lives in `corpus/gates/`); each
-boundary has a planted bug the check catches and, where workerd
-implements it, a differential entry; and the opening refactor left every
-earlier corpus verdict and committed trace unchanged.
+waiting in virtual time up to its timeout; its gate, a Worker driven over
+RPC and by cron, calling another Worker through a service binding and
+handing each order to a Workflow that waits for its event, runs with no
+`UNSUPPORTED` verdict in `corpus/gates/`) and v0.11 (`eutaxy prover
+install lean` and `… smt`: each engine's upstream release file per
+platform, with its checksum, in a table beside the pin; downloaded only on
+the command, checked before unpacking, into a cache the engines look in
+first; a mirror or offline copy; the archives read with Node alone) are
+done; the design describes what they built. The v0.11 gate: the `check`
+workflow installs both engines with the command in place of its own
+install steps and the contract corpus passes on them, a test shows a
+checksum mismatch installs nothing, and a check whose engine is not
+installed names the command.
 
 `0.9.0` needs TypeScript 7.1 in the project (`typescript@7.1.0-beta`
 until the release on 2026-11-24, then the release): the spec reader runs
@@ -53,9 +58,9 @@ pinned to each in turn. `readSpecs` takes the module's path
 (`modulePath`, and `specPath`) in place of the import specifiers it used
 to match by; the import is resolved by the compiler.
 
-## Patch work alongside v0.11
+## Patch work alongside v0.12
 
-Work toward v0.11 ships as `0.10.x`, and so does the following, each when
+Work toward v0.12 ships as `0.11.x`, and so does the following, each when
 a target needs it:
 - The remaining performance items: `report`'s module workers and the
   engines' modules run in parallel, toolchain lookups once per process,
@@ -95,58 +100,48 @@ a target needs it:
 public: a user's own test needs it to give `refines` its decisions, and
 generated regression tests import it.
 
-## v0.11 — Prover install (current)
+## v0.12 — The agent loop (current)
 
-`eutaxy prover install lean` and `eutaxy prover install smt`, as
-packaging already describes, so that a user and a target's CI get a
-prover with one command instead of installing elan or Z3 by hand. Each
-Eutaxy release carries, per platform (Linux and macOS on x64 and arm64,
-Windows on x64), the URL and SHA-256 of the upstream release files of the
-Lean release `prover-lean` is pinned to (`leanToolchain`) and the Z3
-release `prover-smt` is pinned to (`z3Version`); the table lives beside
-the pins and a test fails when they disagree. The command downloads
-explicitly (never on `npm install`, never during a check), verifies the
-checksum before unpacking anything, and unpacks into Eutaxy's cache
-directory (the platform's user cache, overridden by `EUTAXY_CACHE_DIR`),
-where the engines look first, before elan and the `PATH`. `--from <url
-or directory>` replaces the download host with a mirror or an offline
-copy of the same files, and `--json` prints what was installed, from
-where, and the checksum checked. Upstream files come first because
-rebuilding the toolchains would mean a build matrix and hosting to
-secure; a trimmed Lean bundle (the binary and `Init`, which is all the
-emitted modules load) is built only if the measured download size calls
-for it. This phase comes first because it is small and every later
-phase's proofs need a prover the target can install; it takes the number
-v0.11 because phases are numbered after the release that closes them and
-a feature closes with a minor release, so the phases planned after it
-each move down one.
+An MCP server and goal files for supplied proofs, so that a coding agent
+runs the loop "check, read the report, fix or prove, check again" through
+one tool, and Eutaxy itself never calls a model: verdicts depend only on
+files in the repository.
 
-Gate: the `check` workflow installs both engines with the command in
-place of its own install steps and the contract corpus passes on them; a
-test shows a checksum mismatch installs nothing; a check whose engine is
-listed but not installed names the command that installs it.
+`eutaxy mcp` is a local stdio server (one JSON-RPC message per line,
+logs on stderr, exit when stdin closes) over the CLI and the JSON report,
+written with the standard library alone, as the rest of the published
+package is. It speaks both eras of the protocol: the `2026-07-28`
+revision, stateless, every request carrying its version and client
+capabilities in `_meta`, with `server/discover` answering the versions
+supported; and the `2025-11-25` revision with its `initialize` handshake,
+which the clients in use today still open with. Its tools are pure
+functions of the repository's files and return the JSON report (schema 1)
+as structured content beside a text form: `check` (a scenario, the
+`check` options), `report` (a directory, the engines), `goals` (the open
+proof goals), `prove` (a proof file against its goal) and `prover_status`
+(the installed toolchains). A verdict is a result, whatever it says; only
+a check that could not run is a tool error. Resources, prompts,
+subscriptions and the HTTP transport are not in this phase.
 
-## After v0.11
-
-The phases after v0.11, in order. Each is driven by the same target, and
-each one's text is made exact, gate included, when it starts.
-
-### v0.12 — The agent loop
-
-An MCP server and goal files for supplied proofs. `eutaxy mcp` is a local
-stdio server over the CLI and the JSON report: run a check, read the
-report, list the open proof goals, check a proof. Where the tactic script
-gives up, the goal is written to a file: the statement Eutaxy generated,
-a hash of the source, spec and engine version, and the proof left open.
-A proof supplied for it is checked by the Lean kernel as supplied proofs
-are today, and one whose statement or hash no longer matches is stale,
-never `PROVEN`. Eutaxy itself never calls a model: verdicts depend only on
-files in the repository. It comes second because it makes checking the
-next Workers cheaper, and it is small.
+Where the Lean engine's tactic script gives up on a property, the goal is
+written to a file beside the spec file: the statement Eutaxy emitted, the
+SHA-256 of the module source and of the spec file, the engine and its
+version, and the `-- proof:` section left open, in the form of the proof
+file the engine already accepts (`domain.props.lean`), so the goal file is
+a template for it and nothing new is trusted. A supplied proof whose
+statement or hashes no longer match its goal is stale: `UNKNOWN`
+(`gave_up`, saying so), never `PROVEN`. It comes before the next Workers
+because it makes checking them cheaper, and it is small.
 
 Gate: an end-to-end test over stdio goes from a check to an open goal to a
-supplied proof to `PROVEN`, and a violation comes back through the server
-as a replayable regression test.
+supplied proof to `PROVEN`, in both protocol eras; a violation comes back
+through the server as a replayable regression test; and a stale proof is
+never `PROVEN`.
+
+## After v0.12
+
+The phases after v0.12, in order. Each is driven by the same target, and
+each one's text is made exact, gate included, when it starts.
 
 ### v0.13 — Durable Objects on SQLite, and Agents
 
