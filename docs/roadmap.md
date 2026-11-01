@@ -9,7 +9,7 @@ passes, not on a date. The planted-bug and differential corpora grow with
 every phase. The JSON report schema is versioned, so CI and coding agents
 can rely on it.
 
-## v0.9 — Specs over real signatures (done)
+## v0.10 — Workers that call each other (done)
 
 v0.4 (the simulator), v0.5 (Durable Objects and specs), v0.6 (provers:
 the `TESTED` rung, the first-party `prover-lean` engine with its contract
@@ -20,18 +20,30 @@ models, and nullable types and tagged unions in the subset reader), v0.8
 (the self-check: `eutaxy report`, arrays and lists in the subset,
 structural recursion in Lean, proofs supplied beside the spec file and
 checked by the kernel, the invariant checkers held to naive references,
-the enumeration model proven and the enumerator held to it) and v0.9
-(the reader on the TypeScript compiler's API: binder types and the
-subset's types are what the user's compiler resolves, so generic aliases
+the enumeration model proven and the enumerator held to it), v0.9 (the
+reader on the TypeScript compiler's API: binder types and the subset's
+types are what the user's compiler resolves, so generic aliases
 instantiated, inline object types, an alias declared later in the file,
 a record literal told apart by its declared return type and types
-imported from other files all read; narrowing by a union's tag) are
-done; the design describes what they built. The v0.9 gate: every
-contract-corpus entry and every corpus core reads through the compiler
-API with the verdicts it had, and five contract entries, one per
-signature shape above, reach `TESTED` and are `PROVEN` by the SMT engine
-where it decides them, two of them through a tag test that narrows the
-union in the function and in the claim.
+imported from other files all read; narrowing by a union's tag) and
+v0.10 (one Worker of a system of Workers checkable on its own, the
+Workers it calls scripted: how a run chooses is one `Chooser` deciding
+faults and turns alike, and each binding one record that the platform
+and the differential runner both iterate; a drive that calls a
+`WorkerEntrypoint` method over RPC, resends under the caller's declared
+policy since Cloudflare does not retry a call; service bindings answered
+from scripted replies with the fault meanings of a stub call, every
+verdict stating that the callee was scripted; a drive for the
+`scheduled` handler with its ticks from the cron expression and the
+virtual clock; `step.waitForEvent` and `instance.sendEvent`, an instance
+waiting in virtual time up to its timeout) are done; the design
+describes what they built. The v0.10 gate: a Worker driven over RPC and
+by cron, which calls another Worker through a service binding and hands
+each order to a Workflow that waits for its event, runs with no
+`UNSUPPORTED` verdict (the Worker lives in `corpus/gates/`); each
+boundary has a planted bug the check catches and, where workerd
+implements it, a differential entry; and the opening refactor left every
+earlier corpus verdict and committed trace unchanged.
 
 `0.9.0` needs TypeScript 7.1 in the project (`typescript@7.1.0-beta`
 until the release on 2026-11-24, then the release): the spec reader runs
@@ -41,78 +53,16 @@ pinned to each in turn. `readSpecs` takes the module's path
 (`modulePath`, and `specPath`) in place of the import specifiers it used
 to match by; the import is resolved by the compiler.
 
-## v0.10 — Workers that call each other (current)
+## Patch work alongside v0.11
 
-The target is a system of Workers split by business context, which talk
-to each other through service bindings and `WorkerEntrypoint` RPC, run on
-cron triggers, and hand long work to Workflows that wait for events. In
-0.9 each of those makes a run `UNSUPPORTED`. v0.10 makes one Worker of
-such a system checkable on its own, with the Workers it calls scripted;
-running the callee's real code in the same simulation is later work,
-which these scripted boundaries teach.
-
-It opens with a refactor, paid before the new bindings land, since each
-new binding would otherwise repeat what the existing ones repeat:
-- How a run chooses becomes one object: the exhaustive enumerator's
-  `Chooser`, with seeded, replay and exhaustive implementations built once
-  in `explore`, decides faults and turns alike, and the fault ladder each
-  kind of effect repeats is written once.
-- Each binding becomes one record (proxy, reset, snapshot) that the
-  platform and the differential runner both iterate, around one delivery
-  skeleton, with the redelivery rule as one pure function in `core` that
-  the simulated and raw sides share.
-
-Behaviour does not change: every corpus verdict and every committed
-regression trace stays byte-identical across the refactor.
-
-Then the boundaries, each following the Cloudflare documentation it cites:
-- **Inbound RPC.** A drive that calls a `WorkerEntrypoint` method as an
-  event, its return value recorded as the response effect. Cloudflare
-  does not retry an RPC call, so resends follow a declared caller policy,
-  as the HTTP drive's do.
-- **Outbound service bindings, callee scripted.** `fetch` and RPC calls
-  through a service binding are one effect each, with the fault meanings
-  of a Durable Object stub call (`crash_before` and `error`: the call
-  never reached the callee; `ambiguous`: it acted and the answer was
-  lost), answered from replies the scenario scripts, as externals are.
-  Every verdict states that the callee was scripted.
-- **Cron.** A drive for the `scheduled` handler, with `scheduledTime` and
-  the cron expression from the virtual clock and the scenario.
-- **Workflows events.** `step.waitForEvent` and `instance.sendEvent` in
-  the Workflows model: an instance waits in virtual time for an event of
-  its type, up to its timeout.
-
-The v0.10 gate: scenarios for a Worker that is driven over RPC and by
-cron, calls another Worker through a service binding, and sends events
-to a Workflow that waits for them run with no `UNSUPPORTED` verdict (the
-Worker lives in `corpus/gates/`); each new boundary has a planted bug the
-check catches and, where the local runtime implements it, a differential
-entry against workerd; and the opening refactor leaves every earlier corpus
-verdict and committed trace unchanged.
-
-## Patch work alongside v0.10
-
-Work toward v0.10 ships as `0.9.x`, and so does the following, each when
+Work toward v0.11 ships as `0.10.x`, and so does the following, each when
 a target needs it:
-- Done first, before the refactor: the gaps a shared result type meets in
-  real cores, generic functions (`ok<T>(value: T)`, instantiated from the
-  call's resolved signature), calls to functions imported from another
-  module of the project, module constants and `Math.floor`, each with a
-  contract entry in that shape, so decision functions built on such a
-  kit reach `PROVEN` through the SMT engine; and the concurrent scheduler
-  woken by progress, taking one turn of the event loop per decision
-  rather than two or three, since v0.10's scenarios run concurrently. In
-  workerd that turn is a zero timer of about a millisecond, the only way
-  to its event loop, so a run with two invocations in flight still costs
-  about a millisecond per turn beyond its I/O (the wallet entry went from
-  3.4 to 2.3 times its sequential cost per run).
 - The remaining performance items: `report`'s module workers and the
   engines' modules run in parallel, toolchain lookups once per process,
   one Z3 prelude per module.
 - A report path per run in `eutaxy check`, so two checks of one scenario
   running at once do not share Vitest's report file.
-- The proof cache keyed by source, spec and engine version; `eutaxy prover
-  install lean` and `… smt`.
+- The proof cache keyed by source, spec and engine version.
 - A configurable number of `TESTED` draws on the command line (the API
   takes `inputs`).
 - An audit of supplied proofs from outside the Lean process that
@@ -145,33 +95,43 @@ a target needs it:
 public: a user's own test needs it to give `refines` its decisions, and
 generated regression tests import it.
 
-## After v0.10
-
-The phases after v0.10, in order. Each is driven by the same target, and
-each one's text is made exact, gate included, when it starts.
-
-### First after v0.10 — Prover install
+## v0.11 — Prover install (current)
 
 `eutaxy prover install lean` and `eutaxy prover install smt`, as
-packaging already describes, so that a user and the target's CI get a
+packaging already describes, so that a user and a target's CI get a
 prover with one command instead of installing elan or Z3 by hand. Each
-Eutaxy release carries, per platform, the URL and SHA-256 of the
-upstream Lean and Z3 release files its engines are pinned to; the command
-downloads explicitly (never on install, never during a check), verifies
-the checksum, and unpacks into Eutaxy's cache directory, where engines
-look first, before elan and the `PATH`. A mirror or offline directory can
-replace the download host. Upstream files come first because rebuilding
-the toolchains would mean a build matrix and hosting to secure; a trimmed
-Lean bundle (the binary and `Init`, which is all the emitted modules
-load) is built only if the measured download size calls for it. It comes
-first because it is small and every later phase's proofs need a prover
-the target can install.
+Eutaxy release carries, per platform (Linux and macOS on x64 and arm64,
+Windows on x64), the URL and SHA-256 of the upstream release files of the
+Lean release `prover-lean` is pinned to (`leanToolchain`) and the Z3
+release `prover-smt` is pinned to (`z3Version`); the table lives beside
+the pins and a test fails when they disagree. The command downloads
+explicitly (never on `npm install`, never during a check), verifies the
+checksum before unpacking anything, and unpacks into Eutaxy's cache
+directory (the platform's user cache, overridden by `EUTAXY_CACHE_DIR`),
+where the engines look first, before elan and the `PATH`. `--from <url
+or directory>` replaces the download host with a mirror or an offline
+copy of the same files, and `--json` prints what was installed, from
+where, and the checksum checked. Upstream files come first because
+rebuilding the toolchains would mean a build matrix and hosting to
+secure; a trimmed Lean bundle (the binary and `Init`, which is all the
+emitted modules load) is built only if the measured download size calls
+for it. This phase comes first because it is small and every later
+phase's proofs need a prover the target can install; it takes the number
+v0.11 because phases are numbered after the release that closes them and
+a feature closes with a minor release, so the phases planned after it
+each move down one.
 
-Gate: CI installs both engines with the command instead of its own
-install steps and the contract corpus passes on them; a test shows a
-checksum mismatch installs nothing.
+Gate: the `check` workflow installs both engines with the command in
+place of its own install steps and the contract corpus passes on them; a
+test shows a checksum mismatch installs nothing; a check whose engine is
+listed but not installed names the command that installs it.
 
-### v0.11 — The agent loop
+## After v0.11
+
+The phases after v0.11, in order. Each is driven by the same target, and
+each one's text is made exact, gate included, when it starts.
+
+### v0.12 — The agent loop
 
 An MCP server and goal files for supplied proofs. `eutaxy mcp` is a local
 stdio server over the CLI and the JSON report: run a check, read the
@@ -188,7 +148,7 @@ Gate: an end-to-end test over stdio goes from a check to an open goal to a
 supplied proof to `PROVEN`, and a violation comes back through the server
 as a replayable regression test.
 
-### v0.12 — Durable Objects on SQLite, and Agents
+### v0.13 — Durable Objects on SQLite, and Agents
 
 Durable Object SQLite storage (`ctx.storage.sql`): reset, seeded and
 snapshotted table by table, its calls synchronous and held by the input
@@ -199,13 +159,13 @@ WebSocket messages become events if the target's scenarios need them.
 Gate: the target's object scenarios, on SQLite storage and including an
 Agents SDK class, run with no `UNSUPPORTED` verdict.
 
-### v0.13 — The system
+### v0.14 — The system
 
 The called Worker's real code runs in the same simulation as its caller:
 its effects are recorded and interleaved with the caller's, and a fault
 can land on either side, so a run follows a request across Workers end to
 end. This is the hardest design, and it is written in `docs/design.md`
-before any code; v0.10's scripted callees and v0.12's objects show what it
+before any code; v0.10's scripted callees and v0.13's objects show what it
 needs.
 
 Gate: a scenario that drives one Worker, which calls another through a
