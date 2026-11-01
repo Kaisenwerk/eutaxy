@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.11.0](https://github.com/Kaisenwerk/eutaxy/compare/v0.10.0...v0.11.0) (2026-11-01)
+
+
+### Features
+
+* **cli:** eutaxy prover install, the pinned Lean or Z3 release into the cache ([eabfcab](https://github.com/Kaisenwerk/eutaxy/commit/eabfcab4477fc90583d34b3ffc155d5bee066f2d))
+* **prover:** the toolchain cache, and the engines' release tables ([7b96367](https://github.com/Kaisenwerk/eutaxy/commit/7b963671a5c62e8567cf05b9185cdd95a01d33c9))
+
+
+### Documentation
+
+* **roadmap:** close v0.11, open v0.12 the agent loop ([c4b0b47](https://github.com/Kaisenwerk/eutaxy/commit/c4b0b471f21a59719e3deb2840a69ecf39e63266))
+
 ## [0.10.0](https://github.com/Kaisenwerk/eutaxy/compare/v0.9.1...v0.10.0) (2026-10-31)
 
 
