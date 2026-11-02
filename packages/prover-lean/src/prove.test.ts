@@ -267,3 +267,50 @@ describe.skipIf("unavailable" in toolchain && !required)("proveModule with the p
     ).toBe(true);
   }, 30_000);
 });
+
+describe("stale proof files", () => {
+  test("a proof file naming the hashes of other versions of the module or the spec is refused as stale; matching hashes pass", async () => {
+    const { createHash } = await import("node:crypto");
+    const { mkdtempSync, rmSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const sha = (t: string) => createHash("sha256").update(t).digest("hex");
+    const dir = mkdtempSync(join(tmpdir(), "eutaxy-stale-"));
+    try {
+      const source = "export function inc(x: number): number { return x + 1; }\n";
+      const spec =
+        'import { forall } from "eutaxy/spec";\nimport { inc } from "./domain.ts";\nexport const grows = forall(inc, { ensures: (x) => inc(x) > x });\n';
+      writeFileSync(join(dir, "domain.ts"), source);
+      writeFileSync(join(dir, "domain.props.ts"), spec);
+      const specs = readSpecs({
+        module: source,
+        spec,
+        modulePath: join(dir, "domain.ts"),
+        specPath: join(dir, "domain.props.ts"),
+      });
+      const proofs = (sourceHash: string, specHash: string) =>
+        `-- eutaxy-source-sha256: ${sourceHash}\n-- eutaxy-spec-sha256: ${specHash}\n\n-- proof: grows\n  intro v_x\n  simp\n  omega\n`;
+      const input = {
+        source,
+        specs,
+        modulePath: join(dir, "domain.ts"),
+        specPath: join(dir, "domain.props.ts"),
+      };
+      writeFileSync(join(dir, "domain.props.lean"), proofs(sha(source), sha(spec)));
+      expect(prepare(input).supplied?.refused).toBeUndefined();
+      writeFileSync(join(dir, "domain.props.lean"), proofs(sha("other"), sha(spec)));
+      expect(prepare(input).supplied?.refused).toMatch(
+        /^domain\.props\.lean is stale: the module changed since its proofs were written/,
+      );
+      writeFileSync(join(dir, "domain.props.lean"), proofs(sha(source), sha("other")));
+      expect(prepare(input).supplied?.refused).toMatch(/the spec file changed/);
+      writeFileSync(join(dir, "domain.props.lean"), proofs(sha("x"), sha("y")));
+      expect(prepare(input).supplied?.refused).toMatch(/the module and the spec file changed/);
+      // Without hash lines a proof file is never stale.
+      writeFileSync(join(dir, "domain.props.lean"), "-- proof: grows\n  omega\n");
+      expect(prepare(input).supplied?.refused).toBeUndefined();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

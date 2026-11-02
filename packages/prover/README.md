@@ -23,7 +23,7 @@ assignment through a spec's `when` and `ensures`: held, discarded,
 refuted, or a malformed property), `render`. The `PROVEN` rung: the
 `Prover` interface every engine implements (`available`, `prove` over a
 module's source and its specs, answering `PROVEN`, `REFUTED` or `UNKNOWN`
-per property as `ProofOutcome`), and `aggregate` (the simulator's verdicts
+per property as `ProofOutcome`, and the `OpenGoal`s it gave up on, with the statements it tried, when it takes supplied proofs), and `aggregate` (the simulator's verdicts
 folded with the engines' reports: `PROVEN` with the lower rungs' counts,
 `REFUTED` at the `PROVEN` rung, `CONFLICT` when engines disagree or an
 engine proves against a simulator counterexample, the verdict unchanged

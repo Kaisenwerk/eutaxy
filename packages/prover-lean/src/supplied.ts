@@ -18,7 +18,15 @@ export interface SuppliedProofs {
   readonly proofs: ReadonlyMap<string, string>;
   /** Why the file is refused, when it is; then none of its proofs is used, and its properties say why. */
   readonly refused?: string;
+  /** The SHA-256 of the module source the proofs were written for, when the file says (a goal file does). */
+  readonly sourceSha256?: string;
+  /** The SHA-256 of the spec file the proofs were written for, when the file says. */
+  readonly specSha256?: string;
 }
+
+/** The lines a goal file carries, and a proof file copied from one keeps, tying the proofs to the files they were written for. */
+export const sourceHashMarker = "-- eutaxy-source-sha256: ";
+export const specHashMarker = "-- eutaxy-spec-sha256: ";
 
 /** The axioms a supplied proof may rest on: Lean's standard ones. */
 export const standardAxioms: ReadonlySet<string> = new Set([
@@ -155,10 +163,19 @@ export function readSupplied(file: string, text: string): SuppliedProofs {
       { file, proofs },
       `${file} uses ${word}, which a supplied proof may not (it could add an axiom, switch a check off, run code while the file is checked or change how the statement reads)`,
     );
+  const hashLine = (marker: string): string | undefined => {
+    const line = lemmas.find((l) => l.startsWith(marker));
+    const hex = line?.slice(marker.length).trim();
+    return hex !== undefined && /^[0-9a-f]{64}$/.test(hex) ? hex : undefined;
+  };
+  const sourceSha256 = hashLine(sourceHashMarker);
+  const specSha256 = hashLine(specHashMarker);
   return {
     file,
     lemmas: lemmas.join("\n").trim(),
     proofs: new Map([...proofs].map(([k, v]) => [k, v.join("\n").replace(/\s+$/, "")])),
+    ...(sourceSha256 === undefined ? {} : { sourceSha256 }),
+    ...(specSha256 === undefined ? {} : { specSha256 }),
   };
 }
 

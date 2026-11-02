@@ -12,6 +12,7 @@ export {
   type SubsetType,
 } from "@eutaxy/prover/reader";
 export { type Emitted, type EmittedTheorem, emitModule, ident, statement, value } from "./emit.ts";
+export { type GoalFileInput, goalFileFor, proofFileFor, renderGoals } from "./goals.ts";
 export {
   checkLean,
   diagnostics,
@@ -36,3 +37,12 @@ export {
   prepare,
   proveModule,
 } from "./prove.ts";
+export {
+  axiomsOf,
+  readSupplied,
+  refusedIn,
+  type SuppliedProofs,
+  sourceHashMarker,
+  specHashMarker,
+  standardAxioms,
+} from "./supplied.ts";

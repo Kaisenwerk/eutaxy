@@ -16,7 +16,7 @@ Lean); the subset reader re-exported from `@eutaxy/prover/reader`, where it
 lives so that every first-party engine reads the same tree; `emitModule`, `statement`, `value` and
 `ident` (the Lean text: `f_` functions, `R_` records, `v_` variables, `t_`
 theorems, so nothing collides with Lean's prelude or with another kind of
-name); `findLean`, `checkLean`,
+name); `renderGoals`, `goalFileFor` and `proofFileFor` (the goal file: a module's open goals, each `forall` property the tactic script gave up on with the statement it emitted, which `proveModule` lists as `goals`, rendered in the form of the proof file with every proof open and two header lines naming the SHA-256 of the module and of the spec file; `sourceHashMarker`, `specHashMarker`; a proof file carrying them is stale once either changed, refused with the reason, so its properties are `gave_up`, never `PROVEN`); `readSupplied`, `refusedIn`, `axiomsOf`, `standardAxioms`; `findLean`, `checkLean`,
 `diagnostics`, `leanToolchain`, `leanVersion`, `leanDownloads` (the
 upstream release file per platform `eutaxy prover install lean` downloads,
 with its checksum), `installHint`.
@@ -35,4 +35,4 @@ pnpm links only declared workspace dependencies, so an import of any other
 package does not resolve. The project references in `tsconfig.json` mirror the
 list; a test keeps the two in sync with the design.
 
-**Phase.** v0.6. See `docs/design.md` and `docs/roadmap.md`.
+**Phase.** v0.6; v0.12 (goal files, stale proofs). See `docs/design.md` and `docs/roadmap.md`.

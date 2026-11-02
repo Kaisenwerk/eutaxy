@@ -39,10 +39,25 @@ export interface PropertyProof {
   readonly outcome: ProofOutcome;
 }
 
+/** A property an engine gave up on, with the statement it tried to prove, for a proof to be supplied. */
+export interface OpenGoal {
+  readonly function: string;
+  readonly property: string;
+  /** The statement in the engine's language, as it emitted it. */
+  readonly statement: string;
+  /** Why the engine gave up: its own words, first line. */
+  readonly reason: string;
+}
+
 export interface ModuleProofs {
   readonly results: readonly PropertyProof[];
   /** Specs that did not read: properties asked for and never checked. */
   readonly specErrors: readonly SpecError[];
+  /**
+   * The properties given up on that a supplied proof could close, when the engine takes supplied proofs
+   * and answered (empty when it closed every one; absent when it could not run or finish).
+   */
+  readonly goals?: readonly OpenGoal[];
 }
 
 export interface ProveInput {

@@ -31,6 +31,7 @@ export {
   type EngineId,
   type EngineReport,
   type ModuleProofs,
+  type OpenGoal,
   type ProofOutcome,
   type PropertyProof,
   type ProveInput,

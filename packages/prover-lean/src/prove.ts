@@ -8,10 +8,12 @@
  * `total` is proved by Lean accepting the definition.
  */
 
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { basename } from "node:path";
 import type {
   ModuleProofs,
+  OpenGoal,
   ProofOutcome,
   PropertyProof,
   Prover,
@@ -30,12 +32,13 @@ import {
   type SubsetType,
 } from "@eutaxy/prover/reader";
 import type { FunctionSpec, Property, SpecError, SpecType } from "@eutaxy/spec";
-import { dividesOutside, divisionOutside, type Emitted, emitModule } from "./emit.ts";
+import { dividesOutside, divisionOutside, type Emitted, emitModule, stated } from "./emit.ts";
 import { checkLean, findLean, type LeanDiagnostic, leanVersion } from "./lean.ts";
 import {
   axiomsOf,
   provesExactly,
   readSupplied,
+  refuse,
   type SuppliedProofs,
   standardAxioms,
 } from "./supplied.ts";
@@ -166,12 +169,19 @@ export function prepare(input: ProveInput): Prepared {
         .map((property) => ({ function: fn.name, property })),
     );
   const specErrors = specs.errors;
-  // Proofs supplied beside the spec file: `domain.props.lean` beside `domain.props.ts`.
+  // Proofs supplied beside the spec file: `domain.props.lean` beside `domain.props.ts`. A file that
+  // names the hashes of the source and spec it was written for (a goal file does) is stale once either
+  // changed: its proofs are not used, and its properties say so, rather than failing one by one on a
+  // statement that moved under them.
   const proofFile = input.specPath?.replace(/\.ts$/, ".lean");
-  const supplied =
+  let supplied =
     proofFile !== undefined && existsSync(proofFile)
       ? readSupplied(basename(proofFile), readFileSync(proofFile, "utf8"))
       : undefined;
+  if (supplied && !supplied.refused) {
+    const stale = staleness(supplied, input);
+    if (stale !== undefined) supplied = refuse(supplied, stale);
+  }
   try {
     return {
       module,
@@ -193,6 +203,25 @@ export function prepare(input: ProveInput): Prepared {
     const empty: Emitted = { source: "", theorems: [], skipped: [] };
     return { module, emitted: empty, fns, outside, specErrors };
   }
+}
+
+const sha256 = (text: string): string => createHash("sha256").update(text).digest("hex");
+
+/** Why a proof file is stale, when it names the hashes of the files it was written for and either moved. */
+function staleness(supplied: SuppliedProofs, input: ProveInput): string | undefined {
+  const moved: string[] = [];
+  if (supplied.sourceSha256 !== undefined && supplied.sourceSha256 !== sha256(input.source))
+    moved.push("the module");
+  if (
+    supplied.specSha256 !== undefined &&
+    input.specPath !== undefined &&
+    existsSync(input.specPath)
+  ) {
+    if (supplied.specSha256 !== sha256(readFileSync(input.specPath, "utf8")))
+      moved.push("the spec file");
+  }
+  if (moved.length === 0) return undefined;
+  return `${supplied.file} is stale: ${moved.join(" and ")} changed since its proofs were written (the hashes it names no longer match); write the goals again and bring the proofs over`;
 }
 
 /**
@@ -352,7 +381,23 @@ export async function proveModule(input: ProveInput): Promise<LeanModuleProofs> 
       });
     }
   }
-  return { results, lean, specErrors };
+  // The open goals: every forall property given up on, with the statement Lean was asked to prove. The
+  // list is present, empty or not, only here, where Lean answered; a timeout or an engine gap above
+  // returns without it, so no one takes "no answer" for "no open goals".
+  const goals: OpenGoal[] = [];
+  for (const fn of inSubset)
+    for (const property of fn.properties) {
+      if (property.kind !== "forall") continue;
+      const r = results.find((x) => x.function === fn.name && x.property === property.name);
+      if (r?.outcome.kind !== "UNKNOWN" || r.outcome.cause !== "gave_up") continue;
+      goals.push({
+        function: fn.name,
+        property: property.name,
+        statement: stated(property, module).text,
+        reason: r.outcome.reason,
+      });
+    }
+  return { results, lean, specErrors, goals };
 }
 
 /** The engine as a `Prover`: available when the pinned toolchain is installed. */
