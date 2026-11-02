@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.12.0](https://github.com/Kaisenwerk/eutaxy/compare/v0.11.0...v0.12.0) (2026-11-02)
+
+
+### Features
+
+* **cli:** eutaxy mcp, the agent loop over stdio, and report --goals ([75b3a29](https://github.com/Kaisenwerk/eutaxy/commit/75b3a29608c2fa7f188512fb2dae5e45e21be3f6))
+* **prover-lean:** goal files, and proof files that go stale ([1d5219f](https://github.com/Kaisenwerk/eutaxy/commit/1d5219f31a4b6e8e05a8c4a5115471d9912aed5e))
+
+
+### Documentation
+
+* **roadmap:** close v0.12, open v0.13 Durable Objects on SQLite ([9874c34](https://github.com/Kaisenwerk/eutaxy/commit/9874c34c5f4d98bb808be98da6c57ea633e46114))
+
 ## [0.11.0](https://github.com/Kaisenwerk/eutaxy/compare/v0.10.0...v0.11.0) (2026-11-01)
 
 
