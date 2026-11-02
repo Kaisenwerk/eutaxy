@@ -9,7 +9,7 @@ passes, not on a date. The planted-bug and differential corpora grow with
 every phase. The JSON report schema is versioned, so CI and coding agents
 can rely on it.
 
-## v0.11 — Prover install (done)
+## v0.12 — The agent loop (done)
 
 v0.4 (the simulator), v0.5 (Durable Objects and specs), v0.6 (provers:
 the `TESTED` rung, the first-party `prover-lean` engine with its contract
@@ -43,12 +43,20 @@ handing each order to a Workflow that waits for its event, runs with no
 install lean` and `… smt`: each engine's upstream release file per
 platform, with its checksum, in a table beside the pin; downloaded only on
 the command, checked before unpacking, into a cache the engines look in
-first; a mirror or offline copy; the archives read with Node alone) are
-done; the design describes what they built. The v0.11 gate: the `check`
-workflow installs both engines with the command in place of its own
-install steps and the contract corpus passes on them, a test shows a
-checksum mismatch installs nothing, and a check whose engine is not
-installed names the command.
+first; a mirror or offline copy; the archives read with Node alone; its
+gate, the `check` workflow installing both engines with the command and
+the contract corpus passing on them) and v0.12 (`eutaxy mcp`, a stdio
+server for the Model Context Protocol written with the standard library,
+speaking both the stateless 2026-07-28 revision and the `initialize`
+handshake before it, whose tools `check`, `report`, `goals`, `prove` and
+`prover_status` return the JSON report; goal files, the Lean engine's open
+goals written beside the spec file as a proof file with every proof open,
+under the hashes of the module and the spec, so a proof file is stale once
+either changed and nothing in it is `PROVEN`) are done; the design
+describes what they built. The v0.12 gate: an end-to-end test over stdio
+goes from a check to a violation with its regression test, and from the
+open goals to a supplied proof to `PROVEN`, then stale once the module
+changes, in both protocol eras.
 
 `0.9.0` needs TypeScript 7.1 in the project (`typescript@7.1.0-beta`
 until the release on 2026-11-24, then the release): the spec reader runs
@@ -58,9 +66,9 @@ pinned to each in turn. `readSpecs` takes the module's path
 (`modulePath`, and `specPath`) in place of the import specifiers it used
 to match by; the import is resolved by the compiler.
 
-## Patch work alongside v0.12
+## Patch work alongside v0.13
 
-Work toward v0.12 ships as `0.11.x`, and so does the following, each when
+Work toward v0.13 ships as `0.12.x`, and so does the following, each when
 a target needs it:
 - The remaining performance items: `report`'s module workers and the
   engines' modules run in parallel, toolchain lookups once per process,
@@ -100,59 +108,50 @@ a target needs it:
 public: a user's own test needs it to give `refines` its decisions, and
 generated regression tests import it.
 
-## v0.12 — The agent loop (current)
+## v0.13 — Durable Objects on SQLite, and Agents (current)
 
-An MCP server and goal files for supplied proofs, so that a coding agent
-runs the loop "check, read the report, fix or prove, check again" through
-one tool, and Eutaxy itself never calls a model: verdicts depend only on
-files in the repository.
+Durable Object SQLite storage, the backend Cloudflare recommends for every
+new namespace and the one the Agents SDK requires. The objects stay the
+real ones workerd runs, with their gates and transactions; what changes
+is what Eutaxy resets, seeds and snapshots. The `durableObject` setup
+step takes tables beside its key-value rows: a reset clears SQL and
+key-value data alike (as `deleteAll` does), the seed creates the
+scenario's tables and inserts their rows through the Cloudflare Vitest
+plugin's helpers as the key-value seed does, and the snapshot lists every
+user table (from `sqlite_master`) with its rows beside the key-value
+rows, so the state invariants read an object's SQL rows as they read D1
+rows. `ctx.storage.sql.exec`, `transactionSync` and the synchronous
+`ctx.storage.kv` need no new effect points: the input gate holds storage
+calls, so they are not turns, as key-value calls are not; a `setAlarm`
+inside `transactionSync` stays `UNSUPPORTED`, and so do the
+point-in-time bookmarks. The differential corpus holds the model to
+workerd, which implements SQLite-backed objects locally.
 
-`eutaxy mcp` is a local stdio server (one JSON-RPC message per line,
-logs on stderr, exit when stdin closes) over the CLI and the JSON report,
-written with the standard library alone, as the rest of the published
-package is. It speaks both eras of the protocol: the `2026-07-28`
-revision, stateless, every request carrying its version and client
-capabilities in `_meta`, with `server/discover` answering the versions
-supported; and the `2025-11-25` revision with its `initialize` handshake,
-which the clients in use today still open with. Its tools are pure
-functions of the repository's files and return the JSON report (schema 1)
-as structured content beside a text form: `check` (a scenario, the
-`check` options), `report` (a directory, the engines), `goals` (the open
-proof goals), `prove` (a proof file against its goal) and `prover_status`
-(the installed toolchains). A verdict is a result, whatever it says; only
-a check that could not run is a tool error. Resources, prompts,
-subscriptions and the HTTP transport are not in this phase.
-
-Where the Lean engine's tactic script gives up on a property, the goal is
-written to a file beside the spec file: the statement Eutaxy emitted, the
-SHA-256 of the module source and of the spec file, the engine and its
-version, and the `-- proof:` section left open, in the form of the proof
-file the engine already accepts (`domain.props.lean`), so the goal file is
-a template for it and nothing new is trusted. A supplied proof whose
-statement or hashes no longer match its goal is stale: `UNKNOWN`
-(`gave_up`, saying so), never `PROVEN`. It comes before the next Workers
-because it makes checking them cheaper, and it is small.
-
-Gate: an end-to-end test over stdio goes from a check to an open goal to a
-supplied proof to `PROVEN`, in both protocol eras; a violation comes back
-through the server as a replayable regression test; and a stale proof is
-never `PROVEN`.
-
-## After v0.12
-
-The phases after v0.12, in order. Each is driven by the same target, and
-each one's text is made exact, gate included, when it starts.
-
-### v0.13 — Durable Objects on SQLite, and Agents
-
-Durable Object SQLite storage (`ctx.storage.sql`): reset, seeded and
-snapshotted table by table, its calls synchronous and held by the input
-gate as storage calls are. A class built on the Agents SDK runs as
-written, on that storage, with its scheduled alarms, which already work.
-WebSocket messages become events if the target's scenarios need them.
+A class built on the Agents SDK (`Agent<Env, State>`) runs as written on
+that storage: its state, one value in SQLite (`initialState`,
+`this.state`, `setState`, `onStateChanged`), its `this.sql` tagged
+template, and its schedules (`schedule`, `scheduleEvery`,
+`listSchedules`, `cancelSchedule`), which the SDK keeps in SQLite and
+runs over the object's one alarm, which Eutaxy already fires in virtual
+time with several schedules over it. The Worker reaches the Agent as it
+reaches any object, through `routeAgentRequest` or `getAgentByName` from
+the HTTP drive. The target's Agents hold WebSocket connections, so these
+become events too: a connection opened by the scenario, the messages it
+sends (`onConnect`, `onMessage`, `onClose`) delivered as events in virtual
+time with the faults a request has, and what the Agent sends back
+(`send`, `broadcast`, state sync) recorded as effects the invariants read;
+hibernation (the object evicted with connections kept) stays
+`UNSUPPORTED` until a scenario needs it.
 
 Gate: the target's object scenarios, on SQLite storage and including an
-Agents SDK class, run with no `UNSUPPORTED` verdict.
+Agents SDK class with a schedule and a WebSocket connection, run with no
+`UNSUPPORTED` verdict; a planted bug in an object's SQL rows is caught;
+and a differential entry holds SQLite storage to workerd.
+
+## After v0.13
+
+The phases after v0.13, in order. Each is driven by the same target, and
+each one's text is made exact, gate included, when it starts.
 
 ### v0.14 — The system
 
