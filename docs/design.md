@@ -1293,6 +1293,7 @@ Engine rules:
 | `eutaxy check <spec>`          | Run a scenario; print the verdict and the shrunk trace, write a regression test     |
 | `eutaxy report [dir]`          | Run the spec ladder on every spec file under a directory, without a scenario        |
 | `eutaxy prover install <name>` | Put the pinned Lean or Z3 release for this platform in the cache, checksum-verified |
+| `eutaxy mcp`                   | Serve the Model Context Protocol over stdio for a coding agent                      |
 
 `report` covers the pure core and needs only Node: it imports each module
 and its spec file, runs `TESTED` and, with `--prover`, `PROVEN`, and prints
@@ -1301,6 +1302,54 @@ scenario runs inside workerd under a budget and running all of them is the
 job of the project's test suite, which the regression tests already join.
 A spec file run by itself needs no separate command: `report` on its
 directory is that.
+
+**The agent loop.** `eutaxy mcp` serves the Model Context Protocol over
+stdio (one JSON-RPC message per line, logs on stderr, exit when stdin
+closes), written with the standard library alone, so a coding agent runs
+"check, read the report, fix or prove, check again" through one tool.
+It speaks both eras of the protocol: the stateless `2026-07-28` revision,
+every request carrying its version and client capabilities in `_meta` and
+`server/discover` answering the versions served, and the `2025-11-25`
+revision and its predecessors with the `initialize` handshake today's
+clients open with; a request names its era by carrying `_meta` or not,
+and the result is shaped for it (`resultType` and the server's identity
+in the stateless one). The tools are pure functions of the repository's
+files, each returning the JSON report as structured content beside its
+text: `check` (a scenario, the `check` options; on a violation the
+report names the regression test written, `regressionTest`), `report` (a
+directory, the engines), `goals` (the Lean engine's open goals under a
+directory, written beside each spec file), `prove` (one spec file's
+module, with the proofs supplied beside it) and `prover_status` (the
+installed toolchains). A verdict is a result whatever it says; a command
+that could not run, or an argument that does not fit, is a tool error
+(`isError`) with the text the model can act on, and an unknown tool or
+method a protocol error. Resources, prompts, subscriptions and the HTTP
+transport are not served. Eutaxy never calls a model: every verdict
+depends only on files in the repository, and the server adds no state of
+its own.
+
+**Goal files.** The Lean engine lists its open goals with every report
+Lean answered: each `forall` property its tactic script gave up on, with
+the statement it emitted and Lean's first diagnostic line (`goals` in the
+engine's report, empty when every proof closed and absent when the engine
+could not run or finish, so no answer is never taken for no open goals). `eutaxy report --goals` (and the `goals` tool) writes a module's
+open goals beside its spec file as `<spec>.goals.lean`, in the form of the
+proof file the engine already accepts (`domain.props.lean`): the goals
+described in comments, then one `-- proof:` part per goal with nothing
+under it, and two header lines naming the SHA-256 of the module source and
+of the spec file the goals were written for. Copied to `domain.props.lean`
+and filled with lemmas and tactics, it is a supplied proof file and is
+checked as one: nothing new is trusted, and the template avoids every word
+a proof file may not use. A proof file that carries the two hash lines is
+stale once either file changed: its proofs are not used, and the engine
+answers `UNKNOWN` (`gave_up`, saying which file moved) for every property
+it names, so none reaches `PROVEN`, rather than failing one by one on a
+statement that moved under them; a proof file without the lines is checked
+as before. No open goal removes a goal file left from an earlier run; no
+answer leaves it. Every generated line of a goal file is checked against
+the words a proof file may not use (a function named by a refused word
+appears by its Lean identifier; a diagnostic holding one is left out with
+a note), so the template is always accepted as copied.
 
 Every command takes `--json`, printing one object in a versioned schema
 (`schemaVersion` 1, canonical JSON) for CI and coding agents; within a

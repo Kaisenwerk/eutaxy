@@ -78,6 +78,8 @@ export async function proveSpecs(
   specs: readonly SpecVerdict[],
   engines: readonly Prover[],
   modules: readonly SpecModule[] = findSpecModules(dir),
+  /** Told each engine's report on each module, for what the verdicts do not carry: the open goals. */
+  onReport?: (module: SpecModule, report: EngineReport) => void,
 ): Promise<readonly SpecVerdict[]> {
   let out = specs;
   for (const m of observed) {
@@ -90,8 +92,8 @@ export async function proveSpecs(
     if (!found || withSpecs.length === 0) continue;
     const source = readFileSync(found.path, "utf8");
     const reports: EngineReport[] = [];
-    for (const engine of engines)
-      reports.push({
+    for (const engine of engines) {
+      const report: EngineReport = {
         engine: engine.name,
         proofs: await engine.prove({
           source,
@@ -100,7 +102,10 @@ export async function proveSpecs(
           modulePath: found.path,
           specPath: found.specPath,
         }),
-      });
+      };
+      reports.push(report);
+      onReport?.(found, report);
+    }
     out = aggregate(key, out, reports);
   }
   return out;
@@ -222,15 +227,26 @@ export async function runCheck(o: CheckOptions): Promise<number> {
       }
       specs = await proveSpecs(dir, transport.observed ?? [], specs, named.engines, specModules);
     }
-    const printed =
-      o.provers && o.provers.length > 0
-        ? { ...(transport.report as object), specs }
-        : transport.report;
+    // The regression test's path goes into the JSON report too (an optional field of schema 1), so a
+    // caller that reads the report knows where the replay is without parsing the text.
+    const regressionPath =
+      verdict.kind === "VIOLATED" && !o.noRegression
+        ? o.out
+          ? resolve(o.cwd, o.out)
+          : join(dir, `${name}.regression.test.ts`)
+        : undefined;
+    const printed = {
+      ...(transport.report as object),
+      ...(o.provers && o.provers.length > 0 ? { specs } : {}),
+      ...(regressionPath === undefined
+        ? {}
+        : { regressionTest: toPosix(relative(o.cwd, regressionPath) || regressionPath) }),
+    };
     if (o.json) o.stdout(`${canonicalJson(printed as JsonValue)}\n`);
     else o.stdout(`${renderText(verdict)}\n${specs.length > 0 ? `\n${renderSpecs(specs)}\n` : ""}`);
 
-    if (verdict.kind === "VIOLATED" && !o.noRegression) {
-      const outPath = o.out ? resolve(o.cwd, o.out) : join(dir, `${name}.regression.test.ts`);
+    if (regressionPath !== undefined) {
+      const outPath = regressionPath;
       const outDir = dirname(outPath);
       const schemaPaths: Record<string, string> = {};
       for (const step of transport.setup) {

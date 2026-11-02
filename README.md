@@ -128,7 +128,14 @@ with a count (or `--json`). No scenario runs, so nothing is `CHECKED`, and
 the modules are loaded in Node, so one that only loads inside workerd stays
 `UNKNOWN` until an engine reads it; so does a module whose properties do
 not finish within 60 seconds. It exits 1 for a `REFUTED` or `CONFLICT`
-spec and 0 otherwise.
+spec and 0 otherwise. `--goals` writes the properties the Lean engine
+could not prove beside each spec file as a proof file with every proof
+open, for a proof to be supplied.
+
+A coding agent runs all of this through one tool: `eutaxy mcp` serves the
+Model Context Protocol over stdio, with `check`, `report`, `goals`,
+`prove` and `prover_status`, each returning the JSON report. Verdicts
+depend only on files in the repository; nothing in Eutaxy calls a model.
 
 ## Developing
 

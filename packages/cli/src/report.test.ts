@@ -227,3 +227,40 @@ describe("eutaxy report", () => {
     expect((await report(join(scratch, "missing"))).code).toBe(3);
   });
 });
+
+describe("eutaxy report, one spec file", () => {
+  test("`only` keeps the module whose spec file it names; a spec file not under the directory is an error", async () => {
+    const dir = "corpus/prover-contracts/constructs/strings";
+    let out = "";
+    let err = "";
+    const code = await runReport({
+      cwd: root,
+      dir,
+      only: `${dir}/domain.props.ts`,
+      json: true,
+      stdout: (t) => {
+        out += t;
+      },
+      stderr: (t) => {
+        err += t;
+      },
+    });
+    expect(code, err).toBe(1);
+    expect(new Set((JSON.parse(out) as Json).specs.map((s) => s.module))).toEqual(
+      new Set(["./domain.ts"]),
+    );
+    err = "";
+    const missing = await runReport({
+      cwd: root,
+      dir,
+      only: `${dir}/other.props.ts`,
+      json: true,
+      stdout: () => {},
+      stderr: (t) => {
+        err += t;
+      },
+    });
+    expect(missing).toBe(3);
+    expect(err).toMatch(/^no spec file .*other\.props\.ts under /);
+  });
+});

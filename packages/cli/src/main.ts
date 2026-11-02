@@ -1,6 +1,7 @@
 import { parseArgs } from "./args.ts";
 import { exitCodes, runCheck } from "./check.ts";
 import { runInstall, toolchains } from "./install.ts";
+import { serveStdio } from "./mcp.ts";
 import { runReport } from "./report.ts";
 
 const usage = `eutaxy — deterministic simulation checks and spec verdicts for Cloudflare Workers
@@ -9,6 +10,7 @@ Usage:
   eutaxy check <scenario.sim.ts> [options]
   eutaxy report [dir] [--prover <names>] [--seed <seed>] [--json]
   eutaxy prover install <lean|smt> [--from <url or directory>] [--json]
+  eutaxy mcp
 
 check options:
   --wrangler <path>     wrangler config (default: wrangler.jsonc/json/toml beside the scenario)
@@ -35,6 +37,13 @@ downloaded from the upstream GitHub release, or from a mirror or offline directo
 holding the same file (--from), and checked against the engine's SHA-256 before it is
 unpacked. Nothing is downloaded at any other time.
 
+report options: --goals writes each module's open Lean goals beside its spec file as
+<spec>.goals.lean (a proof file with every proof open) and lists them; needs --prover lean.
+
+mcp serves the Model Context Protocol over stdio (one JSON-RPC message per line, logs on
+stderr) for a coding agent: tools check, report, goals, prove and prover_status, each
+returning the JSON report. Point the agent's MCP configuration at "eutaxy mcp".
+
 Exit codes: 0 BOUNDED, 1 VIOLATED or a REFUTED or CONFLICT spec, 2 UNSUPPORTED, 3 error.
 report: 0, or 1 for a REFUTED or CONFLICT spec, 3 error. prover install: 0, or 3.
 `;
@@ -53,6 +62,7 @@ export async function main(argv: readonly string[], io: Io): Promise<number> {
     "keep",
     "help",
     "exhaustive",
+    "goals",
   ]);
   const command = positionals[0];
   if (!command || command === "help" || flags["help"] === true) {
@@ -72,6 +82,13 @@ export async function main(argv: readonly string[], io: Io): Promise<number> {
     .split(",")
     .map((n) => n.trim())
     .filter((n) => n.length > 0);
+  if (command === "mcp") {
+    if (positionals.length !== 1 || Object.keys(flags).length > 0) {
+      io.stderr(`mcp takes no arguments\n\n${usage}`);
+      return exitCodes.error;
+    }
+    return serveStdio({ cwd: io.cwd, log: io.stderr });
+  }
   if (command === "prover") {
     const names = Object.keys(toolchains).join("|");
     if (positionals[1] !== "install" || positionals.length !== 3) {
@@ -103,7 +120,7 @@ export async function main(argv: readonly string[], io: Io): Promise<number> {
       io.stderr(`report takes one directory\n\n${usage}`);
       return exitCodes.error;
     }
-    const other = Object.keys(flags).find((k) => !["prover", "seed", "json"].includes(k));
+    const other = Object.keys(flags).find((k) => !["prover", "seed", "json", "goals"].includes(k));
     if (other !== undefined) {
       io.stderr(`report does not take --${other}\n`);
       return exitCodes.error;
@@ -114,6 +131,7 @@ export async function main(argv: readonly string[], io: Io): Promise<number> {
       ...(dir === undefined ? {} : { dir }),
       ...(provers.length > 0 ? { provers } : {}),
       ...(str("seed") ? { seed: str("seed") as string } : {}),
+      ...(flags["goals"] === true ? { goals: true } : {}),
       json: flags["json"] === true,
       stdout: io.stdout,
       stderr: io.stderr,

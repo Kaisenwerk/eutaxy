@@ -19,8 +19,21 @@ export {
   toolchains,
 } from "./install.ts";
 export { type Io, main } from "./main.ts";
+export {
+  handleLine,
+  instructions,
+  legacyVersions,
+  type McpContext,
+  modernVersions,
+  type Runners,
+  serverInfo,
+  serveStdio,
+  type ToolResult,
+  tools,
+} from "./mcp.ts";
 export { type CloudflareRegressionOptions, cloudflareRegressionTest } from "./regression.ts";
-export { type ReportOptions, runReport, testModule } from "./report.ts";
+export { type ReportOptions, runReport, testModule, type WrittenGoal } from "./report.ts";
+export { eutaxyVersion } from "./version.ts";
 export {
   type CheckTransport,
   checkInWorkerd,

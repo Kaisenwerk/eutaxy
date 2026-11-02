@@ -14,11 +14,14 @@
  */
 
 import { fork } from "node:child_process";
+import { createHash } from "node:crypto";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { registerHooks } from "node:module";
-import { resolve } from "node:path";
+import { basename, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import type { SpecVerdict } from "@eutaxy/core";
-import { checkSpecModule, type Prover } from "@eutaxy/prover";
+import { canonicalJson, type JsonValue, type SpecVerdict } from "@eutaxy/core";
+import { checkSpecModule, type OpenGoal, type Prover } from "@eutaxy/prover";
+import { goalFileFor, leanProver, renderGoals } from "@eutaxy/prover-lean";
 import { renderSpecReport, renderSpecReportJson } from "@eutaxy/report";
 import { enginesNamed, exitCodes, proveSpecs } from "./check.ts";
 import { findSpecModules, type SpecModule } from "./specs.ts";
@@ -33,6 +36,10 @@ export interface ReportOptions {
   readonly provers?: readonly string[];
   /** How long one module's properties may take at `TESTED`; default 60 s. */
   readonly moduleBudgetMs?: number;
+  /** Only the module whose spec file this is (a path, relative to `cwd`), for a proof checked on its own. */
+  readonly only?: string;
+  /** Write each module's open Lean goals beside its spec file (`<spec>.goals.lean`) and list them. */
+  readonly goals?: boolean;
   readonly json: boolean;
   readonly stdout: (text: string) => void;
   readonly stderr: (text: string) => void;
@@ -200,6 +207,38 @@ export function testModule(
   });
 }
 
+/** One open goal as the report lists it: where its goal file is, and the goal itself. */
+export interface WrittenGoal extends OpenGoal {
+  readonly module: string;
+  /** The goal file, relative to the working directory. */
+  readonly file: string;
+}
+
+/**
+ * Write a module's open Lean goals beside its spec file as
+ * `<spec>.goals.lean`, a proof file with every proof open, and list them.
+ * No open goal removes a goal file left from an earlier run.
+ */
+function writeGoals(m: SpecModule, goals: readonly OpenGoal[], cwd: string): WrittenGoal[] {
+  const path = goalFileFor(m.specPath);
+  if (goals.length === 0) {
+    rmSync(path, { force: true });
+    return [];
+  }
+  const sha = (text: string) => createHash("sha256").update(text).digest("hex");
+  writeFileSync(
+    path,
+    renderGoals({
+      specFile: basename(m.specPath),
+      sourceSha256: sha(readFileSync(m.path, "utf8")),
+      specSha256: sha(readFileSync(m.specPath, "utf8")),
+      goals,
+    }),
+  );
+  const file = relative(cwd, path).split("\\").join("/");
+  return goals.map((g) => ({ module: m.key, file, ...g }));
+}
+
 export async function runReport(o: ReportOptions): Promise<number> {
   const root = resolve(o.cwd, o.dir ?? ".");
   let engines: Prover[] = [];
@@ -218,8 +257,20 @@ export async function runReport(o: ReportOptions): Promise<number> {
     o.stderr(`cannot read ${root}: ${err instanceof Error ? err.message : String(err)}\n`);
     return exitCodes.error;
   }
+  if (o.only !== undefined) {
+    const spec = resolve(o.cwd, o.only);
+    modules = modules.filter((m) => m.specPath === spec);
+    if (modules.length === 0) {
+      o.stderr(`no spec file ${spec} under ${root}\n`);
+      return exitCodes.error;
+    }
+  }
   if (modules.length === 0) {
     o.stderr(`no spec files (*.props.ts) under ${root}\n`);
+    return exitCodes.error;
+  }
+  if (o.goals && !engines.some((e) => e.name === leanProver.name)) {
+    o.stderr("--goals needs the lean engine among --prover\n");
     return exitCodes.error;
   }
   const errors = modules.flatMap((m) =>
@@ -235,6 +286,7 @@ export async function runReport(o: ReportOptions): Promise<number> {
       ...specs,
       ...(await testModule(m, o.seed ?? "report", o.moduleBudgetMs ?? 60_000, o.stderr)),
     ];
+  const goals: WrittenGoal[] = [];
   if (engines.length > 0)
     specs = await proveSpecs(
       root,
@@ -242,8 +294,30 @@ export async function runReport(o: ReportOptions): Promise<number> {
       specs,
       engines,
       modules,
+      o.goals
+        ? (m, report) => {
+            if (report.engine !== leanProver.name) return;
+            // An engine that did not answer (not installed, timed out, or the emitted Lean did not
+            // compile) lists no goals; a goal file left from an earlier run stands until it answers.
+            if (report.proofs.goals === undefined) return;
+            goals.push(...writeGoals(m, report.proofs.goals, o.cwd));
+          }
+        : undefined,
     );
-  o.stdout(`${o.json ? renderSpecReportJson(specs) : renderSpecReport(specs)}\n`);
+  if (o.json) {
+    const json = JSON.parse(renderSpecReportJson(specs)) as Record<string, unknown>;
+    o.stdout(
+      `${canonicalJson({ ...json, ...(o.goals ? { goals } : {}) } as unknown as JsonValue)}\n`,
+    );
+  } else {
+    o.stdout(`${renderSpecReport(specs)}\n`);
+    if (o.goals)
+      o.stdout(
+        goals.length === 0
+          ? "\nNo open Lean goals.\n"
+          : `\n${goals.length} open Lean goal${goals.length === 1 ? "" : "s"} written to ${[...new Set(goals.map((g) => g.file))].join(", ")}\n`,
+      );
+  }
   // The codes check uses: 1 for a refuted or conflicting spec, 0 otherwise; UNKNOWN fails nothing.
   return specs.some((v) => v.kind === "REFUTED" || v.kind === "CONFLICT")
     ? exitCodes.VIOLATED

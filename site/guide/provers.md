@@ -63,6 +63,25 @@ A toolchain installed another way still serves, after the cache:
 In CI, cache the toolchains directory and run the two commands before the
 check; an installed toolchain costs no download.
 
+## Supplying proofs
+
+Where the Lean engine's tactic script gives up (induction, most often), a
+proof can be supplied beside the spec file: `domain.props.lean` beside
+`domain.props.ts`, lemmas first, then a `-- proof: <property>` part of
+tactics per property. Lean's kernel checks it against the statement Eutaxy
+emits, which the proof cannot change, and Eutaxy accepts it only when it
+rests on Lean's standard axioms.
+
+`eutaxy report --prover lean --goals` writes the open goals to start from:
+`domain.props.goals.lean` beside each spec file with properties the script
+could not close, describing each goal with its statement and ending in one
+open `-- proof:` part per goal. It is a proof file with the proofs left
+out: copy it to `domain.props.lean`, add lemmas and tactics, and run the
+report again. Its two header lines name the SHA-256 of the module and of
+the spec file the goals were written for; once either changes, a proof
+file carrying them is stale, nothing in it is `PROVEN`, and the verdicts
+say so until the goals are written again and the proofs brought over.
+
 ## The Lean engine
 
 Translates the module to Lean 4, states each property as a theorem with

@@ -162,6 +162,7 @@ export default defineConfig({
           { text: "Specs", link: "/guide/specs" },
           { text: "Provers", link: "/guide/provers" },
           { text: "Verdicts", link: "/guide/verdicts" },
+          { text: "For coding agents", link: "/guide/agents" },
         ],
       },
       {
