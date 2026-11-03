@@ -15,7 +15,10 @@ in the repository.
 - A Worker project with a wrangler config (`wrangler.jsonc`, `.json` or
   `.toml`).
 - TypeScript 7.1. Until its release, that is `typescript@7.1.0-beta`: the
-  spec reader asks your compiler for the types of your functions.
+  spec reader asks your compiler for the types of your functions. Inside
+  Vitest, `eutaxy/cloudflare` loads without the compiler, so a project on
+  an older TypeScript runs scenarios with the beta as Eutaxy's own dev
+  dependency.
 - Optional: a prover toolchain, installed with one command
   (`npx eutaxy prover install lean`, `… smt`). See [Provers](/guide/provers).
 

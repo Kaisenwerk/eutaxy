@@ -23,6 +23,24 @@ function run(cmd: string, args: readonly string[], cwd: string): string {
   });
 }
 
+/** The bare specifiers an entry's bundle imports, following its own chunks. */
+function externalImports(entry: string): string[] {
+  const seen = new Set<string>();
+  const externals = new Set<string>();
+  const queue = [entry];
+  for (let file = queue.pop(); file !== undefined; file = queue.pop()) {
+    if (seen.has(file)) continue;
+    seen.add(file);
+    const text = readFileSync(join(dist, file), "utf8");
+    for (const m of text.matchAll(/(?:\bfrom\s*|\bimport\s*\(?\s*)["']([^"']+)["']/g)) {
+      const spec = m[1] as string;
+      if (spec.startsWith("./")) queue.push(spec.slice(2));
+      else externals.add(spec);
+    }
+  }
+  return [...externals].sort();
+}
+
 describe("published package", () => {
   test("builds a self-contained bundle with declarations and a runnable bin", () => {
     run("pnpm", ["build"], root);
@@ -43,6 +61,13 @@ describe("published package", () => {
     expect(readFileSync(join(dist, "bin.mjs"), "utf8").startsWith("#!/usr/bin/env node")).toBe(
       true,
     );
+    // A scenario-only user runs `eutaxy/cloudflare` (and `eutaxy`) inside workerd, where neither the
+    // TypeScript compiler (the spec reader's, a peer only for specs and provers) nor Node's modules
+    // resolve: those entries' bundles must import neither, whatever chunk they share with the CLI.
+    for (const entry of ["cloudflare.mjs", "index.mjs", "spec.mjs"]) {
+      const imported = externalImports(entry);
+      expect(imported, `${entry} imports ${imported.join(", ")}`).toEqual([]);
+    }
     expect(run(process.execPath, [join(dist, "bin.mjs"), "help"], root)).toContain("Usage:");
     // report runs each module in a process started on the bundled chunk that holds it; the bin must
     // not be that chunk, or the process would run the command again.

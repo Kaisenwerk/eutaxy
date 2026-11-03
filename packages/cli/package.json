@@ -4,7 +4,9 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./workerd": "./src/workerd.ts",
+    "./regression": "./src/regression.ts"
   },
   "types": "./src/index.ts",
   "dependencies": {

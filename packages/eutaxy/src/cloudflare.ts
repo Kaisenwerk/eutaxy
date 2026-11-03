@@ -1,13 +1,14 @@
 // eutaxy/cloudflare: scenarios, the platform and checks for Cloudflare Workers.
 
+// From the CLI's own modules, not its index: the index loads the spec reader and with it the
+// TypeScript compiler, which a scenario-only user need not have.
+export { type CloudflareRegressionOptions, cloudflareRegressionTest } from "@eutaxy/cli/regression";
 export {
   type CheckTransport,
-  type CloudflareRegressionOptions,
   checkInWorkerd,
-  cloudflareRegressionTest,
   type SpecEntry,
   type WorkerdCheckInput,
-} from "@eutaxy/cli";
+} from "@eutaxy/cli/workerd";
 export {
   atLeastOnce,
   atLeastOncePerMessage,
