@@ -90,6 +90,8 @@ afterAll(async () => {
 
 describe("eutaxy mcp", () => {
   test("the handshake era: initialize, tools/list, a check with its verdict and regression test", async () => {
+    // A scenario no other test file checks at the same time: two checks of one directory may run at once, but
+    // a test asserting the directory is gone afterwards must be alone in it.
     const init = (await server.request("initialize", {
       protocolVersion: "2025-11-25",
       capabilities: {},
@@ -112,7 +114,7 @@ describe("eutaxy mcp", () => {
       const call = await server.request("tools/call", {
         name: "check",
         arguments: {
-          scenario: "corpus/planted-bugs/queue-duplicate-write/scenario.sim.ts",
+          scenario: "corpus/planted-bugs/queue-charge-twice/scenario.sim.ts",
           seed: "mcp",
           budgetMs: 30_000,
           out: outFile,

@@ -5,7 +5,8 @@
  */
 
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import {
@@ -182,9 +183,13 @@ export async function runCheck(o: CheckOptions): Promise<number> {
     o.stderr(`no wrangler config found next to the scenario; pass --wrangler <path>\n`);
     return exitCodes.error;
   }
+  // One run's files carry a stamp of their own, so two checks of one scenario running at once (a CLI run
+  // beside the MCP server's, say) never share a test, a config or Vitest's report file; specs.ts is the
+  // same for every run of the directory and is shared.
+  const stamp = `${process.pid}-${randomBytes(3).toString("hex")}`;
   const workDir = join(dir, ".eutaxy");
-  const testPath = join(workDir, `${name}.check.test.ts`);
-  const configPath = join(workDir, "vitest.config.mts");
+  const testPath = join(workDir, `${name}.${stamp}.check.test.ts`);
+  const configPath = join(workDir, `vitest.config.${stamp}.mts`);
   mkdirSync(workDir, { recursive: true });
   try {
     writeFileSync(
@@ -202,7 +207,7 @@ export async function runCheck(o: CheckOptions): Promise<number> {
       mkdirSync(dirname(join(workDir, f.name)), { recursive: true });
       writeFileSync(join(workDir, f.name), f.source);
     }
-    const reportPath = join(workDir, "vitest-report.json");
+    const reportPath = join(workDir, `vitest-report.${stamp}.json`);
     rmSync(reportPath, { force: true }); // never read a report left by an earlier --keep run
     writeFileSync(configPath, vitestConfigSource(wrangler, testPath, reportPath));
     const { code, output } = await runVitest(vitestBin(dir), configPath, dir);
@@ -291,6 +296,21 @@ export async function runCheck(o: CheckOptions): Promise<number> {
       return exitCodes.VIOLATED;
     return exitCodes[verdict.kind];
   } finally {
-    if (!o.keep) rmSync(workDir, { recursive: true, force: true });
+    if (!o.keep) cleanUp(workDir, stamp);
   }
+}
+
+/**
+ * Remove this run's files; the shared ones and the directory go only when
+ * no other run's files are left there (another check may still be using
+ * them).
+ */
+function cleanUp(workDir: string, stamp: string): void {
+  if (!existsSync(workDir)) return;
+  for (const f of readdirSync(workDir))
+    if (f.includes(`.${stamp}.`)) rmSync(join(workDir, f), { force: true });
+  const others = readdirSync(workDir).some((f) =>
+    /\.check\.test\.ts$|^vitest\.config\..*\.mts$|^vitest-report\./.test(f),
+  );
+  if (!others) rmSync(workDir, { recursive: true, force: true });
 }

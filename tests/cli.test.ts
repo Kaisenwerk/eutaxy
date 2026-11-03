@@ -30,6 +30,39 @@ function eutaxy(args: readonly string[]): { status: number; stdout: string; stde
 }
 
 describe("eutaxy check", () => {
+  test("two checks of one scenario at once each read their own report and leave no files behind", async () => {
+    const { spawn } = await import("node:child_process");
+    const run = (seed: string) =>
+      new Promise<{ status: number | null; stdout: string }>((done) => {
+        const child = spawn(
+          process.execPath,
+          [
+            bin,
+            "check",
+            "corpus/planted-bugs/queue-duplicate-write/scenario.sim.ts",
+            "--json",
+            "--seed",
+            seed,
+            "--no-regression",
+            "--budget-ms",
+            "30000",
+          ],
+          { cwd: root, stdio: ["ignore", "pipe", "pipe"] },
+        );
+        let stdout = "";
+        child.stdout.on("data", (d: Buffer) => {
+          stdout += d.toString();
+        });
+        child.on("close", (status) => done({ status, stdout }));
+      });
+    const [a, b] = await Promise.all([run("twin-a"), run("twin-b")]);
+    for (const r of [a, b]) {
+      expect(r.status, r.stdout).toBe(1);
+      expect((JSON.parse(r.stdout) as { verdict: { kind: string } }).verdict.kind).toBe("VIOLATED");
+    }
+    expect(existsSync(join(root, "corpus/planted-bugs/queue-duplicate-write/.eutaxy"))).toBe(false);
+  }, 240_000);
+
   test("reports a violation as JSON, writes the regression test, exits 1", () => {
     const out = mkdtempSync(join(tmpdir(), "eutaxy-cli-"));
     try {

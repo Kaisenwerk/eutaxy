@@ -73,8 +73,6 @@ a target needs it:
 - The remaining performance items: `report`'s module workers and the
   engines' modules run in parallel, toolchain lookups once per process,
   one Z3 prelude per module.
-- A report path per run in `eutaxy check`, so two checks of one scenario
-  running at once do not share Vitest's report file.
 - The proof cache keyed by source, spec and engine version.
 - A configurable number of `TESTED` draws on the command line (the API
   takes `inputs`).
