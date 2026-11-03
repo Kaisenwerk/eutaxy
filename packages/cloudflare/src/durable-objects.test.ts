@@ -9,7 +9,7 @@ import { Run, replayChooser, runOnce } from "@eutaxy/engine";
 import { describe, expect, test } from "vitest";
 import { Backing, FakeStorage } from "./fake-durable-objects.ts";
 import { createCloudflarePlatform, type WorkerHandler } from "./platform.ts";
-import { durableObject, http } from "./scenario.ts";
+import { defineScenario, durableObject, durableObjectRows, everyRow, http } from "./scenario.ts";
 
 /** Drops a live instance of the current fake namespace, as a runtime reset does. */
 let dropInstance: ((hex: string) => void) | null = null;
@@ -60,6 +60,11 @@ class Counter {
     await this.ctx.storage.setAlarm(Date.now() + 1000);
     return "set";
   }
+  /** Writes a row into a SQL table the seed created, as a SQLite-backed object does. */
+  async tally(by: number) {
+    this.ctx.storage.sql.exec(`INSERT INTO "tallies" ("n", "note") VALUES (?, ?)`, by, "tallied");
+    return by;
+  }
 }
 
 function fakeNamespace() {
@@ -92,6 +97,7 @@ function fakeNamespace() {
       return {
         id,
         bump: (by: number) => instanceOf(hex).bump(by),
+        tally: (by: number) => instanceOf(hex).tally(by),
         remind: () => instanceOf(hex).remind(),
         relay: () => instanceOf(hex).relay(),
         open: () => instanceOf(hex).open(),
@@ -144,21 +150,23 @@ const handler: WorkerHandler = {
     );
     try {
       const value =
-        path === "/remind"
-          ? await stub.remind()
-          : path === "/relay"
-            ? await stub.relay()
-            : path === "/crash-self"
-              ? await stub.crashSelf()
-              : path === "/pipelined-property"
-                ? await (stub as unknown as { total: { value: Promise<number> } }).total.value
-                : path === "/pipelined"
-                  ? await (stub.bump(2) as unknown as { value: Promise<number> }).value
-                  : path === "/open"
-                    ? ((await stub.open()) as unknown as string)
-                    : path === "/total"
-                      ? await (stub as unknown as { total: Promise<number> }).total
-                      : await stub.bump(2);
+        path === "/tally"
+          ? await stub.tally(3)
+          : path === "/remind"
+            ? await stub.remind()
+            : path === "/relay"
+              ? await stub.relay()
+              : path === "/crash-self"
+                ? await stub.crashSelf()
+                : path === "/pipelined-property"
+                  ? await (stub as unknown as { total: { value: Promise<number> } }).total.value
+                  : path === "/pipelined"
+                    ? await (stub.bump(2) as unknown as { value: Promise<number> }).value
+                    : path === "/open"
+                      ? ((await stub.open()) as unknown as string)
+                      : path === "/total"
+                        ? await (stub as unknown as { total: Promise<number> }).total
+                        : await stub.bump(2);
       return Response.json({ value });
     } catch {
       return new Response("object unavailable", { status: 503 });
@@ -520,5 +528,140 @@ describe("isPlainData", () => {
     let deep: unknown = { capability: () => 1 };
     for (let i = 0; i < 12; i++) deep = { next: deep };
     expect(isPlainData(deep)).toBe(false);
+  });
+});
+
+describe("SQLite-backed storage", () => {
+  const sqlSetup = () =>
+    durableObject(
+      "COUNTER",
+      { c: { n: 40 } },
+      {
+        sql: {
+          c: {
+            schema:
+              'CREATE TABLE "tallies" ("n" INTEGER NOT NULL, "note" TEXT); CREATE TABLE "empty" ("x" INTEGER)',
+            rows: { tallies: [{ n: 1, note: "seeded" }] },
+          },
+          d: {
+            schema:
+              'CREATE TABLE "stock" ("sku" TEXT PRIMARY KEY, "qty" INTEGER NOT NULL);\nCREATE TABLE IF NOT EXISTS holds (id INTEGER)',
+            rows: { stock: [{ sku: "widget", qty: 2 }], holds: [{}] },
+          },
+        },
+      },
+    );
+
+  test("the seed creates the tables and rows after the clear; the snapshot lists each table under object/table, key-value rows under the object", async () => {
+    const { namespace, helpers, storages } = fakeNamespace();
+    const platform = createCloudflarePlatform({
+      env: { COUNTER: namespace },
+      handler,
+      schemas: {},
+      durableObjects: helpers,
+    });
+    const s: ScenarioSpec = { ...spec("/tally"), setup: [sqlSetup()] };
+    const run = new Run({ chooser: replayChooser({ seed: 1, faults: [] }), bounds: s.bounds });
+    const log = await runOnce(s, platform, run);
+    expect(response(log).result.body).toEqual({ value: 3 });
+    const statements = storages.get("id-c")?.statements ?? [];
+    expect(statements[0]).toBe("SELECT 1");
+    expect(statements).toContain('INSERT INTO "tallies" ("n", "note") VALUES (?, ?)');
+    const snapshot = log.entries.find((e) => e.kind === "snapshot" && e.target === "DO:COUNTER");
+    const tables =
+      (snapshot?.payload as { tables: Record<string, unknown[]> } | undefined)?.tables ?? {};
+    expect(tables["c"]).toEqual([{ key: "n", value: 40 }]);
+    expect(tables["c/tallies"]).toEqual([
+      { n: 1, note: "seeded" },
+      { n: 3, note: "tallied" },
+    ]);
+    expect(tables["c/empty"]).toEqual([]);
+    // d was never reached: exactly its seed, SQL rows included, without constructing it.
+    expect(tables["d"]).toEqual([]);
+    expect(tables["d/stock"]).toEqual([{ sku: "widget", qty: 2 }]);
+    // An empty row inserts default values: one row, as SQLite would fill it (the fake keeps it empty).
+    expect(tables["d/holds"]).toEqual([{}]);
+    expect(storages.get("id-d")?.statements).toContain('INSERT INTO "holds" DEFAULT VALUES');
+    expect(Object.keys(tables).sort()).toEqual([
+      "c",
+      "c/empty",
+      "c/tallies",
+      "d",
+      "d/holds",
+      "d/stock",
+    ]);
+  });
+
+  test("a seed for an object that is not SQLite-backed fails the reset, naming the migration", async () => {
+    const { namespace, helpers, storages } = fakeNamespace();
+    // The fake backing is made before the reset constructs anything: mark it key-value only.
+    const original = storages.get.bind(storages);
+    const platform = createCloudflarePlatform({
+      env: { COUNTER: namespace },
+      handler,
+      schemas: {},
+      durableObjects: helpers,
+    });
+    const s: ScenarioSpec = { ...spec("/tally"), setup: [sqlSetup()] };
+    const run = new Run({ chooser: replayChooser({ seed: 1, faults: [] }), bounds: s.bounds });
+    // Pre-create the backing so it exists as key-value only before the reset reaches it.
+    const stub = namespace.get(namespace.idFromName("c"));
+    void stub;
+    for (const b of storages.values()) b.sqlite = false;
+    helpers.runInDurableObject = (async (
+      st: { id: { toString(): string } },
+      cb: (i: unknown, state: { storage: FakeStorage }) => unknown,
+    ) => {
+      const backing = original(st.id.toString()) ?? new Backing();
+      backing.sqlite = false;
+      storages.set(st.id.toString(), backing);
+      return cb({}, { storage: new FakeStorage(backing) });
+    }) as typeof helpers.runInDurableObject;
+    await expect(runOnce(s, platform, run)).rejects.toThrow(
+      /has a sql seed but is not SQLite-backed/,
+    );
+  });
+});
+
+describe("Durable Object setup validation", () => {
+  test("a name holding '/' is refused, since the snapshot names a table <object>/<table>", () => {
+    const base = {
+      name: "v",
+      worker: { entry: "./w.ts", config: "./wrangler.jsonc" },
+      drive: http([{ path: "/x", method: "POST" }], { retries: 0 }),
+      invariants: [
+        everyRow("n-set", durableObjectRows("C", "a"), [{ column: "value", op: "gte", value: 0 }]),
+      ],
+    };
+    expect(() =>
+      defineScenario({ ...base, setup: [durableObject("C", { "a/b": { n: 1 } })] }),
+    ).toThrow(/object name "a\/b" holds "\/"/);
+    expect(() =>
+      defineScenario({
+        ...base,
+        setup: [
+          durableObject(
+            "C",
+            {},
+            { sql: { a: { schema: "CREATE TABLE t (x)", rows: { "t/u": [] } } } },
+          ),
+        ],
+      }),
+    ).toThrow(/table name "t\/u" of "a" holds "\/"/);
+    expect(() =>
+      defineScenario({ ...base, setup: [durableObject("C", {}, { sql: { a: { schema: " " } } })] }),
+    ).toThrow(/sql seed without a schema/);
+    expect(() =>
+      defineScenario({
+        ...base,
+        setup: [
+          durableObject(
+            "C",
+            {},
+            { sql: { a: { schema: "CREATE TABLE t (x)", rows: { t: [{ x: 1 }] } } } },
+          ),
+        ],
+      }),
+    ).not.toThrow();
   });
 });

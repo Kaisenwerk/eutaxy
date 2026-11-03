@@ -553,7 +553,24 @@ shares the reading of the limit and none of the proxy code.
   call. Through the Cloudflare Vitest plugin's test helpers each object is
   cleared, seeded from the scenario's `durableObject` setup and evicted
   before a run, so it starts from storage alone, and its storage is
-  snapshotted after it (rows `{ key, value }` per object name). Alarms are
+  snapshotted after it: the key-value entries as rows `{ key, value }`
+  under the object's name, and, for a SQLite-backed object (the backend
+  Cloudflare recommends and the Agents SDK requires), every user table
+  with its rows under `<object>/<table>` (`durableObjectTable` selects
+  one; the runtime's own `sqlite_*` and `_cf_*` tables are left out, the
+  key-value API's hidden table among them). The setup seeds SQL storage
+  too (`sql`: the `CREATE TABLE` statements and rows per table, run after
+  the clear, which drops SQL and key-value data alike), so a scenario
+  states an object's starting tables as it states a D1 schema (a row with
+  no columns inserts the table's defaults; an object's or a table's name
+  may not hold `/`). An object the run never reached shows the tables the
+  reset read back after seeding, as SQLite holds them, defaults and
+  generated values included. SQL calls
+  (`ctx.storage.sql.exec`, `transactionSync`, the synchronous
+  `ctx.storage.kv`) are held by the input gate like key-value calls and
+  are not turns; nothing is recorded for them, as nothing is for key-value
+  calls. Snapshot rows are sorted by their canonical JSON, since a table
+  has no order of its own. Alarms are
   taken over on each object's storage, inside transactions too, so none is
   scheduled on the real clock, whose time is far ahead of the virtual one,
   and they fire in virtual time: Eutaxy keeps one alarm per object (a later

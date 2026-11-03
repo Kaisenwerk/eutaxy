@@ -106,6 +106,24 @@ snapshotted after it. In a concurrent run, an object's own outbound I/O
 during a call is a turn, so another call may enter the object meanwhile, as
 its open input gate allows; storage operations are not turns.
 
+**SQLite storage.** For a SQLite-backed class (`new_sqlite_classes` in the
+wrangler migrations, the backend Cloudflare recommends and the Agents SDK
+requires), the setup seeds SQL storage too: `durableObject("INVENTORY", {},
+{ sql: { "store-1": { schema: "CREATE TABLE stock (…)", rows: { stock: [{
+sku: "widget", qty: 1 }] } } } })` creates the tables and inserts the rows
+after the clear, which drops SQL and key-value data alike. The snapshot
+lists every user table of a reached object with its rows under
+`<object>/<table>`, beside the key-value rows under the object's name;
+`durableObjectTable("INVENTORY", "store-1", "stock")` selects one for a
+state invariant, as `durableObjectRows` selects the key-value rows.
+`ctx.storage.sql.exec`, `transactionSync` and the synchronous
+`ctx.storage.kv` are held by the input gate like key-value calls and are
+not turns; nothing is recorded for them. A `sql` seed for a class that is
+not SQLite-backed fails the reset, naming the migration to add; an
+object's or a table's name may not hold `/`. An object the run never
+reached shows the tables as the reset read them back after seeding,
+defaults and generated values included.
+
 **Alarms** fire in virtual time: Eutaxy takes them over so none is
 scheduled on the real clock. One alarm per object, a later `setAlarm`
 replaces it, one set inside a transaction applies on commit, and it

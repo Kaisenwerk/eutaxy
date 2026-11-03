@@ -221,11 +221,12 @@ export function durableObjectBinding(
     async reset(step, real) {
       setUp.add(step.binding);
       alarmLimits.set(step.binding, step.alarmsPerObject ?? defaultAlarmsPerObject);
-      await resetNamespace(
+      stateFor(step.binding).seededSql = await resetNamespace(
         namespace(step.binding, real),
         required(),
         stateFor(step.binding).names,
         step.objects,
+        step.sql ?? {},
       );
     },
     async snapshot(step, real, unsupported) {
@@ -236,6 +237,8 @@ export function durableObjectBinding(
         stateFor(binding).names,
         stateFor(binding).touched,
         step.objects,
+        step.sql ?? {},
+        stateFor(binding).seededSql,
         (object) =>
           unsupported(
             `Durable Object ${binding} ${object} was reached without a call Eutaxy saw (through another object's binding); calls between objects are not proxied yet`,

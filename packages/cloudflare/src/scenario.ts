@@ -266,18 +266,34 @@ export interface DurableObjectSetup extends PlatformData {
    * counted); an object that keeps re-arming stops there. Default 3.
    */
   readonly alarmsPerObject?: number;
+  /** For SQLite-backed objects, by name: the tables to create and the rows to insert after the clear. */
+  readonly sql?: { readonly [name: string]: DurableObjectSqlSeed };
 }
+
+/** A SQLite-backed object's starting storage: its `CREATE TABLE` statements, and rows per table (plain data, as setup steps are). */
+export type DurableObjectSqlSeed = {
+  /** SQL run after the clear: the schema, `CREATE TABLE` statements and the like. */
+  readonly schema: string;
+  readonly rows?: { readonly [table: string]: readonly SqlRow[] };
+};
+
+/** One row to insert, or one row snapshotted: column name to value (booleans and objects as SQLite stores them). */
+export type SqlRow = { readonly [column: string]: JsonValue };
 
 export function durableObject(
   binding: string,
   objects: { readonly [name: string]: { readonly [key: string]: JsonValue } } = {},
-  options: { readonly alarmsPerObject?: number } = {},
+  options: {
+    readonly alarmsPerObject?: number;
+    readonly sql?: { readonly [name: string]: DurableObjectSqlSeed };
+  } = {},
 ): DurableObjectSetup {
   return {
     kind: "durable_object",
     binding,
     objects,
     ...(options.alarmsPerObject === undefined ? {} : { alarmsPerObject: options.alarmsPerObject }),
+    ...(options.sql === undefined ? {} : { sql: options.sql }),
   };
 }
 
@@ -431,6 +447,22 @@ export function durableObjectRows(
 ): StateQuery {
   const target = `DO:${binding}`;
   return where ? { target, table: object, where } : { target, table: object };
+}
+
+/**
+ * One SQL table of a SQLite-backed object (by the name its id was made
+ * from) at the end of the run, its rows as the table holds them, for state
+ * invariants. The snapshot names it `<object>/<table>`.
+ */
+export function durableObjectTable(
+  binding: string,
+  object: string,
+  table: string,
+  where?: readonly RowCondition[],
+): StateQuery {
+  const target = `DO:${binding}`;
+  const name = `${object}/${table}`;
+  return where ? { target, table: name, where } : { target, table: name };
 }
 
 export interface CloudflareScenarioInput {
@@ -733,6 +765,44 @@ function validateRpcDrive(drive: RpcDrive): readonly string[] {
   return errors;
 }
 
+/**
+ * Durable Object setups: an object's or a SQL table's name may not hold
+ * "/", since the snapshot names a table `<object>/<table>` and a selector
+ * must read back to one place.
+ */
+function validateDurableObjectSetups(setup: readonly PlatformData[]): readonly string[] {
+  const errors: string[] = [];
+  for (const step of setup) {
+    if (step["kind"] !== "durable_object") continue;
+    const s = step as unknown as DurableObjectSetup;
+    for (const name of [...Object.keys(s.objects), ...Object.keys(s.sql ?? {})])
+      if (name.includes("/"))
+        errors.push(
+          `durableObject ${s.binding}: object name ${JSON.stringify(name)} holds "/", which the snapshot uses between an object and its table`,
+        );
+    for (const [name, seed] of Object.entries(s.sql ?? {})) {
+      if (typeof seed.schema !== "string" || seed.schema.trim() === "")
+        errors.push(
+          `durableObject ${s.binding}: object ${JSON.stringify(name)} has a sql seed without a schema`,
+        );
+      for (const [table, rows] of Object.entries(seed.rows ?? {})) {
+        if (table.includes("/"))
+          errors.push(
+            `durableObject ${s.binding}: table name ${JSON.stringify(table)} of ${JSON.stringify(name)} holds "/"`,
+          );
+        if (
+          !Array.isArray(rows) ||
+          rows.some((r) => typeof r !== "object" || r === null || Array.isArray(r))
+        )
+          errors.push(
+            `durableObject ${s.binding}: rows of ${JSON.stringify(name)}.${table} must be an array of objects`,
+          );
+      }
+    }
+  }
+  return errors;
+}
+
 /** Build and validate a scenario spec; throws with every problem listed. */
 export function defineScenario(input: CloudflareScenarioInput): ScenarioSpec {
   // queue() keeps the ids a QueueDrive already has, so it serves both forms.
@@ -752,6 +822,7 @@ export function defineScenario(input: CloudflareScenarioInput): ScenarioSpec {
   };
   const errors = [
     ...validateScenario(spec),
+    ...validateDurableObjectSetups(spec.setup),
     ...(drive.kind === "http" ? validateHttpDrive(drive) : []),
     ...(drive.kind === "rpc" ? validateRpcDrive(drive) : []),
     ...(drive.kind === "cron" ? validateCronDrive(drive) : []),

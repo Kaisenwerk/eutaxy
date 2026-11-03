@@ -1,0 +1,8 @@
+{
+  "expect": {
+    "verdict": "VIOLATED",
+    "invariant": "stock-never-negative"
+  },
+  "fault": "no fault: the second reservation runs in the object while the first awaits the warehouse, and both pass the stock check",
+  "description": "A Durable Object inventory on SQLite storage checks a SKU's stock, holds it with an external warehouse API, then decrements the row. The input gate is open during the outbound call, so two concurrent reservations both pass the check and the stock goes negative."
+}

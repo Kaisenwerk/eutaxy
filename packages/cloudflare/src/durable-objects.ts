@@ -13,10 +13,92 @@
  * fire in virtual time (see alarms.ts).
  */
 
-import { type JsonValue, toJson, writeFaults } from "@eutaxy/core";
+import { canonicalJson, type JsonValue, toJson, writeFaults } from "@eutaxy/core";
 import { withoutNetwork } from "@eutaxy/engine";
 import { AlarmBook, alarmControl, takenOver, takeOverAlarms } from "./alarms.ts";
 import type { ProxyContext } from "./d1.ts";
+import type { DurableObjectSqlSeed } from "./scenario.ts";
+
+/** Seeds by object name: key-value entries, and SQL for SQLite-backed objects. */
+type Seeds = { readonly [name: string]: { readonly [key: string]: JsonValue } };
+type SqlSeeds = { readonly [name: string]: DurableObjectSqlSeed };
+
+/** The SQL surface the seed and the snapshot use, as workerd's `ctx.storage.sql` offers it. */
+interface SqlSurface {
+  exec(query: string, ...bindings: unknown[]): { toArray(): Record<string, unknown>[] };
+}
+
+/** A storage's SQL surface, when the object is SQLite-backed; a key-value object has none that works. */
+function sqlOf(storage: unknown): SqlSurface | undefined {
+  const sql = (storage as { sql?: unknown }).sql;
+  if (typeof sql !== "object" || sql === null || typeof (sql as SqlSurface).exec !== "function")
+    return undefined;
+  try {
+    (sql as SqlSurface).exec("SELECT 1");
+    return sql as SqlSurface;
+  } catch {
+    return undefined;
+  }
+}
+
+/** A JSON value as SQLite stores it: booleans as 0 and 1, objects and arrays as their JSON text. */
+function sqlValue(v: JsonValue): unknown {
+  if (typeof v === "boolean") return v ? 1 : 0;
+  if (typeof v === "object" && v !== null) return JSON.stringify(v);
+  return v;
+}
+
+const quoted = (name: string): string => `"${name.replaceAll('"', '""')}"`;
+
+/** Run a seed: the schema, then one insert per row. */
+function seedSql(sql: SqlSurface, seed: DurableObjectSqlSeed): void {
+  sql.exec(seed.schema);
+  for (const [table, rows] of Object.entries(seed.rows ?? {}))
+    for (const row of rows) {
+      const columns = Object.keys(row);
+      if (columns.length === 0) {
+        // Every column defaulted or generated: still one row.
+        sql.exec(`INSERT INTO ${quoted(table)} DEFAULT VALUES`);
+        continue;
+      }
+      sql.exec(
+        `INSERT INTO ${quoted(table)} (${columns.map(quoted).join(", ")}) VALUES (${columns.map(() => "?").join(", ")})`,
+        ...columns.map((c) => sqlValue(row[c] as JsonValue)),
+      );
+    }
+}
+
+/** The user tables of a SQLite-backed object: not SQLite's own, not the runtime's (`_cf_*`, the key-value API's among them). */
+function userTables(sql: SqlSurface): string[] {
+  return sql
+    .exec(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\' AND name NOT LIKE '\\_cf\\_%' ESCAPE '\\' ORDER BY name",
+    )
+    .toArray()
+    .map((r) => String(r["name"]));
+}
+
+/** Each user table of a SQLite-backed object with its rows, as the storage holds them. */
+function readSqlTables(sql: SqlSurface): [string, JsonValue[]][] {
+  return userTables(sql).map((t) => [
+    t,
+    sortedRows(sql.exec(`SELECT * FROM ${quoted(t)}`).toArray()),
+  ]);
+}
+
+/** The SQL tables each seeded object held right after its seed, as the snapshot of an object the run never reached. */
+export type SeededSql = Map<string, [string, JsonValue[]][]>;
+
+/** A table's rows in a fixed order: a table has none of its own, so the canonical JSON of each row decides. */
+function sortedRows(rows: readonly Record<string, unknown>[]): JsonValue[] {
+  return rows
+    .map((r) => toJson(r))
+    .sort((a, b) => {
+      const x = canonicalJson(a);
+      const y = canonicalJson(b);
+      return x < y ? -1 : x > y ? 1 : 0;
+    });
+}
 
 /**
  * The Cloudflare Vitest plugin's test helpers, as exported by
@@ -97,6 +179,8 @@ export class BindingState {
   readonly alarms = new AlarmBook();
   /** Each reached object's live state, so an invocation that crashes inside it can reset it. */
   readonly states = new Map<string, DurableObjectState>();
+  /** The SQL tables the seed left in each seeded object, materialized, for the snapshot of one never reached. */
+  seededSql: SeededSql = new Map();
 
   /** Whether the object's own effects may wait for a turn: not while it holds its input gate. */
   mayPark(id: string): boolean {
@@ -108,6 +192,7 @@ export class BindingState {
     this.touched.clear();
     this.alarms.clear();
     this.states.clear();
+    this.seededSql = new Map();
   }
 
   /**
@@ -436,39 +521,64 @@ export async function resetNamespace(
   real: DurableObjectNamespace,
   helpers: DurableObjectTestHelpers,
   names: ObjectNames,
-  objects: { readonly [name: string]: { readonly [key: string]: JsonValue } },
-): Promise<void> {
+  objects: Seeds,
+  sql: SqlSeeds = {},
+): Promise<SeededSql> {
   // Clearing an object constructs it, outside the simulation: its constructor must not reach the network.
-  const { requested } = await withoutNetwork(() => clearAndSeed(real, helpers, names, objects));
+  const { value, requested } = await withoutNetwork(() =>
+    clearAndSeed(real, helpers, names, objects, sql),
+  );
   if (requested) {
     throw new Error(
       "a Durable Object constructor made a request during reset; constructors run outside the simulation there, so objects whose constructor does I/O are not supported",
     );
   }
+  return value;
 }
+
+/** The names a setup seeds: those with key-value entries and those with SQL. */
+const seededNames = (objects: Seeds, sql: SqlSeeds): string[] => [
+  ...new Set([...Object.keys(objects), ...Object.keys(sql)]),
+];
 
 async function clearAndSeed(
   real: DurableObjectNamespace,
   helpers: DurableObjectTestHelpers,
   names: ObjectNames,
-  objects: { readonly [name: string]: { readonly [key: string]: JsonValue } },
-): Promise<void> {
-  const ids = await objectIds(real, helpers, names, Object.keys(objects));
+  objects: Seeds,
+  sql: SqlSeeds,
+): Promise<SeededSql> {
+  const seededSql: SeededSql = new Map();
+  const ids = await objectIds(real, helpers, names, seededNames(objects, sql));
   for (const id of ids) {
     const stub = real.get(id);
     const name = names.get(id.toString());
     // Own entries only, and only for a known name: an object may be named "" or "__proto__".
     const entries = name !== undefined && Object.hasOwn(objects, name) ? objects[name] : undefined;
+    const seed = name !== undefined && Object.hasOwn(sql, name) ? sql[name] : undefined;
     await typed(helpers).runInDurableObject(stub, async (_instance, state) => {
       // Before any constructor of this run: so its blockConcurrencyWhile is seen too.
       watchGate(state);
+      // deleteAll drops SQL and key-value data alike (Cloudflare, Storage API).
       await state.storage.deleteAll();
       await deleteRealAlarm(state.storage);
       if (entries && Object.keys(entries).length > 0) await state.storage.put(entries);
+      if (seed) {
+        const surface = sqlOf(state.storage);
+        if (!surface)
+          throw new Error(
+            `Durable Object ${name} has a sql seed but is not SQLite-backed (no working ctx.storage.sql); add its class to new_sqlite_classes in the wrangler migrations`,
+          );
+        seedSql(surface, seed);
+        // What the seed left, as SQLite holds it (defaults, generated ids, affinities), for the snapshot
+        // of this object when no call reaches it.
+        seededSql.set(name as string, readSqlTables(surface));
+      }
     });
     // The object just ran, so eviction can only fail for a real reason: let it fail the reset.
     await typed(helpers).evictDurableObject(stub);
   }
+  return seededSql;
 }
 
 /**
@@ -486,13 +596,15 @@ export async function snapshotNamespace(
   helpers: DurableObjectTestHelpers,
   names: ObjectNames,
   touched: ReadonlySet<string>,
-  objects: { readonly [name: string]: { readonly [key: string]: JsonValue } },
+  objects: Seeds,
+  sql: SqlSeeds,
+  seededSql: SeededSql,
   onIndirect: (object: string) => void,
   onUnsupported: (reason: string) => void,
 ): Promise<{ readonly [object: string]: readonly JsonValue[] }> {
   // Reading an object that is no longer running reconstructs it, outside the simulation.
   const { value, requested } = await withoutNetwork(() =>
-    readTables(real, helpers, names, touched, objects, onIndirect, onUnsupported),
+    readTables(real, helpers, names, touched, objects, sql, seededSql, onIndirect, onUnsupported),
   );
   if (requested)
     onUnsupported("a Durable Object made a request while its storage was being snapshotted");
@@ -504,12 +616,26 @@ async function readTables(
   helpers: DurableObjectTestHelpers,
   names: ObjectNames,
   touched: ReadonlySet<string>,
-  objects: { readonly [name: string]: { readonly [key: string]: JsonValue } },
+  objects: Seeds,
+  sql: SqlSeeds,
+  seededSql: SeededSql,
   onIndirect: (object: string) => void,
   onUnsupported: (reason: string) => void,
 ): Promise<{ readonly [object: string]: readonly JsonValue[] }> {
   const out: Record<string, JsonValue[]> = {};
-  for (const id of await objectIds(real, helpers, names, Object.keys(objects))) {
+  // Defined, not assigned: an object may be named "__proto__". Names may not hold "/", so a table's
+  // key never collides with an object's; a collision anyway is a bug, never a silent overwrite.
+  const define = (table: string, rows: JsonValue[]) => {
+    if (Object.hasOwn(out, table)) throw new Error(`snapshot key ${table} named twice`);
+    Object.defineProperty(out, table, {
+      value: rows,
+      enumerable: true,
+      writable: true,
+      configurable: true,
+    });
+  };
+  const seeded = seededNames(objects, sql);
+  for (const id of await objectIds(real, helpers, names, seeded)) {
     const name = names.get(id.toString()) ?? id.toString();
     if (!touched.has(id.toString())) {
       // Eviction only succeeds on a running object, and reset left every object evicted.
@@ -521,29 +647,36 @@ async function readTables(
         );
       if (running) onIndirect(name);
       // Objects earlier runs created stay in the namespace's list: only the seed and this run count.
-      if (!Object.hasOwn(objects, name)) continue;
+      if (!seeded.includes(name)) continue;
     }
-    const entries = touched.has(id.toString())
-      ? [
-          ...(await typed(helpers).runInDurableObject(real.get(id), (_instance, state) => {
-            // Storage Eutaxy never took over belongs to an instance built after the run's calls.
-            if (!takenOver.has(state.storage))
-              onUnsupported(
-                `Durable Object ${name} was reset during the run and reconstructed for the snapshot; its constructor ran outside the simulation`,
-              );
-            return state.storage.list();
-          })),
-        ]
-      : Object.entries(Object.hasOwn(objects, name) ? (objects[name] ?? {}) : {});
-    // Defined, not assigned: an object may be named "__proto__".
-    Object.defineProperty(out, name, {
-      value: entries
+    let entries: [string, unknown][];
+    const tables: [string, JsonValue[]][] = [];
+    if (touched.has(id.toString())) {
+      const read = await typed(helpers).runInDurableObject(real.get(id), (_instance, state) => {
+        // Storage Eutaxy never took over belongs to an instance built after the run's calls.
+        if (!takenOver.has(state.storage))
+          onUnsupported(
+            `Durable Object ${name} was reset during the run and reconstructed for the snapshot; its constructor ran outside the simulation`,
+          );
+        const surface = sqlOf(state.storage);
+        const sqlTables: [string, JsonValue[]][] = surface ? readSqlTables(surface) : [];
+        return Promise.resolve(state.storage.list()).then((kv) => ({ kv: [...kv], sqlTables }));
+      });
+      entries = read.kv;
+      tables.push(...read.sqlTables);
+    } else {
+      // Untouched: exactly the seed, the key-value entries as given and the SQL tables as the reset
+      // read them back after seeding.
+      entries = Object.entries(Object.hasOwn(objects, name) ? (objects[name] ?? {}) : {});
+      tables.push(...(seededSql.get(name) ?? []));
+    }
+    define(
+      name,
+      entries
         .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
         .map(([key, value]) => ({ key, value: toJson(value) })),
-      enumerable: true,
-      writable: true,
-      configurable: true,
-    });
+    );
+    for (const [table, rows] of tables) define(`${name}/${table}`, rows);
   }
   return out;
 }
