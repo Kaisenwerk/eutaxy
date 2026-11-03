@@ -11,6 +11,8 @@ allowBuilds:
   esbuild: true
   workerd: true
   classic-level: true
+  # core-js-pure (behind the Agents SDK, a corpus dev dependency) only prints a notice in its script.
+  core-js-pure: false
 
 # pnpm refuses versions published within its minimum release age; these were
 # chosen deliberately (latest at the time, per the toolchain policy).

@@ -565,7 +565,14 @@ shares the reading of the limit and none of the proxy code.
   no columns inserts the table's defaults; an object's or a table's name
   may not hold `/`). An object the run never reached shows the tables the
   reset read back after seeding, as SQLite holds them, defaults and
-  generated values included. SQL calls
+  generated values included. A class built on the Agents SDK runs as
+  written on that storage: its state and schedules in the SDK's own
+  tables (`cf_agents_*`, user tables to the snapshot), its schedules over
+  the object's one alarm, which fires in virtual time, and its router
+  walking the Worker's bindings; the Cloudflare Vitest plugin's own
+  bindings (`__VITEST_POOL_WORKERS_*`) are hidden from the proxied `env`,
+  since they are the test environment's, not the Worker's, and a Worker
+  that enumerates `env` must not meet them. SQL calls
   (`ctx.storage.sql.exec`, `transactionSync`, the synchronous
   `ctx.storage.kv`) are held by the input gate like key-value calls and
   are not turns; nothing is recorded for them, as nothing is for key-value

@@ -124,6 +124,14 @@ object's or a table's name may not hold `/`. An object the run never
 reached shows the tables as the reset read them back after seeding,
 defaults and generated values included.
 
+**Agents.** A class built on the Agents SDK runs as written: its state and
+schedules live in the SDK's own tables of the object's SQLite storage
+(`cf_agents_*`, listed in the snapshot like any user table), a schedule
+fires over the object's alarm in virtual time, and `routeAgentRequest`
+walks the Worker's bindings as it does in production, the Vitest plugin's
+own bindings hidden from it. The corpus's `agent-tally-lost-update` is an
+Agent with state, `this.sql` and a schedule, caught losing an update.
+
 **Alarms** fire in virtual time: Eutaxy takes them over so none is
 scheduled on the real clock. One alarm per object, a later `setAlarm`
 replaces it, one set inside a transaction applies on commit, and it

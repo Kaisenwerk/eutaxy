@@ -211,6 +211,30 @@ describe("isolation", () => {
     expect(verdict.kind).toBe("UNSUPPORTED");
     if (verdict.kind === "UNSUPPORTED") expect(verdict.reason).toContain("KV");
   });
+
+  test("the Vitest plugin's own bindings are hidden from env, so a handler that walks env never meets them", async () => {
+    const plugin = { fetch: async () => new Response("loopback"), connect: () => null };
+    const env = {
+      __VITEST_POOL_WORKERS_LOOPBACK_SERVICE: plugin,
+      __VITEST_POOL_WORKERS_RUNNER_OBJECT: { idFromName: () => null, get: () => null },
+      NAME: "tally",
+    };
+    let seen: string[] = [];
+    let hidden: unknown = "unset";
+    const verdict = await explore(
+      spec(),
+      platformFor(async (batch, e) => {
+        seen = Object.keys(e as object);
+        hidden = (e as Record<string, unknown>)["__VITEST_POOL_WORKERS_LOOPBACK_SERVICE"];
+        batch.ackAll();
+      }, env),
+      { seed: 1, now: () => 0 },
+    );
+    expect(verdict.kind, JSON.stringify(verdict)).toBe("BOUNDED");
+    expect(seen).toEqual(["NAME"]);
+    expect(hidden).toBeUndefined();
+    expect("__VITEST_POOL_WORKERS_RUNNER_OBJECT" in env).toBe(true);
+  });
 });
 
 describe("virtual clock and globals", () => {

@@ -13,6 +13,7 @@
     "@cloudflare/vitest-plugin": "1.4.6",
     "@cloudflare/workers-types": "5.20261022.1",
     "@types/aws-lambda": "8.10.164",
+    "agents": "0.32.0",
     "dynalite": "4.0.0"
   }
 }

@@ -1,0 +1,8 @@
+{
+  "expect": {
+    "verdict": "VIOLATED",
+    "invariant": "flush-counts-both-hits"
+  },
+  "fault": "no fault: the second hit runs in the Agent while the first awaits its audit call, and both read a count of 0",
+  "description": "A tally kept by a Cloudflare Agents SDK class: each hit reads the count from the Agent's state, audits through an external API, then writes the count plus one; a schedule flushes the count into the Agent's own SQL table. The Agent is a Durable Object whose input gate is open during the outbound call, so two hits at once both read 0 and the flush records 1."
+}

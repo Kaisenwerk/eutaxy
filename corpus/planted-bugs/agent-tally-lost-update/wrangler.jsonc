@@ -1,0 +1,13 @@
+{
+  "name": "planted-agent-tally-lost-update",
+  "main": "worker.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "durable_objects": {
+    "bindings": [
+      { "name": "TALLY", "class_name": "Tally" },
+      { "name": "FIXED_TALLY", "class_name": "FixedTally" }
+    ]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Tally", "FixedTally"] }]
+}

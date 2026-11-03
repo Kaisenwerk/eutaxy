@@ -127,14 +127,24 @@ export function createCloudflarePlatform(options: CloudflarePlatformOptions): Pl
     r2Binding(),
     workflowBinding({ exports: options.exports, env: () => proxiedEnv }),
   ];
+  // The Cloudflare Vitest plugin adds bindings of its own to env (its loopback and self services, its
+  // runner object); a Worker that walks env (the Agents SDK's router does, to name each namespace) must
+  // not meet them: they are the test environment's, not the Worker's.
+  const own = (prop: string | symbol): boolean =>
+    typeof prop !== "string" || !prop.startsWith("__VITEST_POOL_WORKERS_");
   const proxiedEnv = new Proxy(env, {
     get(target, prop, receiver) {
+      if (!own(prop)) return undefined;
       const value = Reflect.get(target, prop, receiver) as unknown;
       if (typeof prop !== "string") return value;
       for (const binding of bindings) if (binding.is(value)) return binding.proxy(prop, value, ctx);
       if (isBindingLike(value)) ctx.hooks.unsupported(`binding ${prop} is not proxied`);
       return value;
     },
+    has: (target, prop) => own(prop) && Reflect.has(target, prop),
+    ownKeys: (target) => Reflect.ownKeys(target).filter(own),
+    getOwnPropertyDescriptor: (target, prop) =>
+      own(prop) ? Reflect.getOwnPropertyDescriptor(target, prop) : undefined,
   });
   // An entrypoint class exposes RPC methods; the queue and http drives need the handler object.
   const handler: WorkerHandler = typeof options.handler === "function" ? {} : options.handler;
