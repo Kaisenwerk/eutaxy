@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.13.0](https://github.com/Kaisenwerk/eutaxy/compare/v0.12.0...v0.13.0) (2026-11-03)
+
+
+### Features
+
+* **cloudflare:** an Agents SDK class runs as written ([0b65351](https://github.com/Kaisenwerk/eutaxy/commit/0b65351cdbf22c78165c36344f036f54870be963))
+* **cloudflare:** Durable Object SQLite storage, seeded and snapshotted table by table ([5d3e27d](https://github.com/Kaisenwerk/eutaxy/commit/5d3e27d95da61bc5b164f017a0d0be183d13aa68))
+* **cloudflare:** WebSocket connections as events ([7a553dc](https://github.com/Kaisenwerk/eutaxy/commit/7a553dcca32f3df1d4a17ec688ec74084f843eec))
+
+
+### Bug Fixes
+
+* **cli:** a check's generated files carry a stamp of their own run ([780444c](https://github.com/Kaisenwerk/eutaxy/commit/780444c688d2cfd19fe6f9a0811d8c21cf34c13e))
+* **eutaxy:** eutaxy/cloudflare loads without the TypeScript compiler ([1464e18](https://github.com/Kaisenwerk/eutaxy/commit/1464e181882adfd4fffa24aa1704ab111a14a056))
+
+
+### Documentation
+
+* **roadmap:** close v0.13, open v0.14 the system ([955266b](https://github.com/Kaisenwerk/eutaxy/commit/955266b031846b77decf659be28de30dc0c90bae))
+
 ## [0.12.0](https://github.com/Kaisenwerk/eutaxy/compare/v0.11.0...v0.12.0) (2026-11-02)
 
 
