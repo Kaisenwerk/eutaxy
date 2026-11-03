@@ -76,6 +76,10 @@ a target needs it:
 - The proof cache keyed by source, spec and engine version.
 - A configurable number of `TESTED` draws on the command line (the API
   takes `inputs`).
+- The command loads the spec reader and the engines only where specs are
+  read or proved, so the TypeScript compiler becomes an optional peer
+  (today `eutaxy/cloudflare` loads without it inside Vitest, but the
+  command needs it from its first line).
 - An audit of supplied proofs from outside the Lean process that
   elaborated them (a compiled checker over the `.olean`, replaying the
   kernel), when a target checks proofs its own repository did not write;
@@ -134,17 +138,29 @@ runs over the object's one alarm, which Eutaxy already fires in virtual
 time with several schedules over it. The Worker reaches the Agent as it
 reaches any object, through `routeAgentRequest` or `getAgentByName` from
 the HTTP drive. The target's Agents hold WebSocket connections, so these
-become events too: a connection opened by the scenario, the messages it
-sends (`onConnect`, `onMessage`, `onClose`) delivered as events in virtual
-time with the faults a request has, and what the Agent sends back
-(`send`, `broadcast`, state sync) recorded as effects the invariants read;
-hibernation (the object evicted with connections kept) stays
-`UNSUPPORTED` until a scenario needs it.
+are events too (`websocket` drive): a connection opened by the scenario
+through the Worker's `fetch` and handed to an object (`onConnect`), and
+each message it sends, delivered inside the object by its
+`webSocketMessage` handler (`onMessage`) with the faults an alarm has; a
+crash drops the instance and the runtime keeps the connection, as it does
+across hibernation, so the next instance finds its server end again. What
+the Agent sends back (`send`, `broadcast`, state sync) is recorded per
+connection at the end of the run, in arrival order, and a close the
+object makes is recorded; a client's close as a scenario event (`onClose`)
+and the runtime's auto-response are not modelled, and a scenario that
+needs them makes the run `UNSUPPORTED`.
 
-Gate: the target's object scenarios, on SQLite storage and including an
-Agents SDK class with a schedule and a WebSocket connection, run with no
-`UNSUPPORTED` verdict; a planted bug in an object's SQL rows is caught;
-and a differential entry holds SQLite storage to workerd.
+Gate: object scenarios written the way the target writes them, on SQLite
+storage and including an Agents SDK class with a schedule and WebSocket
+connections (`corpus/gates/v0-13-agent-board`,
+`corpus/gates/v0-13-websocket-connections`), run with no `UNSUPPORTED`
+verdict, and a planted bug in an object's SQL rows is caught
+(`corpus/planted-bugs/inventory-oversell-sqlite`). No differential entry:
+the differential holds Eutaxy's binding proxies to the raw bindings, and
+Durable Objects are the real objects workerd runs on both sides, so there
+is no model of their storage to hold to workerd; what Eutaxy adds around
+them (reset, seed, snapshot, the alarm takeover, connections) is what the
+planted-bug and gate corpora exercise.
 
 ## After v0.13
 
