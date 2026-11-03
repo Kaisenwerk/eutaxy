@@ -288,6 +288,10 @@ async function rawSide(spec: ScenarioSpec, options: CloudflarePlatformOptions): 
   try {
     // The queue and http drives need the handler object; an entrypoint class has neither handler.
     const handlers = typeof options.handler === "function" ? {} : options.handler;
+    if (drive.kind === "websocket")
+      throw new Error(
+        "runDifferential has no raw side for a websocket drive: its messages are delivered inside the object",
+      );
     if (drive.kind === "rpc") {
       const cls = entrypointClass(options.handler, options.exports, drive.entrypoint);
       if (typeof cls !== "function") throw new Error("the Worker has no WorkerEntrypoint class");

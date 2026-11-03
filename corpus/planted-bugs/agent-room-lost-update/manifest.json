@@ -1,0 +1,8 @@
+{
+  "expect": {
+    "verdict": "VIOLATED",
+    "invariant": "each-message-counted-once"
+  },
+  "fault": "no fault: the second connection's message runs in the Agent while the first awaits moderation, and both read a count of 0",
+  "description": "A chat room kept by a Cloudflare Agents SDK class over WebSocket connections: each message is checked by an external moderation API, counted in the Agent's state and its own table, and the count is broadcast. The Agent is a Durable Object whose input gate is open during the outbound call, so messages from two connections at once both read 0 and take the same count."
+}

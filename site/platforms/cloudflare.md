@@ -132,6 +132,28 @@ walks the Worker's bindings as it does in production, the Vitest plugin's
 own bindings hidden from it. The corpus's `agent-tally-lost-update` is an
 Agent with state, `this.sql` and a schedule, caught losing an update.
 
+**WebSockets.** `websocket([{ path: "/agents/room/r-1", messages: [{ data:
+{ text: "hi" } }] }, …])` drives the Worker over WebSocket connections:
+each is opened with an upgrade request through the Worker's `fetch` (one
+event), which hands it to a Durable Object, and its messages are sent in
+order (one event each). A message is delivered inside the object by calling
+its `webSocketMessage` handler (the Hibernation API; the Agents SDK uses
+it), with an alarm's faults; a crash drops the instance and the connection
+survives, found again in the next instance by the attachment and tags the
+object gave it. Opens run one at a time, in order; messages of different
+connections interleave, so a race between two connections' messages is
+explored. A connection the object closed takes no more messages (each is
+recorded as not delivered). What the object sends back is recorded per
+connection at the end of the run, in arrival order, as
+`WebSocket:<connection>` `message` effects (`webSocketReceived` selects
+them), and a close the object made as a `close` effect. The connections
+are torn down after the snapshot, outside the run: what `webSocketClose`
+does is not modelled. A connection the Worker answers itself, an object
+using the standard WebSocket API, or one on `setWebSocketAutoResponse`,
+makes the run `UNSUPPORTED`. The corpus's
+`agent-room-lost-update` is a chat-room Agent over two connections, caught
+losing an update between them.
+
 **Alarms** fire in virtual time: Eutaxy takes them over so none is
 scheduled on the real clock. One alarm per object, a later `setAlarm`
 replaces it, one set inside a transaction applies on commit, and it

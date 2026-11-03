@@ -363,7 +363,22 @@ export function proxyNamespace(
               ];
               if (typeof method !== "function")
                 throw new TypeError(`${binding} stub has no ${prop}`);
-              return plain(await Reflect.apply(method, real, args));
+              const result = await Reflect.apply(method, real, args);
+              // A 101 from the object's fetch: a WebSocket connection now reaches this object.
+              if (
+                prop === "fetch" &&
+                result instanceof Response &&
+                result.status === 101 &&
+                result.webSocket
+              )
+                ctx.onUpgrade?.({
+                  binding,
+                  id,
+                  object,
+                  invocation: ctx.currentInvocation(),
+                  client: result.webSocket,
+                });
+              return plain(result);
             }),
           );
         const read = () =>
@@ -448,6 +463,40 @@ export async function evictObject(
 }
 
 /**
+ * Run code inside an object as one of its own events does (an alarm, a
+ * WebSocket message): the object is marked reached, its gate watched, its
+ * alarms taken over, then `fn` runs with the instance and its state.
+ */
+export async function runInObject<T>(
+  real: DurableObjectNamespace,
+  binding: string,
+  ctx: ProxyContext,
+  helpers: DurableObjectTestHelpers | undefined,
+  state: BindingState,
+  id: string,
+  object: string,
+  fn: (instance: unknown, live: DurableObjectState) => Promise<T>,
+): Promise<T | undefined> {
+  if (!helpers) {
+    ctx.hooks.unsupported(`Durable Object binding ${binding} needs the Cloudflare test helpers`);
+    return undefined;
+  }
+  state.touched.add(id);
+  return typed(helpers).runInDurableObject(
+    real.get(real.idFromString(id)),
+    async (instance, live) => {
+      watchGate(live);
+      state.states.set(id, live);
+      await takeOverAlarms(
+        live.storage,
+        alarmControl(state.alarms, binding, id, object, () => ctx.hooks),
+      );
+      return fn(instance, live);
+    },
+  );
+}
+
+/**
  * Run an object's `alarm()` handler inside it, after taking over its alarms
  * (the instance may be new since the alarm was set).
  */
@@ -464,35 +513,21 @@ export function alarmRunner(
   gen: number,
 ) => Promise<void> {
   return async (id, object, info, gen) => {
-    if (!helpers) {
-      ctx.hooks.unsupported(`Durable Object binding ${binding} needs the Cloudflare test helpers`);
-      return;
-    }
-    state.touched.add(id);
-    await typed(helpers).runInDurableObject(
-      real.get(real.idFromString(id)),
-      async (instance, live) => {
-        watchGate(live);
-        state.states.set(id, live);
-        await takeOverAlarms(
-          live.storage,
-          alarmControl(state.alarms, binding, id, object, () => ctx.hooks),
+    await runInObject(real, binding, ctx, helpers, state, id, object, async (instance) => {
+      // Superseded while the effect waited for its turn: the handler of a cancelled alarm never runs.
+      const entry = state.alarms.entry(id);
+      if (entry.gen !== gen) return;
+      // The alarm is consumed as its handler starts: from here getAlarm() returns null.
+      entry.time = null;
+      const handler = (instance as { alarm?: (info: unknown) => unknown }).alarm;
+      if (typeof handler !== "function") {
+        ctx.hooks.unsupported(
+          `Durable Object ${binding} ${object} set an alarm but has no alarm() handler`,
         );
-        // Superseded while the effect waited for its turn: the handler of a cancelled alarm never runs.
-        const entry = state.alarms.entry(id);
-        if (entry.gen !== gen) return;
-        // The alarm is consumed as its handler starts: from here getAlarm() returns null.
-        entry.time = null;
-        const handler = (instance as { alarm?: (info: unknown) => unknown }).alarm;
-        if (typeof handler !== "function") {
-          ctx.hooks.unsupported(
-            `Durable Object ${binding} ${object} set an alarm but has no alarm() handler`,
-          );
-          return;
-        }
-        await handler.call(instance, info);
-      },
-    );
+        return;
+      }
+      await handler.call(instance, info);
+    });
   };
 }
 

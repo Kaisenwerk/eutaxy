@@ -29,6 +29,14 @@ export interface ProxyContext {
   readonly hooks: RunHooks;
   /** The invocation currently running; only one runs at a time, even with several in flight. */
   readonly currentInvocation: () => string;
+  /** Told when a Durable Object stub's fetch answered 101: the object a WebSocket connection reached, the invocation whose call it was, and the client end. */
+  readonly onUpgrade?: (info: {
+    binding: string;
+    id: string;
+    object: string;
+    invocation: string;
+    client: WebSocket;
+  }) => void;
 }
 
 function point(

@@ -627,6 +627,63 @@ shares the reading of the limit and none of the proxy code.
   be called (a method) or awaited (an RPC getter); either is one effect.
   A result that is not plain data (an RPC capability) makes the run
   `UNSUPPORTED`, since calls on it would bypass the proxy.
+- WebSocket connections (v0.13): the `websocket` drive opens each
+  connection with an upgrade request through the Worker's `fetch` (one
+  event, as a client would; the Worker hands it to an object, whose
+  `fetch` answers 101, and Eutaxy keeps the client end) and sends its
+  messages in order (one event each). A message is delivered inside the
+  object by calling its `webSocketMessage` handler (the Hibernation API,
+  which the Agents SDK uses; the standard API is not modelled) on that
+  connection's server end, as an alarm is delivered by calling `alarm()`,
+  with an alarm's faults: `crash_before` (the object crashed before
+  handling it), `crash_after` (handled, then crashed) and `error`. A
+  crash drops the instance, which is rebuilt at once as an effect of its
+  own (`rebuild`, invocation `<message>/rebuild`, hosting the
+  constructor's effects: no retry follows a message, and an object rebuilt
+  only for the snapshot would have run its constructor outside the run),
+  and the runtime keeps
+  the connection, as it does across hibernation ("removed from memory ... while keeping its
+  WebSockets connected", developers.cloudflare.com/durable-objects/api/state/):
+  the next instance sees it as a new `WebSocket` with the attachment and
+  tags the object gave it, so before each message the connection's server
+  end is found again in the live object: by identity, else by its tags,
+  else by tags and attachment (tags are fixed at accept; the attachment
+  the object may rewrite); an object that gives its sockets neither cannot
+  have its connections told apart after a crash, and the run is
+  `UNSUPPORTED`. The
+  server end is the one socket the object holds during the open that no
+  connection does, so opens run one at a time, in order, while messages of
+  different connections interleave as concurrency allows (each waits for
+  its connection to be open and for the message before it on that
+  connection). A connection the object closed (its handler called
+  `close`) takes no more messages: each is recorded as not delivered
+  (`send`, result `delivered: false`). What the object sends back arrives
+  on the client end; the frames are kept per connection in arrival order
+  and recorded at the end of the run (`WebSocket:<connection>`, op
+  `message`, under the platform's own invocation), since when a frame
+  crosses the pair is the event loop's doing, not the schedule's, and a
+  trace must repeat; `webSocketReceived` selects them. The scenario's own
+  messages are `WebSocket:<connection>` op `send`; a close the object made
+  during the run is recorded too (op `close`, with its code and reason).
+  A close the object makes before answering the upgrade is the same: the
+  connection is open and closed at once, its messages not delivered. The
+  connections still open are torn down after the snapshot, outside the
+  run: what the objects' `webSocketClose` handlers do then is not
+  modelled; they run after the sandbox is gone, so a request one makes
+  while the teardown waits for the sockets to go is blocked and makes the
+  run `UNSUPPORTED`, but work a handler defers past a timer outlives the
+  teardown and is not caught (a known limit, as is a client's close as a
+  scenario event, which the run does not have yet). An object on
+  `setWebSocketAutoResponse` makes the run `UNSUPPORTED`: the runtime
+  answers those messages without waking the object, and Eutaxy, which
+  hands every message to the handler, would not. A Worker that dies after
+  the object accepted (a fault on the stub call of the open) leaves a
+  client end nobody holds: it is dropped at once, within that delivery,
+  with code 1011, so the object sees that connection close as it would in
+  production, and nothing leaks into the next run (an end left unaccepted
+  would stay in the object across evictions and keep its instance from
+  being evicted). A connection the Worker answers itself, without an
+  object, makes the run `UNSUPPORTED`.
 - R2: reads, writes, deletes and listings are strongly consistent, the
   last writer to complete wins, a conditional `put` whose precondition
   fails stores nothing and returns `null`, and a conditional `get` whose

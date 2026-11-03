@@ -79,7 +79,8 @@ version of this: a queue consumer with a bug the check finds, and the fixed
 Worker it reports `BOUNDED` for.
 
 A scenario drives the Worker through its `queue()` handler, with
-`http(...)` through its `fetch()` handler, or with `rpc(...)` through the
+`http(...)` through its `fetch()` handler, with `websocket(...)` over
+connections a Durable Object accepts, or with `rpc(...)` through the
 methods of its `WorkerEntrypoint`; for the last two the caller's retry policy
 (a webhook provider resending until it gets a 2xx, a calling Worker resending
 a call that threw) decides redelivery. With

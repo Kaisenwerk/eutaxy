@@ -25,6 +25,7 @@ import {
   isDurableObjectNamespace,
   proxyNamespace,
   resetNamespace,
+  runInObject,
   snapshotNamespace,
 } from "./durable-objects.ts";
 import { isR2, proxyR2, resetR2, snapshotR2, VersionBook } from "./r2.ts";
@@ -165,6 +166,19 @@ export interface DurableObjectDeps {
   readonly real: (name: string) => unknown;
 }
 
+/** What the WebSocket delivery needs of a namespace's objects: to run code inside one, and the crash semantics an alarm has. */
+export interface ObjectAccess {
+  run<T>(
+    binding: string,
+    id: string,
+    object: string,
+    fn: (instance: unknown, live: DurableObjectState) => Promise<T>,
+  ): Promise<T | undefined>;
+  abort(binding: string, id: string): void;
+  mayPark(binding: string, id: string): boolean;
+  evict(binding: string, id: string): Promise<void>;
+}
+
 /**
  * A Durable Object namespace: the real objects workerd runs, cleared, seeded
  * and evicted before each run, their storage snapshotted after it, and their
@@ -172,7 +186,7 @@ export interface DurableObjectDeps {
  */
 export function durableObjectBinding(
   deps: DurableObjectDeps,
-): Binding<DurableObjectNamespace, DurableObjectSetup> {
+): Binding<DurableObjectNamespace, DurableObjectSetup> & { readonly objects: ObjectAccess } {
   const { ctx, helpers } = deps;
   const proxies = new Map<string, DurableObjectNamespace>();
   /** The bindings the current scenario's setup resets before each run. */
@@ -201,7 +215,15 @@ export function durableObjectBinding(
       );
     return helpers;
   };
+  const objects: ObjectAccess = {
+    run: (binding, id, object, fn) =>
+      runInObject(namespace(binding), binding, ctx, helpers, stateFor(binding), id, object, fn),
+    abort: (binding, id) => stateFor(binding).abort(id),
+    mayPark: (binding, id) => stateFor(binding).mayPark(id),
+    evict: (binding, id) => evictObject(namespace(binding), helpers, id),
+  };
   return {
+    objects,
     kind: "durable_object",
     target: "DO",
     is: isDurableObjectNamespace,

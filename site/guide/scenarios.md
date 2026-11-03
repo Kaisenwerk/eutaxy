@@ -132,6 +132,39 @@ invocation, so the re-runs are yours to declare; a handler that called
 (weekdays run 1 = Sunday to 7 = Saturday; names, lists, ranges and steps);
 `L`, `W` and `#` are refused.
 
+### `websocket(connections)`
+
+Drives the Worker over WebSocket connections. Each connection is opened
+with an upgrade request to its path through the Worker's `fetch()` (one
+event), which hands it to a Durable Object, and its messages are sent in
+order (one event each); every connection closes at the end of the run.
+Opens run one at a time, in order; messages of different connections
+interleave as concurrency allows, so a race between two clients' messages
+is explored.
+
+```ts
+const chat = websocket([
+  { path: "/agents/room/r-1", messages: [{ data: { text: "hello from a" } }] },
+  { path: "/agents/room/r-1", messages: [{ data: { text: "hello from b" } }] },
+]);
+```
+
+A message is delivered inside the object by calling its `webSocketMessage`
+handler (the Hibernation API, which the Agents SDK uses) on that
+connection's server end, with an alarm's faults: `crash_before`,
+`crash_after` and `error`; a crash drops the instance and the connection
+survives (the next instance finds it by the attachment and tags the object
+gave it). A connection the object closed takes no more messages; each is
+recorded as not delivered. What the object sends back is recorded per
+connection at the end of the run, in arrival order, as
+`WebSocket:<connection>` `message` effects, which
+`webSocketReceived("conn-1")` selects for an invariant, and a close the
+object made as a `close` effect. The connections are torn down after the
+snapshot, outside the run: what `webSocketClose` does is not modelled. A
+connection the Worker answers itself, an object using the standard
+WebSocket API, or one on `setWebSocketAutoResponse`, makes the run
+`UNSUPPORTED`.
+
 ## Setup
 
 Setup steps run before every run, so each run starts from the same state.

@@ -15,6 +15,7 @@ import {
   type RunHooks,
   type ScenarioSpec,
 } from "@eutaxy/core";
+import { withoutNetwork } from "@eutaxy/engine";
 import type { RunningWorker } from "./background.ts";
 import {
   type Binding,
@@ -32,6 +33,7 @@ import { deliverMessage } from "./queues.ts";
 import { deliverCall, entrypointClass } from "./rpc.ts";
 import { type Drive, driveEvents, restrictDrive } from "./scenario.ts";
 import { deliverTick } from "./scheduled.ts";
+import { Connections, deliverWebSocket } from "./websocket.ts";
 
 /** The Worker's default export, as far as the platform drives it. */
 export interface WorkerHandler {
@@ -106,6 +108,7 @@ export function createCloudflarePlatform(options: CloudflarePlatformOptions): Pl
   const maxRetries = options.maxRetries ?? 3;
   let hooksRef: RunHooks | null = null;
 
+  const connections = new Connections();
   const ctx: ProxyContext = {
     get hooks() {
       if (!hooksRef) throw new Error("no run in progress");
@@ -113,6 +116,7 @@ export function createCloudflarePlatform(options: CloudflarePlatformOptions): Pl
     },
     // Bindings are shared by every invocation in flight; the engine knows which one is running.
     currentInvocation: () => ctx.hooks.running(),
+    onUpgrade: (info) => connections.upgradedTo(info),
   };
 
   /**
@@ -120,10 +124,15 @@ export function createCloudflarePlatform(options: CloudflarePlatformOptions): Pl
    * them: a service binding first, since in workerd it answers every duck
    * type (its property reads are RPC stubs).
    */
+  const durable = durableObjectBinding({
+    ctx,
+    helpers: options.durableObjects,
+    real: (name) => env[name],
+  });
   const bindings: readonly Binding[] = [
     serviceBinding(),
     d1Binding(options.schemas),
-    durableObjectBinding({ ctx, helpers: options.durableObjects, real: (name) => env[name] }),
+    durable,
     r2Binding(),
     workflowBinding({ exports: options.exports, env: () => proxiedEnv }),
   ];
@@ -156,6 +165,7 @@ export function createCloudflarePlatform(options: CloudflarePlatformOptions): Pl
     concurrent: true,
 
     async reset(spec: ScenarioSpec): Promise<void> {
+      await connections.clear();
       for (const binding of bindings) binding.clear();
       for (const [binding, setup] of ownedSetups(spec.setup, bindings))
         await binding.reset(setup, env[setup.binding]);
@@ -166,6 +176,8 @@ export function createCloudflarePlatform(options: CloudflarePlatformOptions): Pl
     },
 
     async finish(spec: ScenarioSpec, hooks: RunHooks): Promise<void> {
+      // What each WebSocket connection received, and a close its object made, before the stores are read.
+      connections.record(hooks);
       for (const [binding, setup] of ownedSetups(spec.setup, bindings)) {
         const tables = await binding.snapshot(setup, env[setup.binding], (reason) =>
           hooks.unsupported(reason),
@@ -173,6 +185,14 @@ export function createCloudflarePlatform(options: CloudflarePlatformOptions): Pl
         if (tables)
           hooks.snapshot(hooks.bookkeeping(), `${binding.target}:${setup.binding}`, { tables });
       }
+      // Then the connections are torn down, outside the run: what an object does on close is not
+      // modelled, and a request it makes then is caught.
+      const torn = await withoutNetwork(() => connections.teardown(durable.objects));
+      if (torn.value) hooks.unsupported(torn.value);
+      if (torn.requested)
+        hooks.unsupported(
+          "a Durable Object made a request while its WebSocket connections were torn down after the run; what webSocketClose does is not modelled",
+        );
     },
 
     initialEvents(spec: ScenarioSpec): readonly EventRef[] {
@@ -192,6 +212,12 @@ export function createCloudflarePlatform(options: CloudflarePlatformOptions): Pl
           return deliverRequest(event, hooks, spec, drive, invocation, worker);
         case "cron":
           return deliverTick(event, hooks, spec, drive, invocation, worker);
+        case "websocket":
+          return deliverWebSocket(event, hooks, spec, drive, {
+            worker,
+            connections,
+            objects: durable.objects,
+          });
         case "rpc": {
           const cls = entrypointClass(options.handler, options.exports, drive.entrypoint);
           if (typeof cls !== "function") {

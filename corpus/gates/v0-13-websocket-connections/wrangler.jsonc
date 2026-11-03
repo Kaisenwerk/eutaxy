@@ -1,0 +1,12 @@
+{
+  "name": "gate-v0-13-websocket-connections",
+  "main": "worker.ts",
+  "compatibility_date": "2026-10-01",
+  "durable_objects": {
+    "bindings": [
+      { "name": "ROOM", "class_name": "Room" },
+      { "name": "PING_ROOM", "class_name": "PingRoom" }
+    ]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Room", "PingRoom"] }]
+}

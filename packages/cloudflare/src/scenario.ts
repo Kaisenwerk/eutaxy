@@ -111,6 +111,64 @@ export function http(
   };
 }
 
+/** One message the scenario sends on a connection: text, or a JSON value sent as its text (plain data, as drives are). */
+export type WebSocketMessageSpec = {
+  readonly id: string;
+  readonly data: JsonValue;
+};
+
+/** One WebSocket connection the scenario opens to the Worker, and the messages it sends on it, in order. */
+export type WebSocketConnectionSpec = {
+  readonly id: string;
+  readonly path: string;
+  readonly headers: Readonly<Record<string, string>>;
+  readonly messages: readonly WebSocketMessageSpec[];
+};
+
+/**
+ * Drive the Worker over WebSocket connections: each connection is opened
+ * with an upgrade request to its path (one event) and its messages are sent
+ * in order (one event each, after its connection opened and its previous
+ * message was handled); every connection closes at the end of the run.
+ * Events of different connections interleave as concurrency allows.
+ */
+export interface WebSocketDrive extends PlatformData {
+  readonly kind: "websocket";
+  readonly connections: readonly WebSocketConnectionSpec[];
+}
+
+export interface WebSocketMessageInput {
+  readonly id?: string;
+  readonly data: JsonValue;
+}
+
+export interface WebSocketConnectionInput {
+  /** Defaults to its position: `conn-1`, `conn-2`, … */
+  readonly id?: string;
+  readonly path: string;
+  readonly headers?: Readonly<Record<string, string>>;
+  /** Message ids default to `<connection>:1`, `<connection>:2`, … */
+  readonly messages?: readonly WebSocketMessageInput[];
+}
+
+export function websocket(connections: readonly WebSocketConnectionInput[]): WebSocketDrive {
+  return {
+    kind: "websocket",
+    connections: connections.map((c, i) => {
+      const id = c.id ?? `conn-${i + 1}`;
+      return {
+        id,
+        path: c.path,
+        headers: c.headers ?? {},
+        messages: (c.messages ?? []).map((m, j) => ({
+          id: m.id ?? `${id}:${j + 1}`,
+          data: m.data,
+        })),
+      };
+    }),
+  };
+}
+
 /** One RPC call; `id` defaults to its position, `args` to none. */
 export interface RpcCallInput {
   readonly id?: string;
@@ -208,7 +266,23 @@ export function cron(expression: string, options: CronOptions = {}): CronDrive {
 }
 
 /** The drives a Cloudflare scenario can have. */
-export type Drive = QueueDrive | HttpDrive | RpcDrive | CronDrive;
+export type Drive = QueueDrive | HttpDrive | RpcDrive | CronDrive | WebSocketDrive;
+
+/** What a WebSocket drive's events carry: an open, or a message with its position on its connection. */
+export type WebSocketEventData =
+  | {
+      readonly kind: "open";
+      readonly connection: string;
+      readonly path: string;
+      readonly headers: Readonly<Record<string, string>>;
+    }
+  | {
+      readonly kind: "message";
+      readonly connection: string;
+      readonly message: string;
+      readonly index: number;
+      readonly data: JsonValue;
+    };
 
 /** The drive's events as they are first delivered: one per message, request or call, attempt 1. */
 export function driveEvents(drive: Drive): readonly EventRef[] {
@@ -227,6 +301,40 @@ export function driveEvents(drive: Drive): readonly EventRef[] {
         data: { cron: drive.cron, scheduledTime: t.at },
         at: t.at,
       }));
+    case "websocket": {
+      // The opens first, then the messages a round at a time (every connection's first, then every
+      // second, …), so the scheduler can interleave connections; each message waits for its connection
+      // to be open and for the message before it on that connection.
+      const opens: EventRef[] = drive.connections.map((c) => ({
+        id: c.id,
+        attempt: 1,
+        data: {
+          kind: "open",
+          connection: c.id,
+          path: c.path,
+          headers: c.headers,
+        } satisfies WebSocketEventData as unknown as JsonValue,
+      }));
+      const rounds = Math.max(0, ...drive.connections.map((c) => c.messages.length));
+      const messages: EventRef[] = [];
+      for (let i = 0; i < rounds; i++)
+        for (const c of drive.connections) {
+          const m = c.messages[i];
+          if (m)
+            messages.push({
+              id: m.id,
+              attempt: 1,
+              data: {
+                kind: "message",
+                connection: c.id,
+                message: m.id,
+                index: i,
+                data: m.data,
+              } satisfies WebSocketEventData as unknown as JsonValue,
+            });
+        }
+      return [...opens, ...messages];
+    }
   }
 }
 
@@ -242,6 +350,15 @@ export function restrictDrive(drive: Drive, keepIds: readonly string[]): Drive {
       return { ...drive, calls: drive.calls.filter((c) => keep(c.id)) };
     case "cron":
       return { ...drive, ticks: drive.ticks.filter((t) => keep(t.id)) };
+    case "websocket":
+      // A connection whose open is dropped goes with its messages; a dropped message leaves its
+      // connection's others in order.
+      return {
+        ...drive,
+        connections: drive.connections
+          .filter((c) => keep(c.id))
+          .map((c) => ({ ...c, messages: c.messages.filter((m) => keep(m.id)) })),
+      };
   }
 }
 
@@ -473,6 +590,7 @@ export interface CloudflareScenarioInput {
     | HttpDrive
     | RpcDrive
     | CronDrive
+    | WebSocketDrive
     | {
         readonly kind: "queue";
         readonly queue: string;
@@ -569,10 +687,30 @@ export function atLeastOncePerMessage(
     // An RPC event's data is the whole call, so the path to re-derive from starts at its arguments.
     return { ...inv, perMessage: { bodyKey: bodyKey === "" ? "args" : `args.${bodyKey}` } };
   }
+  if (drive.kind === "websocket") {
+    // Per connection, keyed by its path: the one thing its open event carries that a key can come from
+    // (a message event has no path, so re-deriving from the remaining events counts opens alone).
+    if (bodyKey !== "")
+      throw new Error(
+        `atLeastOncePerMessage ${JSON.stringify(name)}: a websocket drive keys each connection by its path; bodyKey must be ""`,
+      );
+    const conns = drive.connections.map((c) => ({ id: c.id, body: c.path }));
+    const inv = coreAtLeastOncePerMessage(name, conns, effect, key, "");
+    return { ...inv, perMessage: { bodyKey: "path" } };
+  }
   const requests = drive.requests.map((r) => ({ id: r.id, body: r.body ?? null }));
   const inv = coreAtLeastOncePerMessage(name, requests, effect, key, bodyKey);
   // An HTTP event's data is the whole request, so the path to re-derive from starts at its body.
   return { ...inv, perMessage: { bodyKey: bodyKey === "" ? "body" : `body.${bodyKey}` } };
+}
+
+/**
+ * Selects the frames the Worker sent on a connection (`WebSocket:<connection>`,
+ * op `message`), each recorded at the end of the run, in arrival order, with
+ * its data (JSON where it parses, text otherwise).
+ */
+export function webSocketReceived(connection: string): EffectSelector {
+  return { target: `WebSocket:${connection}`, op: "message", kind: "result" };
 }
 
 /**
@@ -683,6 +821,22 @@ export function fetchCall(externalName: string, method?: string): EffectSelector
     kind: "result",
     where: { "result.effective": true },
   };
+}
+
+function validateWebSocketDrive(drive: WebSocketDrive): readonly string[] {
+  const errors: string[] = [];
+  if (drive.connections.length === 0) errors.push("websocket drive needs at least one connection");
+  const ids = new Set<string>();
+  drive.connections.forEach((c, i) => {
+    if (!c.path.startsWith("/")) errors.push(`connections[${i}].path must start with "/"`);
+    if (ids.has(c.id)) errors.push(`duplicate connection id ${JSON.stringify(c.id)}`);
+    ids.add(c.id);
+    for (const m of c.messages) {
+      if (ids.has(m.id)) errors.push(`duplicate message id ${JSON.stringify(m.id)}`);
+      ids.add(m.id);
+    }
+  });
+  return errors;
 }
 
 function validateHttpDrive(drive: HttpDrive): readonly string[] {
@@ -826,6 +980,7 @@ export function defineScenario(input: CloudflareScenarioInput): ScenarioSpec {
     ...(drive.kind === "http" ? validateHttpDrive(drive) : []),
     ...(drive.kind === "rpc" ? validateRpcDrive(drive) : []),
     ...(drive.kind === "cron" ? validateCronDrive(drive) : []),
+    ...(drive.kind === "websocket" ? validateWebSocketDrive(drive) : []),
   ];
   if (errors.length > 0) {
     throw new Error(`invalid scenario ${JSON.stringify(input.name)}:\n- ${errors.join("\n- ")}`);
