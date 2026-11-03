@@ -66,9 +66,9 @@ pinned to each in turn. `readSpecs` takes the module's path
 (`modulePath`, and `specPath`) in place of the import specifiers it used
 to match by; the import is resolved by the compiler.
 
-## Patch work alongside v0.13
+## Patch work alongside v0.14
 
-Work toward v0.13 ships as `0.12.x`, and so does the following, each when
+Work toward v0.14 ships as `0.13.x`, and so does the following, each when
 a target needs it:
 - The remaining performance items: `report`'s module workers and the
   engines' modules run in parallel, toolchain lookups once per process,
@@ -110,7 +110,7 @@ a target needs it:
 public: a user's own test needs it to give `refines` its decisions, and
 generated regression tests import it.
 
-## v0.13 — Durable Objects on SQLite, and Agents (current)
+## v0.13 — Durable Objects on SQLite, and Agents (done)
 
 Durable Object SQLite storage, the backend Cloudflare recommends for every
 new namespace and the one the Agents SDK requires. The objects stay the
@@ -162,26 +162,34 @@ is no model of their storage to hold to workerd; what Eutaxy adds around
 them (reset, seed, snapshot, the alarm takeover, connections) is what the
 planted-bug and gate corpora exercise.
 
-## After v0.13
-
-The phases after v0.13, in order. Each is driven by the same target, and
-each one's text is made exact, gate included, when it starts.
-
-### v0.14 — The system
+## v0.14 — The system (current)
 
 The called Worker's real code runs in the same simulation as its caller:
 its effects are recorded and interleaved with the caller's, and a fault
 can land on either side, so a run follows a request across Workers end to
-end. This is the hardest design, and it is written in `docs/design.md`
-before any code; v0.10's scripted callees and v0.13's objects show what it
-needs.
+end. The scenario names the callee the way it names the caller (its
+module and wrangler config), the service binding reaches that module's
+`WorkerEntrypoint` or `fetch` instead of a scripted reply, and the
+callee's effects run under an invocation of its own (the call's), on the
+callee's bindings, which the scenario's setup seeds and snapshots as it
+does the caller's; the trace names which Worker made each effect. v0.10's
+scripted callees stay for the Workers a scenario does not run. This is
+the hardest design, and its first step is the design itself, written in
+`docs/design.md` before any code (one isolate or two, how the callee's
+module is loaded under the Cloudflare Vitest plugin, what a crash on
+either side means for the call in flight, how the two Workers' bindings
+are told apart); v0.10's scripted callees and v0.13's objects show what
+it needs.
 
 Gate: a scenario that drives one Worker, which calls another through a
 service binding, runs both Workers' real code with no `UNSUPPORTED`
 verdict, and catches a planted bug that crosses the two Workers, which
 the same scenario with the callee scripted misses.
 
-When a target needs them, outside these phases: an email binding with a
+## After v0.14
+
+The phases after v0.14 are driven by the same target, and each one's text
+is made exact, gate included, when it starts. When a target needs them, outside these phases: an email binding with a
 recorded outbox, containers as a scripted external, and Durable Object to
 Durable Object calls. AWS gets nothing new until a target uses it.
 
