@@ -482,21 +482,32 @@ isolate, as Cloudflare routes a service-binding call on the same thread
   the callee throws is now real. The effect hosts the callee's invocation,
   as a Durable Object stub call hosts the object's effects and a WebSocket
   `send` the handler's: inside it the callee's code runs as a fresh
-  invocation of its own (`<caller invocation>/<binding>.<method>`, numbered
-  per attempt), so its effects are recorded under it, interleave with
-  other invocations' as turns, and take faults by their position within
-  it, while the caller is parked at the call. An RPC call constructs the
+  invocation of its own (`<caller invocation>/<binding>.<method>`, `#<n>`
+  for the n-th call of that method from one caller invocation), so its
+  effects are recorded under it, interleave with other invocations' as
+  turns, and take faults by their position within it, while the caller is
+  parked at the call. The engine runs it through `hostInvocation`: the
+  hosted code is known by an async context of its own, so its effects and
+  timers are its own while the caller's code, which may go on meanwhile
+  (two calls awaited together), stays the caller's; the hosting effect
+  waits on the hosted code without counting as I/O of its own; and the
+  hosted code's timers are virtual (inside an effect's perform the
+  library's are real). An RPC call constructs the
   callee's `WorkerEntrypoint` anew with a fresh `ExecutionContext` and the
   callee's `env`, calls the method and answers with its return value,
   plain data (a stub, a function or a stream in it makes the run
   `UNSUPPORTED`, as for the RPC drive); what the method throws reaches the
-  caller as RPC propagates it, a new error of the built-in class with the
-  message (developers.cloudflare.com/workers/runtime-apis/rpc/error-handling/).
+  caller as RPC propagates it, a new error with its name, message and
+  serializable own properties, a built-in class as itself
+  (developers.cloudflare.com/workers/runtime-apis/rpc/error-handling/).
   A `fetch()` through the binding calls the callee's default `fetch`
-  handler with the request, its `env` and `ctx`, and the response crosses
-  as it is. The callee's `waitUntil` work runs after its answer, as the
-  caller's does after a response (a `background` point, admitting
-  `cut_off`). A crash inside the callee (a fault on one of its effects)
+  handler (a handler object's, or an entrypoint class's method) with the
+  request, its `env` and `ctx`, and the response crosses as it is; a
+  handler that throws rejects the caller's `fetch()` with the error, as
+  workerd does across a real binding (checked, 2026-11-04). The callee's
+  `waitUntil` work runs after its answer and before the answer crosses to
+  the caller (a `background` point of the callee's invocation, admitting
+  `cut_off`): one of the orders the runtime allows, the only one explored. A crash inside the callee (a fault on one of its effects)
   ends its invocation, and the caller sees an error thrown from the call,
   as it does when the Worker behind a binding fails; Cloudflare retries
   nothing, so the caller's own code decides what follows. These are the
@@ -526,8 +537,10 @@ isolate, as Cloudflare routes a service-binding call on the same thread
   qualified names, read from the callee's wrangler config; the caller's
   config stays the plugin's `wrangler.configPath`. A scenario run from a
   user's own test, without the command, gives the platform the callee's
-  exports and an `env` that holds the qualified entries, as it gives the
-  caller's today.
+  name and exports (`callees: { ORDERS: { name, exports } }`) and an `env`
+  that holds the qualified entries, as it gives the caller's today; the
+  caller's wrangler config may declare them under their qualified names
+  (`"binding": "orders/DB"`), which wrangler, the plugin and workerd accept.
 - _Not modelled._ `connect()`, promise pipelining, RPC stubs passed by
   reference, streams across the call, and a callee reached by anything but
   a service binding (a queue the callee consumes is the callee's own drive,

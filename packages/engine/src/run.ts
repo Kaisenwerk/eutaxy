@@ -155,6 +155,12 @@ export class Run implements RunHooks {
   private readonly invocations = new Map<string, InvocationState>();
   private readonly reasons: string[] = [];
   private readonly frames = new Frames();
+  /**
+   * Invocations whose code runs inside an effect of another's (a called
+   * Worker's code inside the call's effect), with the frame hosting each; see
+   * `hosted`.
+   */
+  private readonly hosts = new Map<string, Frame>();
   private patched: Patched | null = null;
   private restoreFetch: (() => void) | null = null;
   /** The invocation whose code is running (one at a time); outbound fetches are attributed to it. */
@@ -241,17 +247,19 @@ export class Run implements RunHooks {
           });
         },
       });
-      if (this.concurrent) {
-        const clock = this.patched.clock;
-        clock.ownerNow = () => this.running();
-        // A timer's callback, and everything it goes on to run, belongs to the delivery that set it.
-        clock.bind = (callback) => {
-          const cell = deliveryScope?.getStore();
-          if (!cell || !deliveryScope) return callback;
-          const scope = deliveryScope;
-          return (...args) => scope.run(cell, () => callback(...args));
-        };
-      }
+      // Timers belong to the invocation running when they are set, hosted code's included (its
+      // context is a cell of its own in either mode); in a sequential run that is `current` otherwise.
+      const clock = this.patched.clock;
+      clock.ownerNow = () => this.running();
+      // A timer's callback, and everything it goes on to run, belongs to the invocation that set it:
+      // its delivery's or hosted cell where it has one, else a cell naming the invocation running now,
+      // so a sequential caller's timer fired while a hosted callee waits is still the caller's.
+      clock.bind = (callback) => {
+        if (!deliveryScope) return callback;
+        const scope = deliveryScope;
+        const cell = scope.getStore() ?? { id: this.running() };
+        return (...args) => scope.run(cell, () => callback(...args));
+      };
     }
     if (!this.restoreFetch) {
       this.restoreFetch = installScriptedFetch(
@@ -311,7 +319,7 @@ export class Run implements RunHooks {
   }
 
   running(): string {
-    if (!this.concurrent) return this.current;
+    // A delivery's cell in a concurrent run, a hosted invocation's cell in either; else the one run as.
     return deliveryScope?.getStore()?.id ?? this.current;
   }
 
@@ -397,6 +405,22 @@ export class Run implements RunHooks {
     const enclosing = this.frames.enclosing(point.invocation);
     const nested = enclosing !== undefined;
     if (this.concurrent && !nested) {
+      const host = this.hosts.get(point.invocation);
+      if (host?.active) {
+        // Code another invocation's effect hosts (a called Worker's): a turn of its own, during which the
+        // host waits on it; while it performs, the host is in flight again. Nothing cuts this code off
+        // from async context, so a promise settled from outside wakes it.
+        this.frames.adjust(host, () => {
+          host.children++;
+          host.waitingChildren++;
+        });
+        await new Promise<void>((go) => this.turns.park(inv, point.target, go, host));
+        try {
+          return await this.performEffect(point, perform, summarize, options, inv, undefined, host);
+        } finally {
+          this.frames.adjust(host, () => host.children--);
+        }
+      }
       await new Promise<void>((go) => this.turns.park(inv, point.target, go));
       if (inv.isCrashed()) return hang();
     } else if (this.concurrent && enclosing?.hosts && enclosing.mayPark()) {
@@ -564,15 +588,21 @@ export class Run implements RunHooks {
     // In a concurrent run the run itself fires timers and detects a stuck run (see `quiesce`).
     if (this.concurrent) return Promise.race([promise, inv.crashed.then(() => hang<T>())]);
     const patched = this.patched;
-    if (patched) patched.clock.owner = invocation;
-    this.current = invocation;
+    // A hosted invocation is known by its cell, never by `current`: the caller's own code may still
+    // run beside it (two calls awaited together) and must stay the caller's.
+    if (!this.hosts.has(invocation)) {
+      if (patched) patched.clock.owner = invocation;
+      this.current = invocation;
+    }
     if (!patched) {
       // Globals not installed (direct use outside runOnce): just wait, abandoning on crash.
       return Promise.race([promise, inv.crashed.then(() => hang<T>())]);
     }
     return settleOn(promise, {
       clock: patched.clock,
-      inFlight: () => this.frames.inFlight,
+      // An invocation hosted inside one of this one's effects is work of this one's, which its own
+      // settle drives: not a timer to fire here, nor a reason to call this one stuck.
+      inFlight: () => this.frames.inFlight + this.hostedBy(invocation),
       crashed: () => inv.isCrashed(),
       stuck: () => {
         // Nothing can make progress: report it and abandon the invocation so the run can end.
@@ -580,6 +610,55 @@ export class Run implements RunHooks {
         inv.crash();
       },
     });
+  }
+
+  /**
+   * Run `work` as the code of a new invocation `id` inside the effect being
+   * performed now (see `hostInvocation`): the invocation is started in a
+   * delivery context of its own, so async context attributes its effects to
+   * it while the host's own code stays the host's, the hosting effect waits
+   * on it without counting as I/O of its own (the hosted code's effects and
+   * tracked work count), and the hosting invocation is the running one again
+   * once it ends. A fault that crashes `id` ends `id` alone: nothing here
+   * tells the host's frame, so what the host sees is `work`'s to decide.
+   */
+  async hosted<T>(id: string, work: (inv: Invocation) => Promise<T>): Promise<T> {
+    const frame = this.frames.current();
+    if (!frame)
+      throw new Error(`invocation ${id} can only be hosted inside an effect being performed`);
+    if (!deliveryScope)
+      throw new Error("hosting an invocation needs AsyncLocalStorage (node:async_hooks)");
+    const run = async (): Promise<T> => {
+      // Tracked, not made the running one: the hosted code is known by its own cell, so the caller's
+      // code that goes on meanwhile (a second call awaited together) stays the caller's.
+      const inv = this.track(id);
+      if (this.concurrent) this.turns.started(id);
+      this.hosts.set(id, frame);
+      this.frames.adjust(frame, () => {
+        frame.children++;
+        frame.waitingChildren++;
+      });
+      try {
+        return await work(inv);
+      } finally {
+        this.frames.adjust(frame, () => {
+          frame.children--;
+          frame.waitingChildren--;
+        });
+        this.hosts.delete(id);
+      }
+    };
+    // Inside an effect's perform the library's timers are real; the hosted code is handler code, so
+    // its timers are virtual again, and it runs in a delivery context of its own in either mode.
+    const asHandler = (): Promise<T> => (this.patched ? this.patched.handlerCode(run) : run());
+    return deliveryScope.run({ id }, asHandler);
+  }
+
+  /** How many invocations are hosted inside effects of `invocation` now. */
+  private hostedBy(invocation: string): number {
+    let n = 0;
+    for (const frame of this.hosts.values()) if (frame.invocation === invocation) n++;
+    return n;
   }
 
   /** Concurrent runs: start a delivery in its own async context. */

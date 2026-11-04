@@ -176,6 +176,7 @@ Setup steps run before every run, so each run starts from the same state.
 | `r2Bucket(binding, objects?)`                           | Empties the bucket and seeds these objects; snapshots it after the run                               |
 | `workflow(binding, className, { name })`                | Names the class (an export of the Worker module) a Workflow binding's instances run                  |
 | `service(binding, { methods, fetch })`                  | Scripts the Worker behind a service binding: each method's reply, the replies to `fetch()`; never calls it |
+| `callee(binding, { entry, config, entrypoint? })` | Runs the Worker behind a service binding for real, from its module and wrangler config; its bindings are set up under `<name>/<binding>` |
 
 A Durable Object namespace, R2 bucket, Workflow binding or service binding
 the Worker uses without its setup step makes the run `UNSUPPORTED`: state
@@ -199,7 +200,23 @@ const billing = service("BILLING", {
 Each call is one effect (`Service:<binding>`, the method as op) with the
 faults of a Durable Object stub call: the call never reached the callee, it
 acted and the answer was lost, or the caller died after it.
-`serviceCall(binding, method)` selects the calls for invariants. See
+`serviceCall(binding, method)` selects the calls for invariants.
+
+Where a bug could cross the two Workers, the callee runs for real instead:
+
+```ts
+const inventory = callee("INVENTORY", {
+  entry: "./inventory/worker.ts",
+  config: "./inventory/wrangler.jsonc",
+});
+// The callee's database, under the name its wrangler config gives the Worker.
+const inventoryDb = d1Schema("inventory/DB", "./inventory/schema.sql");
+```
+
+Each call is one effect hosting the callee's invocation
+(`msg-1#1/INVENTORY.reserve`), whose effects are recorded under it, and
+state invariants read the callee's bindings by their qualified names
+(`d1Rows("inventory/DB", "reservations")`). See
 [Cloudflare Workers](/platforms/cloudflare) for what each binding models.
 
 ## Externals

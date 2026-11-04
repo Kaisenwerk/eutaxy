@@ -466,6 +466,11 @@ export async function runDifferential(
   ) {
     throw new Error("runDifferential does not model the caller's delaysMs or deadlineMs yet");
   }
+  // The raw side calls the real bindings; a callee's real code is Eutaxy's model, with no runtime side.
+  if (spec.setup.some((s) => s.kind === "callee"))
+    throw new Error(
+      "runDifferential keeps to the binding proxies: a scenario with a callee() has no raw side; script the service for the differential entry",
+    );
   const { unsupported, ...eutaxy } = await eutaxySide(spec, options);
   const raw = await rawSide(spec, options);
   const differences = compareSides(

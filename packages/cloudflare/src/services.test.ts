@@ -235,6 +235,16 @@ describe("fetch() through the binding", () => {
     });
   });
 
+  test("a request that cannot be built rejects the fetch() promise, as the runtime's does, instead of throwing", async () => {
+    const { seen } = await run(spec([service("BILLING")]), (env) =>
+      env.BILLING.fetch("not a url").then(
+        () => "built",
+        (e: Error) => `rejected ${e.name}`,
+      ),
+    );
+    expect(seen).toEqual(["rejected TypeError"]);
+  });
+
   test("a redirect reply is followed by the runtime, so it is unsupported unless the fetch is manual", async () => {
     const redirecting = service("BILLING", {
       fetch: [{ path: "/start", status: 302, headers: { location: "/end" } }],

@@ -1,6 +1,7 @@
 // @eutaxy/cloudflare: see README.md.
 
 export { atLeastOnce, atMostOncePerKey } from "@eutaxy/core";
+export type { CalleeModule } from "./callees.ts";
 export { check, expectHolds } from "./check.ts";
 export { proxyD1, resetD1, snapshotD1, splitSql } from "./d1.ts";
 export {
@@ -18,10 +19,12 @@ export {
 } from "./platform.ts";
 export {
   atLeastOncePerMessage,
+  type CalleeSetup,
   type CloudflareScenarioInput,
   type CronDrive,
   type CronOptions,
   type CronTickSpec,
+  callee,
   cron,
   type D1Setup,
   type DurableObjectSetup,

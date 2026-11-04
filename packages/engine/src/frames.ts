@@ -96,6 +96,17 @@ export class Frames {
     return effectScope ? (live ?? this.hosting.get(invocation)?.at(-1)) : this.stack.at(-1);
   }
 
+  /**
+   * The effect whose perform the current code runs inside, whatever
+   * invocation it belongs to: the live frame of the async context, else the
+   * innermost being performed. Where another invocation's code is hosted.
+   */
+  current(): Frame | undefined {
+    if (!effectScope) return this.stack.at(-1);
+    const store = effectScope.getStore();
+    return store?.active ? store : undefined;
+  }
+
   /** An effect starts being performed: it is in flight. */
   enter(frame: Frame): void {
     this.inFlight++;

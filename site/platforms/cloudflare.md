@@ -82,6 +82,22 @@ reached the callee, `ambiguous` that it acted and the answer was lost,
 `crash_after` that the caller died after it. Cloudflare retries none of
 them. Every verdict states that callees were scripted.
 
+Or the Worker behind the binding runs for real: the `callee` setup names
+its module and wrangler config, and the `name` in that config qualifies
+its bindings (`orders/DB`) in setup steps, effect targets, state queries
+and snapshots. Each call through the binding is still one effect, now
+hosting the callee's invocation (`<caller invocation>/<binding>.<method>`):
+the entrypoint is constructed anew with the callee's `env`, its effects are
+recorded under its own invocation and take faults by their position in it,
+what it throws reaches the caller as RPC carries it (name, message, a
+built-in class as itself), and a fault that crashes it is an error thrown
+from the call. The call's own faults are a call's: `crash_before`,
+`ambiguous`, `crash_after`. A test gives the platform the callee's name and
+module exports (`callees: { ORDERS: { name: "orders", exports } }`) and an
+`env` holding its bindings under their qualified names, which the caller's
+wrangler config may declare as such (`"binding": "orders/DB"`). `eutaxy
+check` does not load callees yet.
+
 ### Background work
 
 Work passed to `ctx.waitUntil` runs after the handler returns and never

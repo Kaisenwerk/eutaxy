@@ -14,6 +14,7 @@ import {
   type RunHooks,
   type ScenarioSpec,
 } from "@eutaxy/core";
+import { hostInvocation, runInvocation } from "./deliver.ts";
 import { CrashSignal } from "./run.ts";
 
 export interface FakeMessage {
@@ -62,6 +63,15 @@ export function createFakePlatform(
     checkInside?: boolean;
     /** The insert makes two reads at once inside it, like an object awaiting two fetches together. */
     parallelInside?: boolean;
+    /**
+     * The insert is a call to another Worker (`Service:CALLEE`) whose code runs as an invocation of
+     * its own inside the call, and writes through its own binding (`D1:callee/DB`).
+     */
+    viaCallee?: boolean;
+    /** The callee sleeps on a virtual timer before writing. */
+    calleeSleeps?: boolean;
+    /** The callee reads the count first, as its own effect, and writes only when it saw no row. */
+    calleeChecks?: boolean;
   } = {},
 ): Platform & {
   readonly rows: Map<string, number>;
@@ -95,53 +105,83 @@ export function createFakePlatform(
       const invocation = invocationOf(event);
       const inv = hooks.startInvocation(invocation);
       let acked = false;
+      /** The write itself, under the binding `target` names. */
+      const write = (orderId: string, target: string) =>
+        hooks.effect(
+          {
+            // Like a binding proxy shared by every invocation: the engine says whose code called.
+            invocation: hooks.running(),
+            target,
+            op: "run",
+            args: { sql: "INSERT", params: [orderId] },
+            allowed: ["crash_before", "crash_after", "ambiguous", "error"],
+            ...(options.insertHosts ? { hostsEffects: true } : {}),
+          },
+          async () => {
+            if (orderId === options.hangInsert) await new Promise(() => {});
+            if (options.nestedRead) await env.count(orderId);
+            if (options.parallelInside) await Promise.all([env.count(orderId), env.count(orderId)]);
+            if (options.checkInside) {
+              // Like an object: read its own state, call out (the nested read), then write on what it read.
+              const seen = rows.get(orderId) ?? 0;
+              await env.count(orderId);
+              if (seen > 0) return { changes: 0 };
+            }
+            if (options.duringInsert) {
+              options.duringInsert();
+              await new Promise((resolve) => setTimeout(resolve, 0));
+            }
+            const before = rows.get(orderId) ?? 0;
+            if (options.idempotent && before > 0) return { changes: 0 };
+            rows.set(orderId, before + 1);
+            return { changes: 1 };
+          },
+          (r) => ({ changes: r.changes }),
+        );
+      /** Calls into the callee so far from this delivery, to name each hosted invocation. */
+      let calls = 0;
+      /** The write as a call into another Worker, whose code is hosted inside the call's effect. */
+      const viaCallee = (orderId: string) =>
+        hooks.effect(
+          {
+            invocation: hooks.running(),
+            target: "Service:CALLEE",
+            op: "insert",
+            args: { args: [orderId] },
+            allowed: ["crash_before", "ambiguous", "crash_after"],
+          },
+          async () => {
+            const n = ++calls;
+            const id = `${hooks.running()}/CALLEE.insert${n === 1 ? "" : `#${n}`}`;
+            const outcome = await hostInvocation(hooks, id, (inv) =>
+              runInvocation(hooks, inv, async () => {
+                if (options.calleeSleeps) await new Promise((r) => setTimeout(r, 50));
+                if (options.calleeChecks && (await count(orderId, "D1:callee/DB")) > 0)
+                  return { changes: 0 };
+                return write(orderId, "D1:callee/DB");
+              }),
+            );
+            if (outcome.status === "completed") return outcome.value;
+            throw outcome.status === "errored" ? outcome.error : new Error("the callee crashed");
+          },
+          (r) => ({ changes: r.changes }),
+        );
+      const count = (orderId: string, target = "D1:DB") =>
+        hooks.effect(
+          {
+            // Like a binding proxy shared by every invocation: the engine says whose code called.
+            invocation: hooks.running(),
+            target,
+            op: "first",
+            args: { sql: "SELECT", params: [orderId] },
+            allowed: ["crash_before", "crash_after", "error"],
+          },
+          async () => rows.get(orderId) ?? 0,
+          (n) => n,
+        );
       const env: FakeEnv = {
-        insert: (orderId) =>
-          hooks.effect(
-            {
-              // Like a binding proxy shared by every invocation: the engine says whose code called.
-              invocation: hooks.running(),
-              target: "D1:DB",
-              op: "run",
-              args: { sql: "INSERT", params: [orderId] },
-              allowed: ["crash_before", "crash_after", "ambiguous", "error"],
-              ...(options.insertHosts ? { hostsEffects: true } : {}),
-            },
-            async () => {
-              if (orderId === options.hangInsert) await new Promise(() => {});
-              if (options.nestedRead) await env.count(orderId);
-              if (options.parallelInside)
-                await Promise.all([env.count(orderId), env.count(orderId)]);
-              if (options.checkInside) {
-                // Like an object: read its own state, call out (the nested read), then write on what it read.
-                const seen = rows.get(orderId) ?? 0;
-                await env.count(orderId);
-                if (seen > 0) return { changes: 0 };
-              }
-              if (options.duringInsert) {
-                options.duringInsert();
-                await new Promise((resolve) => setTimeout(resolve, 0));
-              }
-              const before = rows.get(orderId) ?? 0;
-              if (options.idempotent && before > 0) return { changes: 0 };
-              rows.set(orderId, before + 1);
-              return { changes: 1 };
-            },
-            (r) => ({ changes: r.changes }),
-          ),
-        count: (orderId) =>
-          hooks.effect(
-            {
-              // Like a binding proxy shared by every invocation: the engine says whose code called.
-              invocation: hooks.running(),
-              target: "D1:DB",
-              op: "first",
-              args: { sql: "SELECT", params: [orderId] },
-              allowed: ["crash_before", "crash_after", "error"],
-            },
-            async () => rows.get(orderId) ?? 0,
-            (n) => n,
-          ),
+        insert: (orderId) => (options.viaCallee ? viaCallee(orderId) : write(orderId, "D1:DB")),
+        count: (orderId) => count(orderId),
       };
       const message: FakeMessage = {
         id: event.id,

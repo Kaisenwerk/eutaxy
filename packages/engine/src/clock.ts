@@ -32,7 +32,7 @@ const realClearInterval = globalThis.clearInterval.bind(globalThis);
  * continuations. Where it is unavailable (workerd without Node compatibility)
  * every timer stays virtual; the Cloudflare bindings do not use timers.
  */
-const libraryScope = asyncScope<true>();
+const libraryScope = asyncScope<boolean>();
 
 interface Timer {
   readonly id: number;
@@ -198,6 +198,8 @@ export interface Patched {
    * virtual. The clock, Date and randomness stay virtual throughout.
    */
   libraryIo<T>(perform: () => Promise<T>): Promise<T>;
+  /** Run handler code inside an effect's I/O (a called Worker's code inside the call): its timers are virtual again. */
+  handlerCode<T>(work: () => Promise<T>): Promise<T>;
 }
 
 type Global = Record<string, unknown>;
@@ -323,6 +325,9 @@ export function patchGlobals(seed: number | string, options: PatchOptions = {}):
     reads,
     libraryIo<T>(perform: () => Promise<T>): Promise<T> {
       return libraryScope ? libraryScope.run(true, perform) : perform();
+    },
+    handlerCode<T>(work: () => Promise<T>): Promise<T> {
+      return libraryScope ? libraryScope.run(false, work) : work();
     },
     restore() {
       if (restored) return;

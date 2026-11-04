@@ -1,0 +1,16 @@
+{
+  "name": "storefront",
+  "main": "worker.ts",
+  "compatibility_date": "2026-10-01",
+  "d1_databases": [
+    { "binding": "DB", "database_name": "storefront", "database_id": "storefront" },
+    // The inventory Worker's own database under its qualified name, so that the test's env holds it beside
+    // the storefront's; `eutaxy check` will add it from inventory/wrangler.jsonc itself.
+    { "binding": "inventory/DB", "database_name": "inventory", "database_id": "inventory" }
+  ],
+  "queues": {
+    "consumers": [{ "queue": "orders", "max_batch_size": 1, "max_retries": 3 }]
+  },
+  // The inventory Worker runs for real inside the scenario; the binding points at this Worker only so that env.INVENTORY exists.
+  "services": [{ "binding": "INVENTORY", "service": "storefront" }]
+}

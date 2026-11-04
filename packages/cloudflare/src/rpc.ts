@@ -114,7 +114,10 @@ export function entrypointClass(
  * methods are not callable (workerd: "The RPC receiver does not implement the
  * method").
  */
-function rpcMethod(instance: object, name: string): ((...a: unknown[]) => unknown) | undefined {
+export function rpcMethod(
+  instance: object,
+  name: string,
+): ((...a: unknown[]) => unknown) | undefined {
   for (
     let proto = Object.getPrototypeOf(instance) as object | null;
     proto !== null && proto !== Object.prototype;

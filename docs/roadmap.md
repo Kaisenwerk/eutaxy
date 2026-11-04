@@ -179,11 +179,17 @@ the hardest design, so it was written before any code: `docs/design.md`,
 module generated to hold both Workers, the call an effect hosting the
 callee's invocation, a crash in the callee an error to the caller, the
 callee's bindings qualified by its Worker's name); v0.10's scripted
-callees and v0.13's objects are what it is built from. The first slice is
-the call path with the callee's exports and bindings given by the user's
-test; the second the command's generation of the main module and the
-Vitest config from the callee's wrangler config; the third shared
-resources, nested callees and the gate entry.
+callees and v0.13's objects are what it is built from. The first slice, done,
+is the call path with the callee's exports and bindings given by the
+user's test: `callee()` names the Worker, the platform's `callees` option
+gives its name and module, the engine hosts its invocation inside the
+call (`hostInvocation`), and the planted bug `callee-reserve-twice` (an
+idempotency key drawn per attempt, so a resend after a lost answer
+reserves the same order twice in the callee's database) is caught, which
+the same scenario with the callee scripted misses. The second slice is
+the command's generation of the main module and the Vitest config from
+the callee's wrangler config; the third shared resources, nested callees
+and the gate entry.
 
 Gate: a scenario that drives one Worker, which calls another through a
 service binding, runs both Workers' real code with no `UNSUPPORTED`

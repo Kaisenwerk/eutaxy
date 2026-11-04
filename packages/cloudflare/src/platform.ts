@@ -19,6 +19,7 @@ import { withoutNetwork } from "@eutaxy/engine";
 import type { RunningWorker } from "./background.ts";
 import {
   type Binding,
+  calleeBinding,
   d1Binding,
   durableObjectBinding,
   ownedSetups,
@@ -26,6 +27,7 @@ import {
   serviceBinding,
   workflowBinding,
 } from "./bindings.ts";
+import type { CalleeModule } from "./callees.ts";
 import type { ProxyContext } from "./d1.ts";
 import type { DurableObjectTestHelpers } from "./durable-objects.ts";
 import { deliverRequest } from "./http.ts";
@@ -73,6 +75,12 @@ export interface CloudflarePlatformOptions {
    * where the classes `workflow` setup steps name are found.
    */
   readonly exports?: Readonly<Record<string, unknown>>;
+  /**
+   * The Workers behind service bindings that `callee` setup steps name, by
+   * binding: each one's name from its wrangler config, which qualifies its
+   * bindings in `env` (`orders/DB`), and its module's exports.
+   */
+  readonly callees?: Readonly<Record<string, CalleeModule>>;
 }
 
 function isBindingLike(value: unknown): boolean {
@@ -90,7 +98,8 @@ const assumptions: readonly string[] = [
   "D1 statements run against Miniflare's SQLite; each run/first/all/raw/batch/exec is one effect",
   "message.timestamp is the virtual clock's time at delivery",
   "only D1, Durable Object, R2, Workflow and scripted service bindings are proxied; touching any other binding makes the run UNSUPPORTED",
-  "service bindings are scripted callees: the Worker behind a binding is never called; each RPC method call or fetch() through it is one effect answered from the scenario's service() setup, where crash_before and error mean the call never reached the callee, ambiguous that it acted and the answer was lost, and crash_after that the caller died after it (developers.cloudflare.com/workers/runtime-apis/bindings/service-bindings/); Cloudflare does not retry such a call",
+  "service bindings are scripted callees unless the scenario names a callee for them: the Worker behind a scripted binding is never called; each RPC method call or fetch() through it is one effect answered from the scenario's service() setup, where crash_before and error mean the call never reached the callee, ambiguous that it acted and the answer was lost, and crash_after that the caller died after it (developers.cloudflare.com/workers/runtime-apis/bindings/service-bindings/); Cloudflare does not retry such a call",
+  "a service binding with a callee() setup runs that Worker's real code in the caller's simulation, in the same isolate, as Cloudflare runs both Workers on one thread (developers.cloudflare.com/workers/runtime-apis/bindings/service-bindings/): each RPC method call or fetch() through it is one effect hosting the callee's invocation (<caller invocation>/<binding>.<method>), which constructs the entrypoint anew with a fresh ExecutionContext and the callee's env (its bindings under <worker name>/<binding>) and answers with the return value, plain data by copy, or the Response as it is; what the callee throws reaches the caller as a new error with its name, message and serializable own properties, a built-in class as itself (developers.cloudflare.com/workers/runtime-apis/rpc/error-handling/); the callee's waitUntil work finishes before its answer crosses; crash_before means the call never reached the callee, ambiguous that it acted and the answer was lost, crash_after that the caller died after it, and a fault that crashes the callee ends its invocation and throws an Error to the caller; Cloudflare retries nothing",
   "R2 buckets are Miniflare's real ones, emptied and seeded before each run and snapshotted after it; R2 is strongly consistent and the last writer wins (developers.cloudflare.com/r2/reference/consistency/); each put, delete, get, head and list is one effect, a body is read inside its get, and an object's version and upload time are stand-ins so traces repeat; multipart uploads and conditions on the upload time are not modelled",
   "Durable Objects are the real objects workerd runs (storage, transactions, input and output gates are the runtime's own); each stub call is one effect: crash_before or error means it never reached the object, ambiguous means the object committed and the caller lost the answer, crash_after means the caller died after it; in a concurrent run an object's own outbound I/O during a call is a turn, so another event may enter the object meanwhile (its input gate is open then), except while it holds the gate with blockConcurrencyWhile, when its effects run at once; storage operations are not turns (the input gate holds other events during them); the object's own binding calls are not recorded; objects are cleared, seeded and evicted before each run and their storage is snapshotted after it (developers.cloudflare.com/durable-objects/api/storage-api/)",
   "Durable Object alarms are taken over so none is scheduled on the real clock and fire in virtual time: one alarm per object, a later setAlarm replaces it, setAlarm in a transaction applies on commit, the alarm survives eviction, alarm() is one effect (crash_before: it never ran; crash_after: it ran and counts as failed; error: it threw), and a failed alarm is retried after 2 s, 4 s, 8 s ... up to six retries and maxRedeliveries, with retryCount and isRetry (developers.cloudflare.com/durable-objects/api/base/#alarm); each object's alarm fires at most alarmsPerObject times per run (default 3)",
@@ -121,8 +130,8 @@ export function createCloudflarePlatform(options: CloudflarePlatformOptions): Pl
 
   /**
    * The kinds of binding modelled, in the order an env value is tried against
-   * them: a service binding first, since in workerd it answers every duck
-   * type (its property reads are RPC stubs).
+   * them: service bindings first (a callee's, then scripted), since in workerd
+   * they answer every duck type (their property reads are RPC stubs).
    */
   const durable = durableObjectBinding({
     ctx,
@@ -130,6 +139,7 @@ export function createCloudflarePlatform(options: CloudflarePlatformOptions): Pl
     real: (name) => env[name],
   });
   const bindings: readonly Binding[] = [
+    calleeBinding({ callees: options.callees, env: () => proxiedEnv }),
     serviceBinding(),
     d1Binding(options.schemas),
     durable,
@@ -146,7 +156,11 @@ export function createCloudflarePlatform(options: CloudflarePlatformOptions): Pl
       if (!own(prop)) return undefined;
       const value = Reflect.get(target, prop, receiver) as unknown;
       if (typeof prop !== "string") return value;
-      for (const binding of bindings) if (binding.is(value)) return binding.proxy(prop, value, ctx);
+      for (const binding of bindings) {
+        if (!binding.is(value)) continue;
+        const proxied = binding.proxy(prop, value, ctx);
+        if (proxied !== undefined) return proxied;
+      }
       if (isBindingLike(value)) ctx.hooks.unsupported(`binding ${prop} is not proxied`);
       return value;
     },

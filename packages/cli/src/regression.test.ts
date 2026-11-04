@@ -67,3 +67,29 @@ describe("cloudflareRegressionTest", () => {
     );
   });
 });
+
+test("callees are imported as modules and passed with their names; qualified binding names are quoted keys", () => {
+  const text = cloudflareRegressionTest(verdict, {
+    scenarioPath: "./scenario.sim.ts",
+    workerPath: "./worker.ts",
+    schemaPaths: { DB: "./schema.sql", "inventory/DB": "./inventory/schema.sql" },
+    callees: { INVENTORY: { name: "inventory", path: "./inventory/worker.ts" } },
+    expect: "violates",
+  });
+  expect(text).toContain('import schema_inventory_DB from "./inventory/schema.sql?raw";');
+  expect(text).toContain('import * as callee_INVENTORY from "./inventory/worker.ts";');
+  expect(text).toContain(
+    'schemas: { DB: schema_DB, "inventory/DB": schema_inventory_DB }, callees: { INVENTORY: { name: "inventory", exports: callee_INVENTORY } }',
+  );
+});
+
+test("two binding names that map to one identifier get distinct import names", () => {
+  const text = cloudflareRegressionTest(verdict, {
+    scenarioPath: "./scenario.sim.ts",
+    workerPath: "./worker.ts",
+    schemaPaths: { "orders/DB": "./orders/schema.sql", orders_DB: "./other.sql" },
+  });
+  expect(text).toContain('import schema_orders_DB from "./orders/schema.sql?raw";');
+  expect(text).toContain('import schema_orders_DB_2 from "./other.sql?raw";');
+  expect(text).toContain('schemas: { "orders/DB": schema_orders_DB, orders_DB: schema_orders_DB_2 }');
+});

@@ -1,0 +1,8 @@
+{
+  "expect": {
+    "verdict": "VIOLATED",
+    "invariant": "one-reservation-per-order"
+  },
+  "fault": "any failure after the inventory Worker reserved: the answer lost (ambiguous on the reserve call), the caller dying right after it (crash_after), or the insert that follows failing (error on the D1 run); the redelivery draws a new key and reserves again",
+  "description": "A storefront's queue consumer reserves stock through the inventory Worker over a service binding, under an idempotency key drawn per attempt, then records the order. The inventory Worker is idempotent per key, as it promises. When the call's answer is lost after the callee reserved, Queues redeliver the message and the redelivery reserves the same order again under a new key: a bug that crosses the two Workers, which checking either alone, the other scripted, misses."
+}

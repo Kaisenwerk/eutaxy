@@ -16,6 +16,7 @@ import type {
   ScenarioSpec,
 } from "@eutaxy/core";
 import { alarmSource, deliverAlarm } from "./alarms.ts";
+import { type CalleeModule, CalleeState, proxyCallee } from "./callees.ts";
 import { isD1, type ProxyContext, proxyD1, resetD1, snapshotD1 } from "./d1.ts";
 import {
   alarmRunner,
@@ -30,6 +31,7 @@ import {
 } from "./durable-objects.ts";
 import { isR2, proxyR2, resetR2, snapshotR2, VersionBook } from "./r2.ts";
 import {
+  type CalleeSetup,
   type D1Setup,
   type DurableObjectSetup,
   defaultAlarmsPerObject,
@@ -69,6 +71,9 @@ export interface Binding<Real = unknown, Setup extends BindingSetup = BindingSet
    * What the Worker sees in place of the real binding, asked on every access
    * of `env.<name>`: the record keeps one proxy per name where it may, and
    * reports a binding the scenario did not set up each time it is touched.
+   * `undefined` means the name is not this record's (two records share one
+   * kind of env value: a service binding is a callee's or scripted), so the
+   * next record is asked.
    */
   proxy(name: string, real: Real, ctx: ProxyContext): unknown;
   /** Forget what the last run learned, before the next run's setup. */
@@ -374,6 +379,61 @@ export function workflowBinding(deps: WorkflowDeps): Binding<object, WorkflowSet
         maxFaultsPerRun: spec.bounds.maxFaultsPerRun,
         maxRedeliveries: spec.bounds.maxRedeliveries,
       });
+    },
+  };
+}
+
+export interface CalleeDeps {
+  /** The callees' modules by binding, as the test gives them. */
+  readonly callees: Readonly<Record<string, CalleeModule>> | undefined;
+  /** The scenario's env as the Worker sees it: the callee's env is a view of it under qualified names. */
+  readonly env: () => object;
+}
+
+/**
+ * A service binding whose callee runs for real (a `callee` setup step): a
+ * stub running the callee's module inside each call. Never the real binding.
+ * Nothing to reset or snapshot of its own: the callee's bindings have their
+ * own steps under their qualified names. A binding without a `callee` step
+ * is not this record's.
+ */
+export function calleeBinding(deps: CalleeDeps): Binding<object, CalleeSetup> {
+  /** The bindings the current scenario names a callee for. */
+  let setups = new Map<string, CalleeSetup>();
+  const proxies = new Map<string, object>();
+  const state = new CalleeState();
+  return {
+    kind: "callee",
+    target: "Service",
+    is: isServiceBinding,
+    proxy(name, _real, ctx) {
+      const setup = setups.get(name);
+      if (!setup) return undefined;
+      let p = proxies.get(name);
+      if (!p) {
+        const module = deps.callees?.[name];
+        if (!module) {
+          ctx.hooks.unsupported(
+            `callee ${name}: the platform was not given its module; pass createCloudflarePlatform({ ..., callees: { ${name}: { name, exports } } }) (eutaxy check does not load callees yet)`,
+          );
+          // Never the real binding: a stub whose every call is reported.
+          return proxyService(name, ctx, { kind: "service", binding: name, methods: {} });
+        }
+        p = proxyCallee(name, ctx, setup, module, deps.env(), state);
+        proxies.set(name, p);
+      }
+      return p;
+    },
+    clear() {
+      setups = new Map();
+      proxies.clear();
+      state.clear();
+    },
+    async reset(step) {
+      setups.set(step.binding, step);
+    },
+    async snapshot() {
+      return null;
     },
   };
 }

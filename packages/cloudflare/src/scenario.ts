@@ -525,7 +525,66 @@ export function service(
   };
 }
 
-/** Selects the calls through a service binding that completed, one method's or all. */
+/**
+ * The Worker behind a service binding, run for real: its module and wrangler
+ * config, relative to the scenario, in place of a script. The `name` in that
+ * config qualifies the callee's bindings (`orders/DB`) in effect targets,
+ * setup steps, state queries and snapshots. Each call is one effect,
+ * `Service:<binding>`, hosting the callee's invocation
+ * (`<caller invocation>/<binding>.<method>`), with the faults of a call in
+ * the network: `crash_before`, `ambiguous` and `crash_after`; what the
+ * callee throws is real.
+ */
+export interface CalleeSetup extends PlatformData {
+  readonly kind: "callee";
+  readonly binding: string;
+  /** The callee's module, relative to the scenario. */
+  readonly entry: string;
+  /** Its wrangler config, relative to the scenario; its `name` qualifies the callee's bindings. */
+  readonly config: string;
+  /** The named export the binding reaches; the default export otherwise. */
+  readonly entrypoint?: string;
+}
+
+export function callee(
+  binding: string,
+  worker: { readonly entry: string; readonly config: string; readonly entrypoint?: string },
+): CalleeSetup {
+  return {
+    kind: "callee",
+    binding,
+    entry: worker.entry,
+    config: worker.config,
+    ...(worker.entrypoint === undefined ? {} : { entrypoint: worker.entrypoint }),
+  };
+}
+
+/** A callee and a script for one binding would contradict each other; a callee needs both files named. */
+function validateCalleeSetups(setup: ScenarioSpec["setup"]): string[] {
+  const errors: string[] = [];
+  const scripted = new Set(
+    setup.filter((s) => s.kind === "service").map((s) => String(s["binding"])),
+  );
+  const seen = new Set<string>();
+  for (const step of setup) {
+    if (step.kind !== "callee") continue;
+    const binding = String(step["binding"]);
+    if (!step["binding"]) errors.push("callee() needs a binding name");
+    if (!step["entry"]) errors.push(`callee(${JSON.stringify(binding)}) needs the callee's entry`);
+    if (!step["config"])
+      errors.push(`callee(${JSON.stringify(binding)}) needs the callee's wrangler config`);
+    if (scripted.has(binding))
+      errors.push(
+        `service binding ${JSON.stringify(binding)} has both a service() script and a callee(); keep one`,
+      );
+    if (seen.has(binding))
+      errors.push(`service binding ${JSON.stringify(binding)} has two callee() steps`);
+    seen.add(binding);
+  }
+  return errors;
+}
+
+/** Selects the calls through a service binding that completed (scripted or a callee's), one method's or all. */
 export function serviceCall(binding: string, method?: string): EffectSelector {
   return {
     target: `Service:${binding}`,
@@ -597,6 +656,7 @@ export interface CloudflareScenarioInput {
         readonly messages: readonly QueueMessage[];
       };
   readonly setup?: readonly (
+    | CalleeSetup
     | D1Setup
     | DurableObjectSetup
     | R2Setup
@@ -977,6 +1037,7 @@ export function defineScenario(input: CloudflareScenarioInput): ScenarioSpec {
   const errors = [
     ...validateScenario(spec),
     ...validateDurableObjectSetups(spec.setup),
+    ...validateCalleeSetups(spec.setup),
     ...(drive.kind === "http" ? validateHttpDrive(drive) : []),
     ...(drive.kind === "rpc" ? validateRpcDrive(drive) : []),
     ...(drive.kind === "cron" ? validateCronDrive(drive) : []),
