@@ -30,6 +30,11 @@ export interface CloudflareRegressionOptions {
    * its module.
    */
   readonly callees?: Readonly<Record<string, { readonly name: string; readonly path: string }>>;
+  /**
+   * The qualified names the callees' bindings had in the check's isolate: the
+   * replay needs them in its own, so the test says so at its top.
+   */
+  readonly calleeBindings?: readonly string[];
   readonly expect?: "holds" | "violates";
   readonly engineModule?: string;
   /** Core modules to observe during the replay (import path, functions), for `refines`. */
@@ -72,7 +77,15 @@ export function cloudflareRegressionTest(
   const ident = (binding: string): string =>
     schemaIds.get(binding) ?? calleeIds.get(binding) ?? binding;
   const withExports = options.exports === true || options.workflows === true;
+  const note =
+    callees.length === 0 || (options.calleeBindings ?? []).length === 0
+      ? []
+      : [
+          `// Needs the callees' bindings in this test's isolate under their qualified names: ${(options.calleeBindings ?? []).join(", ")}.`,
+          "// Declare them in the wrangler config, or run this test under the config eutaxy check --keep leaves in .eutaxy/.",
+        ];
   const imports = [
+    ...note,
     'import { createCloudflarePlatform } from "eutaxy/cloudflare";',
     'import { env } from "cloudflare:workers";',
     ...(options.durableObjects ? ['import * as cloudflareTest from "cloudflare:test";'] : []),

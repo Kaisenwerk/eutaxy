@@ -41,3 +41,37 @@ describe("generated check test", () => {
     expect(src).toContain('seed: "s", exhaustive: true });');
   });
 });
+
+describe("a scenario with callees", () => {
+  test("the test imports each callee's module and passes it with its name; a schema outside the directory is imported by name", () => {
+    const src = checkTestSource({
+      seed: "s",
+      scenarioImport: "../x.sim.ts",
+      callees: [
+        { binding: "INVENTORY", name: "inventory", importPath: "../../inventory/worker.ts" },
+      ],
+      sqlImports: [{ key: "../../inventory/schema.sql", importPath: "../../inventory/schema.sql" }],
+    });
+    expect(src).toContain('import * as callee_0 from "../../inventory/worker.ts";');
+    expect(src).toContain('import sql_0 from "../../inventory/schema.sql?raw";');
+    expect(src).toContain(
+      'specEntries, callees: { "INVENTORY": { name: "inventory", exports: callee_0 } }, extraSql: { "../../inventory/schema.sql": sql_0 }, seed: "s" });',
+    );
+  });
+
+  test("the vitest config names the generated main module and the callees' resources", () => {
+    const src = vitestConfigSource(
+      "/p/wrangler.jsonc",
+      "/p/.eutaxy/x.test.ts",
+      "/p/.eutaxy/r.json",
+      {
+        main: "/p/.eutaxy/main.1.ts",
+        miniflare: '{ d1Databases: {"inventory/DB":"inv"} }',
+      },
+    );
+    expect(src).toContain(
+      'cloudflareTest({ main: "/p/.eutaxy/main.1.ts", wrangler: { configPath: "/p/wrangler.jsonc" }, miniflare: { d1Databases: {"inventory/DB":"inv"} } })',
+    );
+    expect(src).toContain("const neverCalled = () => new Response(");
+  });
+});

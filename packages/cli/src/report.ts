@@ -16,7 +16,6 @@
 import { fork } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
-import { registerHooks } from "node:module";
 import { basename, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { canonicalJson, type JsonValue, type SpecVerdict } from "@eutaxy/core";
@@ -24,6 +23,7 @@ import { checkSpecModule, type OpenGoal, type Prover } from "@eutaxy/prover";
 import { goalFileFor, leanProver, renderGoals } from "@eutaxy/prover-lean";
 import { renderSpecReport, renderSpecReportJson } from "@eutaxy/report";
 import { enginesNamed, exitCodes, proveSpecs } from "./check.ts";
+import { resolveAsTypeScript } from "./resolve.ts";
 import { findSpecModules, type SpecModule } from "./specs.ts";
 
 export interface ReportOptions {
@@ -78,31 +78,6 @@ function unknownAll(
       }),
     ),
   );
-}
-
-/**
- * Inside the module's process: a relative import from a `.ts` file that Node cannot
- * resolve is tried as TypeScript resolves it, so `./domain.js` and
- * `./domain` find `domain.ts` (or `domain/index.ts`), as `tsc` would.
- */
-function resolveAsTypeScript(): void {
-  registerHooks({
-    resolve(specifier, context, nextResolve) {
-      try {
-        return nextResolve(specifier, context);
-      } catch (err) {
-        const relative = specifier.startsWith("./") || specifier.startsWith("../");
-        if (!relative || !context.parentURL?.endsWith(".ts")) throw err;
-        const stem = specifier.endsWith(".js") ? specifier.slice(0, -3) : specifier;
-        for (const candidate of [`${stem}.ts`, `${stem}/index.ts`]) {
-          try {
-            return nextResolve(candidate, context);
-          } catch {}
-        }
-        throw err;
-      }
-    },
-  });
 }
 
 /** Inside the module's process: load the module and its spec file, run the `TESTED` rung. */

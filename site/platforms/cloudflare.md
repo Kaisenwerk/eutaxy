@@ -96,7 +96,12 @@ from the call. The call's own faults are a call's: `crash_before`,
 module exports (`callees: { ORDERS: { name: "orders", exports } }`) and an
 `env` holding its bindings under their qualified names, which the caller's
 wrangler config may declare as such (`"binding": "orders/DB"`). `eutaxy
-check` does not load callees yet.
+check` does this itself: it reads each callee's wrangler config (JSON or
+JSONC), generates a main module that re-exports the caller's exports and
+the callees' Durable Object and Workflow classes under qualified aliases,
+and adds the callees' D1 databases, R2 buckets, KV namespaces, Durable
+Object namespaces, Workflows, queue producers, service bindings and vars
+to the test's isolate under their qualified names.
 
 ### Background work
 

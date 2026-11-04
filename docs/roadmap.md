@@ -186,10 +186,15 @@ gives its name and module, the engine hosts its invocation inside the
 call (`hostInvocation`), and the planted bug `callee-reserve-twice` (an
 idempotency key drawn per attempt, so a resend after a lost answer
 reserves the same order twice in the callee's database) is caught, which
-the same scenario with the callee scripted misses. The second slice is
-the command's generation of the main module and the Vitest config from
-the callee's wrangler config; the third shared resources, nested callees
-and the gate entry.
+the same scenario with the callee scripted misses. The second slice, done,
+is the command's generation: `eutaxy check` reads each callee's wrangler
+config, writes a main module beside its test that re-exports the caller's
+exports and the callees' classes under qualified aliases, and adds the
+callees' resources to the isolate through the plugin's miniflare options,
+so the corpus entry runs through the command as it runs from its own
+test. The third slice is shared resources, nested callees, a callee's own
+Workflows (their classes are the callee module's, which the Workflow model
+does not yet look in) and the gate entry.
 
 Gate: a scenario that drives one Worker, which calls another through a
 service binding, runs both Workers' real code with no `UNSUPPORTED`

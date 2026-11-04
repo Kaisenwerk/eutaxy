@@ -20,7 +20,20 @@ import { aggregate, type EngineReport, type Prover } from "@eutaxy/prover";
 import { leanProver } from "@eutaxy/prover-lean";
 import { smtProver } from "@eutaxy/prover-smt";
 import { renderSpecs, renderText } from "@eutaxy/report";
+import {
+  type CalleeConfig,
+  calleeSteps,
+  describeCallee,
+  isolateBindings,
+  type LoadedScenario,
+  loadScenario,
+  mainModuleSource,
+  mentionsCallee,
+  miniflareOptionsSource,
+  readCalleeConfig,
+} from "./callees.ts";
 import { checkTestSource, metaKey, vitestConfigSource } from "./generate.ts";
+import { globKey } from "./keys.ts";
 import { cloudflareRegressionTest } from "./regression.ts";
 import { findSpecModules, type SpecModule, specFiles, specKey } from "./specs.ts";
 import type { CheckTransport } from "./workerd.ts";
@@ -190,8 +203,41 @@ export async function runCheck(o: CheckOptions): Promise<number> {
   const workDir = join(dir, ".eutaxy");
   const testPath = join(workDir, `${name}.${stamp}.check.test.ts`);
   const configPath = join(workDir, `vitest.config.${stamp}.mts`);
+  const mainPath = join(workDir, `main.${stamp}.ts`);
+  // The callees the scenario names: their configs are read here, before Vitest starts, since the
+  // isolate must hold their resources. The scenario module is imported in Node for its steps, only
+  // when its source mentions one.
+  let callees: CalleeConfig[] = [];
+  let loaded: LoadedScenario | undefined;
+  if (mentionsCallee(readFileSync(scenarioPath, "utf8"))) {
+    try {
+      loaded = await loadScenario(scenarioPath);
+      callees = calleeSteps(loaded.setup).map((step) => readCalleeConfig(step, dir));
+    } catch (err) {
+      o.stderr(`could not read the scenario's callees: ${String(err)}\n`);
+      return exitCodes.error;
+    }
+    for (const c of callees)
+      if (c.notAdded.length > 0)
+        o.stderr(
+          `callee ${describeCallee(c, dir)}: not added to the test's isolate: ${c.notAdded.join(", ")}\n`,
+        );
+  }
   mkdirSync(workDir, { recursive: true });
   try {
+    const sqlImports: { key: string; importPath: string }[] = [];
+    if (callees.length > 0 && loaded) {
+      // A callee's schema outside the scenario's directory escapes the test's glob: imported by name.
+      for (const step of loaded.setup) {
+        if (step.kind !== "d1") continue;
+        const file = String(step["schemaFile"]);
+        if (!relative(dir, resolve(dir, file)).startsWith("..")) continue;
+        sqlImports.push({
+          key: globKey(file),
+          importPath: toPosix(relative(workDir, resolve(dir, file))),
+        });
+      }
+    }
     writeFileSync(
       testPath,
       checkTestSource({
@@ -200,6 +246,16 @@ export async function runCheck(o: CheckOptions): Promise<number> {
         ...(o.budgetMs === undefined ? {} : { budgetMs: o.budgetMs }),
         ...(o.exhaustive ? { exhaustive: true } : {}),
         scenarioImport: `../${basename(scenarioPath)}`,
+        ...(callees.length === 0
+          ? {}
+          : {
+              callees: callees.map((c) => ({
+                binding: c.binding,
+                name: c.name,
+                importPath: toPosix(relative(workDir, c.entry)),
+              })),
+            }),
+        ...(sqlImports.length === 0 ? {} : { sqlImports }),
       }),
     );
     const specModules = findSpecModules(dir);
@@ -209,7 +265,18 @@ export async function runCheck(o: CheckOptions): Promise<number> {
     }
     const reportPath = join(workDir, `vitest-report.${stamp}.json`);
     rmSync(reportPath, { force: true }); // never read a report left by an earlier --keep run
-    writeFileSync(configPath, vitestConfigSource(wrangler, testPath, reportPath));
+    if (callees.length > 0 && loaded) {
+      // The caller's module as the scenario names it, whatever the wrangler config's format.
+      const callerEntry = resolve(dir, loaded.worker.entry);
+      writeFileSync(mainPath, mainModuleSource(workDir, callerEntry, callees));
+      writeFileSync(
+        configPath,
+        vitestConfigSource(wrangler, testPath, reportPath, {
+          main: mainPath,
+          miniflare: miniflareOptionsSource(callees),
+        }),
+      );
+    } else writeFileSync(configPath, vitestConfigSource(wrangler, testPath, reportPath));
     const { code, output } = await runVitest(vitestBin(dir), configPath, dir);
     const transport = code === 0 ? readTransport(reportPath) : null;
     if (!transport) {
@@ -261,10 +328,24 @@ export async function runCheck(o: CheckOptions): Promise<number> {
           );
         }
       }
+      const calleePaths: Record<string, { name: string; path: string }> = {};
+      for (const step of transport.setup) {
+        if (step.kind !== "callee") continue;
+        const binding = String(step["binding"]);
+        const calleeName = transport.callees?.[binding];
+        if (calleeName === undefined) continue;
+        calleePaths[binding] = {
+          name: calleeName,
+          path: toPosix(relative(outDir, resolve(dir, String(step["entry"])))),
+        };
+      }
       const source = cloudflareRegressionTest(verdict as Violated, {
         scenarioPath: toPosix(relative(outDir, scenarioPath)),
         workerPath: toPosix(relative(outDir, resolve(dir, transport.worker.entry))),
         schemaPaths,
+        ...(Object.keys(calleePaths).length === 0
+          ? {}
+          : { callees: calleePaths, calleeBindings: isolateBindings(callees) }),
         ...(o.budgetMs === undefined ? {} : { budgetMs: o.budgetMs }),
         ...(transport.setup.some((s) => s.kind === "durable_object")
           ? { durableObjects: true }

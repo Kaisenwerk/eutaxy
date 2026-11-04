@@ -37,7 +37,12 @@ What it does:
    Node side, through your TypeScript compiler.
 2. Writes `.eutaxy/` beside the scenario: a test that performs the check
    inside workerd and a Vitest config with the Cloudflare plugin pointed at
-   the wrangler config.
+   the wrangler config. For a scenario with `callee()` steps it also reads
+   each callee's wrangler config (JSON or JSONC), writes a main module that
+   re-exports your Worker's exports and the callees' Durable Object and
+   Workflow classes under qualified aliases, and adds the callees'
+   resources to the isolate under `<name>/<binding>` through the plugin's
+   miniflare options; the test imports the callees' modules.
 3. Runs your Vitest there and reads the verdict back through Vitest's JSON
    reporter; nothing depends on console output.
 4. With `--prover`, runs the named engines on the observed modules and

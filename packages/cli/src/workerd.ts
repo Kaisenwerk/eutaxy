@@ -6,6 +6,7 @@
  */
 
 import {
+  type CalleeModule,
   check,
   createCloudflarePlatform,
   type DurableObjectTestHelpers,
@@ -28,6 +29,8 @@ export interface CheckTransport {
   /** The scenario's drive, for what the regression test must pass the platform (a named entrypoint). */
   readonly drive?: { readonly kind: string; readonly [key: string]: unknown };
   /** The core modules observed (as the scenario's specs name them) and the functions on each. */
+  /** The callees the platform ran, by binding: each one's Worker name, for the regression test. */
+  readonly callees?: Readonly<Record<string, string>>;
   readonly observed?: readonly { readonly module: string; readonly functions: readonly string[] }[];
 }
 
@@ -142,6 +145,10 @@ export interface WorkerdCheckInput {
   readonly modules: ModuleGlob;
   /** The generated `specs.ts` entries, by module key. */
   readonly specEntries: Readonly<Record<string, SpecEntry>>;
+  /** The callees the scenario names, by binding: each one's Worker name and module exports, imported by the generated test. */
+  readonly callees?: Readonly<Record<string, CalleeModule>>;
+  /** SQL files outside the scenario's directory, by the key `schemasFor` looks up. */
+  readonly extraSql?: Readonly<Record<string, string>>;
   readonly seed: string;
   readonly maxRuns?: number;
   readonly budgetMs?: number;
@@ -151,7 +158,7 @@ export interface WorkerdCheckInput {
 /** Run the scenario's check, with its specs observed, and return what the CLI reads back. */
 export async function checkInWorkerd(input: WorkerdCheckInput): Promise<CheckTransport> {
   const { scenario } = input;
-  const schemas = schemasFor(scenario, input.sqlFiles);
+  const schemas = schemasFor(scenario, { ...input.sqlFiles, ...input.extraSql });
   const load = input.modules[globKey(scenario.worker.entry)];
   if (!load)
     throw new Error(`worker entry ${scenario.worker.entry} not found next to the scenario`);
@@ -162,13 +169,25 @@ export async function checkInWorkerd(input: WorkerdCheckInput): Promise<CheckTra
     schemas,
     durableObjects: input.durableObjects,
     exports: worker,
+    ...(input.callees === undefined ? {} : { callees: input.callees }),
   });
   const { selected, specErrors } = await selectSpecModules(
     scenario,
     input.modules,
     input.specEntries,
   );
-  const transportBase = { worker: scenario.worker, setup: scenario.setup, drive: scenario.drive };
+  const transportBase = {
+    worker: scenario.worker,
+    setup: scenario.setup,
+    drive: scenario.drive,
+    ...(input.callees === undefined
+      ? {}
+      : {
+          callees: Object.fromEntries(
+            Object.entries(input.callees).map(([binding, c]) => [binding, c.name]),
+          ),
+        }),
+  };
   if (specErrors.length > 0) return { report: null, specErrors, ...transportBase };
   const observers = selected.map((m) => observeCore(m.namespace, m.names));
   let verdict: Awaited<ReturnType<typeof check>>;

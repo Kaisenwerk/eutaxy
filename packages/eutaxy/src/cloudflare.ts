@@ -21,6 +21,7 @@ export {
   type CronOptions,
   type CronTickSpec,
   callee,
+  calleeEnv,
   check,
   createCloudflarePlatform,
   cron,

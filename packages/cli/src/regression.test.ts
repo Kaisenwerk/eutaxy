@@ -81,6 +81,17 @@ test("callees are imported as modules and passed with their names; qualified bin
   expect(text).toContain(
     'schemas: { DB: schema_DB, "inventory/DB": schema_inventory_DB }, callees: { INVENTORY: { name: "inventory", exports: callee_INVENTORY } }',
   );
+  expect(text).not.toContain("Needs the callees' bindings");
+  const noted = cloudflareRegressionTest(verdict, {
+    scenarioPath: "./scenario.sim.ts",
+    workerPath: "./worker.ts",
+    schemaPaths: {},
+    callees: { INVENTORY: { name: "inventory", path: "./inventory/worker.ts" } },
+    calleeBindings: ["inventory/DB", "inventory/LEASES"],
+  });
+  expect(noted.split("\n")[3]).toBe(
+    "// Needs the callees' bindings in this test's isolate under their qualified names: inventory/DB, inventory/LEASES.",
+  );
 });
 
 test("two binding names that map to one identifier get distinct import names", () => {

@@ -541,6 +541,21 @@ isolate, as Cloudflare routes a service-binding call on the same thread
   that holds the qualified entries, as it gives the caller's today; the
   caller's wrangler config may declare them under their qualified names
   (`"binding": "orders/DB"`), which wrangler, the plugin and workerd accept.
+  The command learns the callees by importing the scenario module in Node
+  (only when its source mentions `callee(`), reads each callee's wrangler
+  config as JSON or JSONC (a TOML config is refused), and names in its
+  output what it did not carry into the isolate (a Durable Object class of
+  a third Worker, bindings Eutaxy does not model). Service bindings, the
+  caller's to its callees and the callees' own, are answered by a function
+  of the generated config, so the value exists as a Fetcher and is never
+  called (the Worker the caller's config names is not in the isolate, and a
+  worker named through miniflare options must be one the plugin knows). workerd constructs a callee's
+  Durable Object classes with the main Worker's env, so the generated main
+  module exports each as a subclass handing its parent the callee's view of
+  that env (`calleeEnv`), under which `this.env.DB` is the callee's. A
+  regression test written for such a scenario says at its top which
+  qualified bindings its isolate needs, since it runs under the user's own
+  config.
 - _Not modelled._ `connect()`, promise pipelining, RPC stubs passed by
   reference, streams across the call, and a callee reached by anything but
   a service binding (a queue the callee consumes is the callee's own drive,

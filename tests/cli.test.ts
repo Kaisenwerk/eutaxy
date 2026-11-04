@@ -63,6 +63,38 @@ describe("eutaxy check", () => {
     expect(existsSync(join(root, "corpus/planted-bugs/queue-duplicate-write/.eutaxy"))).toBe(false);
   }, 240_000);
 
+  test("a scenario with a callee: the command adds the callee's isolate, runs both Workers and writes a regression test naming the callee", () => {
+    const out = mkdtempSync(join(tmpdir(), "eutaxy-cli-callee-"));
+    try {
+      const outFile = join(out, "callee.regression.test.ts");
+      const r = eutaxy([
+        "check",
+        "corpus/planted-bugs/callee-reserve-twice/scenario.sim.ts",
+        "--json",
+        "--seed",
+        "cli",
+        "--out",
+        outFile,
+      ]);
+      expect(r.status, r.stderr).toBe(1);
+      const report = JSON.parse(r.stdout) as {
+        verdict: { kind: string; violation: { invariant: string }; assumptions: string[] };
+      };
+      expect(report.verdict.kind).toBe("VIOLATED");
+      expect(report.verdict.violation.invariant).toBe("one-reservation-per-order");
+      const src = readFileSync(outFile, "utf8");
+      expect(src).toContain('import * as callee_INVENTORY from "../../');
+      expect(src).toContain(
+        'schemas: { DB: schema_DB, "inventory/DB": schema_inventory_DB }, callees: { INVENTORY: { name: "inventory", exports: callee_INVENTORY } }',
+      );
+      expect(existsSync(join(root, "corpus/planted-bugs/callee-reserve-twice/.eutaxy"))).toBe(
+        false,
+      );
+    } finally {
+      rmSync(out, { recursive: true, force: true });
+    }
+  }, 180_000);
+
   test("reports a violation as JSON, writes the regression test, exits 1", () => {
     const out = mkdtempSync(join(tmpdir(), "eutaxy-cli-"));
     try {
