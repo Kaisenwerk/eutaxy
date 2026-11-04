@@ -88,7 +88,11 @@ test("callees are imported as modules and passed with their names; qualified bin
     schemaPaths: {},
     callees: { INVENTORY: { name: "inventory", path: "./inventory/worker.ts" } },
     calleeBindings: ["inventory/DB", "inventory/LEASES"],
+    aliases: { "inventory/ORDERS": "ORDERS_DO" },
   });
+  expect(noted).toContain(
+    'callees: { INVENTORY: { name: "inventory", exports: callee_INVENTORY } }, aliases: {"inventory/ORDERS":"ORDERS_DO"} })',
+  );
   expect(noted.split("\n")[3]).toBe(
     "// Needs the callees' bindings in this test's isolate under their qualified names: inventory/DB, inventory/LEASES.",
   );

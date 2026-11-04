@@ -192,9 +192,16 @@ config, writes a main module beside its test that re-exports the caller's
 exports and the callees' classes under qualified aliases, and adds the
 callees' resources to the isolate through the plugin's miniflare options,
 so the corpus entry runs through the command as it runs from its own
-test. The third slice is shared resources, nested callees, a callee's own
-Workflows (their classes are the callee module's, which the Workflow model
-does not yet look in) and the gate entry.
+test. The third slice, done, is
+shared resources (a binding both configs name is one resource under the
+caller's name, the callee's an alias: the platform's `aliases`, derived by
+the command from the two configs, with a caller's binding to a callee's
+class redirected to the generated alias class), nested callees, a callee's
+own Workflows (its class, its env) and the gate entry
+`corpus/gates/v0-14-the-system`, checked through the command: a storefront
+naming the inventory Worker by its real name and binding its stock class,
+both Workers' real code, the stock object shared, the callee's Workflow,
+two orders in flight, `BOUNDED`.
 
 Gate: a scenario that drives one Worker, which calls another through a
 service binding, runs both Workers' real code with no `UNSUPPORTED`

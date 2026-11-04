@@ -8,6 +8,8 @@ here is wrong on purpose. Nothing here is published.
 
 Each entry is a directory with `worker.ts`, `wrangler.jsonc`, `schema.sql`
 (when D1 is used), one or more `*.sim.ts` scenarios, `scenario.test.ts`
-(runs inside workerd and asserts the verdicts) and `README.md` (what the
-Worker exercises and which gate it is). `harness.test.ts` checks every
-entry is complete.
+(runs inside workerd and asserts the verdicts) or `scenario.node.test.ts`
+(runs `eutaxy check` from Node, for a config only the command's isolate
+can load, such as one naming a callee by its real name), and `README.md`
+(what the Worker exercises and which gate it is). `harness.test.ts` checks
+every entry is complete.

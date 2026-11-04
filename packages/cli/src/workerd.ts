@@ -31,6 +31,8 @@ export interface CheckTransport {
   /** The core modules observed (as the scenario's specs name them) and the functions on each. */
   /** The callees the platform ran, by binding: each one's Worker name, for the regression test. */
   readonly callees?: Readonly<Record<string, string>>;
+  /** The aliases the platform ran with, for the regression test. */
+  readonly aliases?: Readonly<Record<string, string>>;
   readonly observed?: readonly { readonly module: string; readonly functions: readonly string[] }[];
 }
 
@@ -149,6 +151,8 @@ export interface WorkerdCheckInput {
   readonly callees?: Readonly<Record<string, CalleeModule>>;
   /** SQL files outside the scenario's directory, by the key `schemasFor` looks up. */
   readonly extraSql?: Readonly<Record<string, string>>;
+  /** Qualified binding names that are aliases of the caller's bindings (shared resources). */
+  readonly aliases?: Readonly<Record<string, string>>;
   readonly seed: string;
   readonly maxRuns?: number;
   readonly budgetMs?: number;
@@ -170,6 +174,7 @@ export async function checkInWorkerd(input: WorkerdCheckInput): Promise<CheckTra
     durableObjects: input.durableObjects,
     exports: worker,
     ...(input.callees === undefined ? {} : { callees: input.callees }),
+    ...(input.aliases === undefined ? {} : { aliases: input.aliases }),
   });
   const { selected, specErrors } = await selectSpecModules(
     scenario,
@@ -187,6 +192,7 @@ export async function checkInWorkerd(input: WorkerdCheckInput): Promise<CheckTra
             Object.entries(input.callees).map(([binding, c]) => [binding, c.name]),
           ),
         }),
+    ...(input.aliases === undefined ? {} : { aliases: input.aliases }),
   };
   if (specErrors.length > 0) return { report: null, specErrors, ...transportBase };
   const observers = selected.map((m) => observeCore(m.namespace, m.names));

@@ -7,7 +7,16 @@ import { defineConfig } from "vitest/config";
 const corpora = ["corpus/planted-bugs", "corpus/differential", "corpus/gates"];
 const workerdProjects = corpora.flatMap((root) =>
   readdirSync(root, { withFileTypes: true })
-    .filter((d) => d.isDirectory() && existsSync(join(root, d.name, "wrangler.jsonc")))
+    // An entry checked only through the command (scenario.node.test.ts, in the node project) has a
+    // config the plugin alone cannot load, so it gets no workerd project.
+    .filter(
+      (d) =>
+        d.isDirectory() &&
+        existsSync(join(root, d.name, "wrangler.jsonc")) &&
+        (existsSync(join(root, d.name, "scenario.test.ts")) ||
+          existsSync(join(root, d.name, "regression.test.ts")) ||
+          existsSync(join(root, d.name, "differential.test.ts"))),
+    )
     .map((d) => ({
       plugins: [cloudflareTest({ wrangler: { configPath: `./${root}/${d.name}/wrangler.jsonc` } })],
       test: {

@@ -21,8 +21,15 @@ describe("gate corpus", () => {
       const scenarios = readdirSync(dir).filter((f) => f.endsWith(".sim.ts"));
 
       test("has every required file", () => {
-        for (const f of ["worker.ts", "wrangler.jsonc", "scenario.test.ts", "README.md"])
+        for (const f of ["worker.ts", "wrangler.jsonc", "README.md"])
           expect(existsSync(join(dir, f)), f).toBe(true);
+        // Checked inside workerd by its own test, or through the command from Node (a config the plugin
+        // alone cannot load, such as one naming a callee by its real name).
+        expect(
+          existsSync(join(dir, "scenario.test.ts")) ||
+            existsSync(join(dir, "scenario.node.test.ts")),
+          "scenario.test.ts or scenario.node.test.ts",
+        ).toBe(true);
         expect(scenarios.length).toBeGreaterThan(0);
       });
 

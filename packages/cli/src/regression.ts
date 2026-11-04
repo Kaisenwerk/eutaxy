@@ -35,6 +35,8 @@ export interface CloudflareRegressionOptions {
    * replay needs them in its own, so the test says so at its top.
    */
   readonly calleeBindings?: readonly string[];
+  /** Qualified binding names that are aliases of the caller's bindings, passed to the platform. */
+  readonly aliases?: Readonly<Record<string, string>>;
   readonly expect?: "holds" | "violates";
   readonly engineModule?: string;
   /** Core modules to observe during the replay (import path, functions), for `refines`. */
@@ -115,12 +117,16 @@ export function cloudflareRegressionTest(
           )
           .join(", ")} }`;
   const retries = options.maxRetries === undefined ? "" : `, maxRetries: ${options.maxRetries}`;
+  const aliases =
+    options.aliases === undefined || Object.keys(options.aliases).length === 0
+      ? ""
+      : `, aliases: ${JSON.stringify(options.aliases)}`;
   const objects = options.durableObjects ? ", durableObjects: cloudflareTest" : "";
   const handler = withExports ? "handler: worker.default" : "handler";
   const exports = withExports ? ", exports: worker" : "";
   return emitRegressionTest(verdict, {
     imports,
-    platform: `createCloudflarePlatform({ env, ${handler}, schemas: ${schemas}${retries}${objects}${exports}${calleeOption} })`,
+    platform: `createCloudflarePlatform({ env, ${handler}, schemas: ${schemas}${retries}${objects}${exports}${calleeOption}${aliases} })`,
     scenario:
       options.budgetMs === undefined
         ? "scenario"

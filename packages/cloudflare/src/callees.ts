@@ -53,29 +53,47 @@ export class CalleeState {
 
 /**
  * The callee's `env`: the scenario's env seen under the callee's own names,
- * each mapped onto `<name>/<key>`. The entries are the proxied ones, so the
- * callee's effects are recorded under their qualified targets.
+ * each mapped onto `<name>/<key>`. Over the platform's proxied env the
+ * entries are the proxies, so the callee's effects are recorded under their
+ * qualified targets, and an alias (`<name>/STOCK` for the caller's `STOCK`)
+ * is already resolved; over workerd's raw env (a callee's Durable Object,
+ * which the runtime constructs with the main Worker's env) the aliases are
+ * given here, so the shared binding is there under the callee's name too.
  */
-export function calleeEnv(name: string, env: object): object {
+export function calleeEnv(
+  name: string,
+  env: object,
+  aliases: Readonly<Record<string, string>> = {},
+): object {
   const prefix = `${name}/`;
   const source = env as Record<string, unknown>;
-  const qualified = (prop: string | symbol): string | undefined =>
-    typeof prop === "string" ? `${prefix}${prop}` : undefined;
+  /** The key of `env` a property of the view reads: the qualified name, or the binding it is an alias of. */
+  const keyOf = (prop: string | symbol): string | undefined => {
+    if (typeof prop !== "string") return undefined;
+    const qualified = `${prefix}${prop}`;
+    return qualified in source ? qualified : (aliases[qualified] ?? qualified);
+  };
+  const aliasKeys = Object.keys(aliases).filter(
+    (a) => a.startsWith(prefix) && (aliases[a] ?? "") in source,
+  );
   return new Proxy(Object.create(null) as Record<string, unknown>, {
     get(_t, prop) {
-      const key = qualified(prop);
+      const key = keyOf(prop);
       return key === undefined ? undefined : source[key];
     },
     has(_t, prop) {
-      const key = qualified(prop);
+      const key = keyOf(prop);
       return key !== undefined && key in source;
     },
-    ownKeys: () =>
-      Reflect.ownKeys(source)
-        .filter((k): k is string => typeof k === "string" && k.startsWith(prefix))
-        .map((k) => k.slice(prefix.length)),
+    ownKeys: () => [
+      ...new Set(
+        [...Reflect.ownKeys(source).filter((k): k is string => typeof k === "string"), ...aliasKeys]
+          .filter((k) => k.startsWith(prefix))
+          .map((k) => k.slice(prefix.length)),
+      ),
+    ],
     getOwnPropertyDescriptor(_t, prop) {
-      const key = qualified(prop);
+      const key = keyOf(prop);
       if (key === undefined || !(key in source)) return undefined;
       return { value: source[key], enumerable: true, configurable: true, writable: false };
     },

@@ -85,6 +85,47 @@ class Inventory extends WorkerEntrypoint<CalleeEnv> {
   }
 }
 
+/** The runtime's Workflow base class, as far as construction goes: found by name. */
+class WorkflowEntrypoint<Env = unknown> {
+  readonly ctx: unknown;
+  readonly env: Env;
+  constructor(ctx: unknown, env: Env) {
+    this.ctx = ctx;
+    this.env = env;
+  }
+}
+
+/** A Workflow of the callee's: its run writes to the callee's own LOG. */
+class Fulfilment extends WorkflowEntrypoint<CalleeEnv> {
+  async run(
+    event: { payload: { id: string } },
+    step: { do(n: string, f: () => unknown): unknown },
+  ) {
+    await step.do("record", () => {
+      this.env.LOG.calls.push(`fulfilled ${event.payload.id}`);
+      return null;
+    });
+    return "done";
+  }
+}
+
+/** Starts a Workflow of the callee's. */
+class Shipping extends WorkerEntrypoint<
+  CalleeEnv & { FLOW: { create(o: { id: string; params: unknown }): Promise<unknown> } }
+> {
+  async ship(id: string): Promise<string> {
+    await this.env.FLOW.create({ id, params: { id } });
+    return id;
+  }
+}
+
+/** A nested callee: the partner the inventory Worker calls, with a scripted service of its own. */
+class Partner extends WorkerEntrypoint<{ RATES: { rate(): Promise<number> } }> {
+  async quote(orderId: string): Promise<number> {
+    return (await this.env.RATES.rate()) * orderId.length;
+  }
+}
+
 class Other extends WorkerEntrypoint {
   ping(): string {
     return "pong";
@@ -94,7 +135,8 @@ class Other extends WorkerEntrypoint {
   }
 }
 
-const inventoryModule = { default: Inventory, Other };
+const inventoryModule = { default: Inventory, Other, Fulfilment, Shipping };
+const partnerModule = { default: Partner };
 
 const bounds = {
   maxFaultsPerRun: 1,
@@ -135,6 +177,8 @@ async function run(
   callees: Record<string, { name: string; exports: Record<string, unknown> }> | null = {
     INVENTORY: { name: "inventory", exports: inventoryModule },
   },
+  extraEnv: Record<string, unknown> = {},
+  extraOptions: { aliases?: Record<string, string> } = {},
 ) {
   const real = new FakeFetcher();
   const calleeLog = log();
@@ -150,10 +194,16 @@ async function run(
     },
   };
   const platform = createCloudflarePlatform({
-    env: { INVENTORY: real, "inventory/PARTNER": new FakeFetcher(), "inventory/LOG": calleeLog },
+    env: {
+      INVENTORY: real,
+      "inventory/PARTNER": new FakeFetcher(),
+      "inventory/LOG": calleeLog,
+      ...extraEnv,
+    },
     handler: queueHandler,
     schemas: {},
     ...(callees === null ? {} : { callees }),
+    ...extraOptions,
   });
   const r = new Run({ chooser: replayChooser({ seed: 1, faults }), bounds });
   const logOut = await runOnce(s, platform, r);
@@ -425,6 +475,114 @@ describe("fetch() through the binding", () => {
   });
 });
 
+describe("a callee's own bindings", () => {
+  /** A Workflow binding as env shows it; never called, the model runs the instances. */
+  const fakeWorkflow = {
+    create: () => {
+      throw new Error("the real engine was called");
+    },
+    createBatch: () => {
+      throw new Error("the real engine was called");
+    },
+    get: () => {
+      throw new Error("the real engine was called");
+    },
+  };
+
+  test("a nested callee runs inside the callee's call, its effects under its own invocation", async () => {
+    const nested = callee("inventory/PARTNER", {
+      entry: "./partner/worker.ts",
+      config: "./partner/wrangler.jsonc",
+    });
+    const rates = service("partner/RATES", { methods: { rate: { returns: 3 } } });
+    const {
+      log,
+      seen,
+      run: r,
+    } = await run(
+      spec([inventory, nested, rates]),
+      (stub) => stub["reserve"]?.("o-1", 1) ?? Promise.resolve(),
+      [],
+      {
+        INVENTORY: { name: "inventory", exports: inventoryModule },
+        "inventory/PARTNER": { name: "partner", exports: partnerModule },
+      },
+      { "partner/RATES": new FakeFetcher() },
+    );
+    expect((seen[0] as { quote: number }).quote).toBe(9);
+    expect(lines(log).slice(0, 6)).toEqual([
+      "msg-1#1 call Service:INVENTORY reserve",
+      "msg-1#1/INVENTORY.reserve call Service:inventory/PARTNER quote",
+      "msg-1#1/INVENTORY.reserve/inventory/PARTNER.quote call Service:partner/RATES rate",
+      "msg-1#1/INVENTORY.reserve/inventory/PARTNER.quote result Service:partner/RATES rate",
+      "msg-1#1/INVENTORY.reserve result Service:inventory/PARTNER quote",
+      "msg-1#1 result Service:INVENTORY reserve",
+    ]);
+    expect(r.unsupportedReasons).toEqual([]);
+  });
+
+  test("an alias is the binding it names: the callee's calls carry the caller's name; a setup on the alias is refused", async () => {
+    const shared = service("PARTNER", { methods: { quote: { returns: 5 } } });
+    const {
+      log,
+      seen,
+      run: r,
+    } = await run(
+      spec([inventory, shared]),
+      (stub) => stub["reserve"]?.("o-1", 1) ?? Promise.resolve(),
+      [],
+      undefined,
+      { PARTNER: new FakeFetcher() },
+      { aliases: { "inventory/PARTNER": "PARTNER" } },
+    );
+    expect((seen[0] as { quote: number; keys: string[] }).quote).toBe(5);
+    expect((seen[0] as { keys: string[] }).keys).toEqual(["LOG", "PARTNER"]);
+    expect(lines(log)[1]).toBe("msg-1#1/INVENTORY.reserve call Service:PARTNER quote");
+    expect(r.unsupportedReasons).toEqual([]);
+    await expect(
+      run(
+        spec([inventory, partner]),
+        (stub) => stub["reserve"]?.("o-1", 1) ?? Promise.resolve(),
+        [],
+        undefined,
+        { PARTNER: new FakeFetcher() },
+        { aliases: { "inventory/PARTNER": "PARTNER" } },
+      ),
+    ).rejects.toThrow("is an alias of PARTNER");
+  });
+
+  test("a callee's Workflow runs the callee's class with the callee's env", async () => {
+    const shipping = callee("INVENTORY", {
+      entry: "./inventory/worker.ts",
+      config: "./inventory/wrangler.jsonc",
+      entrypoint: "Shipping",
+    });
+    const flow = { kind: "workflow", binding: "inventory/FLOW", className: "Fulfilment" } as const;
+    const {
+      log,
+      seen,
+      run: r,
+    } = await run(
+      spec([shipping, flow]),
+      async (stub, calleeLog) => [await stub["ship"]?.("w-1"), [...calleeLog.calls]],
+      [],
+      undefined,
+      { "inventory/FLOW": fakeWorkflow },
+    );
+    expect(seen).toEqual([["w-1", []]]);
+    expect(r.unsupportedReasons).toEqual([]);
+    const l = lines(log);
+    expect(l).toContain("msg-1#1/INVENTORY.ship result Workflow:inventory/FLOW create");
+    expect(l.some((x) => x.includes("result Workflow:inventory/FLOW step_result"))).toBe(true);
+    const snapshot = log.entries.find(
+      (e) => e.kind === "snapshot" && e.target === "Workflow:inventory/FLOW",
+    );
+    expect(snapshot?.payload).toMatchObject({
+      tables: { instances: [{ id: "w-1", status: "complete", output: "done" }] },
+    });
+  });
+});
+
 describe("the pieces", () => {
   test("the callee's env is a view under its own names", () => {
     const env = { DB: "caller", "inventory/DB": "callee", "inventory/KV": "kv", other: 1 };
@@ -434,6 +592,18 @@ describe("the pieces", () => {
     expect("other" in view).toBe(false);
     expect(Object.keys(view).sort()).toEqual(["DB", "KV"]);
     expect({ ...view }).toEqual({ DB: "callee", KV: "kv" });
+    // Over a raw env (a callee's Durable Object in workerd) an alias is resolved by the view itself.
+    const raw = calleeEnv(
+      "inventory",
+      { STOCK: "ns", "inventory/DB": "callee" },
+      {
+        "inventory/STOCK": "STOCK",
+      },
+    ) as Record<string, unknown>;
+    expect(raw["STOCK"]).toBe("ns");
+    expect("STOCK" in raw).toBe(true);
+    expect(Object.keys(raw).sort()).toEqual(["DB", "STOCK"]);
+    expect(raw["OTHER"]).toBeUndefined();
   });
 
   test("an error crosses as a new one: name, message, data properties; nothing else", () => {

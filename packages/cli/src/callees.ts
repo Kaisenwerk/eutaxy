@@ -40,6 +40,8 @@ export interface CalleeConfig {
     readonly binding: string;
     readonly className: string;
     readonly sqlite: boolean;
+    /** The Worker whose script holds the class, when it is another's. */
+    readonly scriptName?: string;
   }[];
   readonly workflows: readonly {
     readonly binding: string;
@@ -49,6 +51,8 @@ export interface CalleeConfig {
   readonly services: readonly string[];
   readonly queues: readonly { readonly binding: string; readonly queue: string }[];
   readonly vars: Readonly<Record<string, JsonValue>>;
+  /** The classes the migrations make SQLite-backed, bound by this Worker or not. */
+  readonly sqliteClasses: readonly string[];
   /** Config the command does not carry into the isolate, named so the user knows. */
   readonly notAdded: readonly string[];
 }
@@ -166,7 +170,8 @@ export function isolateBindings(callees: readonly CalleeConfig[]): string[] {
     for (const d of c.d1) names.push(qualified(c.name, d.binding));
     for (const b of c.r2) names.push(qualified(c.name, b.binding));
     for (const k of c.kv) names.push(qualified(c.name, k.binding));
-    for (const o of c.durableObjects) names.push(qualified(c.name, o.binding));
+    for (const o of c.durableObjects)
+      if (o.scriptName === undefined) names.push(qualified(c.name, o.binding));
     for (const w of c.workflows) names.push(qualified(c.name, w.binding));
     for (const s of c.services) names.push(qualified(c.name, s));
     for (const q of c.queues) names.push(qualified(c.name, q.binding));
@@ -301,17 +306,17 @@ export function readCalleeConfig(step: CalleeStep, scenarioDir: string): CalleeC
     }
     for (const c of strings(m["deleted_classes"])) sqlite.delete(c);
   }
-  const durableObjects: { binding: string; className: string; sqlite: boolean }[] = [];
+  const durableObjects: CalleeConfig["durableObjects"][number][] = [];
   const dos = config["durable_objects"] as { bindings?: unknown } | undefined;
   for (const b of list(dos?.bindings)) {
-    if (b["script_name"] !== undefined) {
-      notAdded.push(
-        `durable_objects binding ${str(b["name"])} (script_name ${str(b["script_name"])}: a class of another Worker)`,
-      );
-      continue;
-    }
     const className = str(b["class_name"]);
-    durableObjects.push({ binding: str(b["name"]), className, sqlite: sqlite.has(className) });
+    const scriptName = b["script_name"] === undefined ? undefined : str(b["script_name"]);
+    durableObjects.push({
+      binding: str(b["name"]),
+      className,
+      sqlite: sqlite.has(className),
+      ...(scriptName === undefined ? {} : { scriptName }),
+    });
   }
   const queues = config["queues"] as { producers?: unknown } | undefined;
   for (const key of Object.keys(config)) if (!carried.has(key)) notAdded.push(key);
@@ -347,6 +352,7 @@ export function readCalleeConfig(step: CalleeStep, scenarioDir: string): CalleeC
       queue: str(p["queue"]),
     })),
     vars,
+    sqliteClasses: [...sqlite],
     notAdded,
   };
 }
@@ -384,6 +390,7 @@ export function mainModuleSource(
   workDir: string,
   callerEntry: string,
   callees: readonly CalleeConfig[],
+  isolate: ReturnType<typeof isolateOf> = noIsolate,
 ): string {
   const caller = toPosix(relative(workDir, callerEntry));
   const lines = [
@@ -396,20 +403,28 @@ export function mainModuleSource(
   const emitted = new Set<string>();
   callees.forEach((c, i) => {
     const classes = [
-      ...c.durableObjects.map((d) => d.className),
+      ...c.durableObjects.filter((d) => d.scriptName === undefined).map((d) => d.className),
       ...c.workflows.map((w) => w.className),
+      // Classes of this script the caller binds, which the callee binds nowhere itself.
+      ...(isolate.extraClasses[c.name] ?? []),
     ];
     const unique = [...new Set(classes)].filter((n) => n && !emitted.has(classAlias(c.name, n)));
     if (unique.length === 0) return;
     lines.push(
       `import { ${unique.map((n) => `${n} as callee${i}_${n}`).join(", ")} } from ${JSON.stringify(toPosix(relative(workDir, c.entry)))};`,
     );
+    // The aliases of this callee's bindings: workerd constructs the class with the raw env, where an alias
+    // has no key of its own, so the view resolves them.
+    const own = Object.fromEntries(
+      Object.entries(isolate.aliases).filter(([k]) => k.startsWith(`${c.name}/`)),
+    );
+    const view = `calleeEnv(${JSON.stringify(c.name)}, env${Object.keys(own).length === 0 ? "" : `, ${JSON.stringify(own)}`})`;
     for (const n of unique) {
       emitted.add(classAlias(c.name, n));
       adapters.push(
         `export class ${classAlias(c.name, n)} extends callee${i}_${n} {`,
         `  constructor(ctx: unknown, env: object) {`,
-        `    super(ctx as never, calleeEnv(${JSON.stringify(c.name)}, env) as never);`,
+        `    super(ctx as never, ${view} as never);`,
         `  }`,
         `}`,
       );
@@ -432,7 +447,10 @@ export const neverCalled = "neverCalled";
  * anyway (the scenario names a callee for it or scripts it); its value is a
  * Fetcher all the same, which is what the platform recognises.
  */
-export function miniflareOptionsSource(callees: readonly CalleeConfig[]): string {
+export function miniflareOptionsSource(
+  callees: readonly CalleeConfig[],
+  isolate: ReturnType<typeof isolateOf> = noIsolate,
+): string {
   const d1: Record<string, string> = {};
   const r2: Record<string, string> = {};
   const kv: Record<string, string> = {};
@@ -441,15 +459,25 @@ export function miniflareOptionsSource(callees: readonly CalleeConfig[]): string
   const services: Record<string, string> = {};
   const queues: Record<string, string> = {};
   const vars: Record<string, JsonValue> = {};
+  // An alias is a second name of the caller's binding in env, which the platform gives it: nothing to add.
+  const aliased = (name: string): boolean => name in isolate.aliases;
+  Object.assign(dos, isolate.redirected);
   for (const c of callees) {
-    for (const d of c.d1) d1[qualified(c.name, d.binding)] = d.id;
-    for (const b of c.r2) r2[qualified(c.name, b.binding)] = b.bucket;
-    for (const k of c.kv) kv[qualified(c.name, k.binding)] = k.id;
-    for (const o of c.durableObjects)
+    for (const d of c.d1)
+      if (!aliased(qualified(c.name, d.binding))) d1[qualified(c.name, d.binding)] = d.id;
+    for (const b of c.r2)
+      if (!aliased(qualified(c.name, b.binding))) r2[qualified(c.name, b.binding)] = b.bucket;
+    for (const k of c.kv)
+      if (!aliased(qualified(c.name, k.binding))) kv[qualified(c.name, k.binding)] = k.id;
+    for (const o of c.durableObjects) {
+      // A class of another Worker's script is that Worker's: an alias when it is the caller's (see
+      // `isolateOf`), not added otherwise.
+      if (o.scriptName !== undefined || aliased(qualified(c.name, o.binding))) continue;
       dos[qualified(c.name, o.binding)] = {
         className: classAlias(c.name, o.className),
         ...(o.sqlite ? { useSQLite: true } : {}),
       };
+    }
     for (const w of c.workflows)
       workflows[qualified(c.name, w.binding)] = {
         name: w.name,
@@ -478,6 +506,140 @@ export function miniflareOptionsSource(callees: readonly CalleeConfig[]): string
   const literal = `"serviceBindings":{${bindings.map((b) => `${JSON.stringify(b)}:${neverCalled}`).join(",")}}`;
   return data === "{}" ? `{${literal}}` : `${data.slice(0, -1)},${literal}}`;
 }
+
+/** What the caller's config says that the isolate must reconcile with the callees'. */
+export interface CallerResources {
+  readonly name: string | undefined;
+  readonly d1: readonly { readonly binding: string; readonly id: string }[];
+  readonly r2: readonly { readonly binding: string; readonly bucket: string }[];
+  readonly kv: readonly { readonly binding: string; readonly id: string }[];
+  readonly durableObjects: readonly {
+    readonly binding: string;
+    readonly className: string;
+    readonly scriptName?: string;
+  }[];
+}
+
+/** The caller's resources from its wrangler config, when the config can be read (JSON or JSONC); none otherwise. */
+export function readCallerResources(wranglerPath: string): CallerResources | undefined {
+  try {
+    const config = readWranglerConfig(wranglerPath);
+    const dos = config["durable_objects"] as { bindings?: unknown } | undefined;
+    return {
+      name: str(config["name"]) || undefined,
+      d1: list(config["d1_databases"]).map((d) => ({
+        binding: str(d["binding"]),
+        id: str(d["database_id"], str(d["database_name"], str(d["binding"]))),
+      })),
+      r2: list(config["r2_buckets"]).map((b) => ({
+        binding: str(b["binding"]),
+        bucket: str(b["bucket_name"], str(b["binding"])),
+      })),
+      kv: list(config["kv_namespaces"]).map((k) => ({
+        binding: str(k["binding"]),
+        id: str(k["id"], str(k["binding"])),
+      })),
+      durableObjects: list(dos?.bindings).map((b) => ({
+        binding: str(b["name"]),
+        className: str(b["class_name"]),
+        ...(b["script_name"] === undefined ? {} : { scriptName: str(b["script_name"]) }),
+      })),
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The isolate's shared resources, from the two configs: a callee binding
+ * that names a resource the caller binds too (the same `database_id`,
+ * `bucket_name` or KV `id`; a Durable Object class of the caller's script,
+ * or a caller binding to a class of the callee's script) is an alias of the
+ * caller's binding, set up and snapshotted under the caller's name; a
+ * caller's binding to a callee's class is redirected to the generated alias
+ * class. What a callee binds in a third Worker's script is named as not
+ * added.
+ */
+export function isolateOf(
+  callees: readonly CalleeConfig[],
+  caller: CallerResources | undefined,
+): {
+  /** Qualified name → the caller's binding it is an alias of. */
+  readonly aliases: Readonly<Record<string, string>>;
+  /** The caller's own bindings redirected to a callee's class, as miniflare `durableObjects` entries. */
+  readonly redirected: Readonly<Record<string, { className: string; useSQLite?: boolean }>>;
+  /** Per callee name, classes of its script the caller binds that the callee binds nowhere itself: the main module exports them too. */
+  readonly extraClasses: Readonly<Record<string, readonly string[]>>;
+  readonly notAdded: readonly string[];
+} {
+  const aliases: Record<string, string> = {};
+  const redirected: Record<string, { className: string; useSQLite?: boolean }> = {};
+  const extraClasses: Record<string, string[]> = {};
+  const notAdded: string[] = [];
+  // A caller config that already declares the callee's binding under its qualified name (for a test
+  // of its own) names nothing else: no alias.
+  const alias = (name: string, own: string) => {
+    if (own !== name) aliases[name] = own;
+  };
+  for (const c of callees) {
+    if (caller) {
+      for (const d of c.d1) {
+        const own = caller.d1.find((x) => x.id === d.id);
+        if (own) alias(qualified(c.name, d.binding), own.binding);
+      }
+      for (const b of c.r2) {
+        const own = caller.r2.find((x) => x.bucket === b.bucket);
+        if (own) alias(qualified(c.name, b.binding), own.binding);
+      }
+      for (const k of c.kv) {
+        const own = caller.kv.find((x) => x.id === k.id);
+        if (own) alias(qualified(c.name, k.binding), own.binding);
+      }
+      // The caller binds a class of this callee's script: its binding is the class's alias; the
+      // callee's own binding of that class is an alias of the caller's.
+      for (const o of caller.durableObjects) {
+        if (o.scriptName !== c.name) continue;
+        const theirs = c.durableObjects.find(
+          (x) => x.className === o.className && x.scriptName === undefined,
+        );
+        redirected[o.binding] = {
+          className: classAlias(c.name, o.className),
+          ...(c.sqliteClasses.includes(o.className) ? { useSQLite: true } : {}),
+        };
+        if (theirs) alias(qualified(c.name, theirs.binding), o.binding);
+        else {
+          const extra = extraClasses[c.name] ?? [];
+          extra.push(o.className);
+          extraClasses[c.name] = extra;
+        }
+      }
+    }
+    for (const o of c.durableObjects) {
+      if (o.scriptName === undefined) continue;
+      // A class of the caller's script: the callee's binding is an alias of the caller's binding to it.
+      const own =
+        caller && o.scriptName === caller.name
+          ? caller.durableObjects.find(
+              (x) => x.className === o.className && x.scriptName === undefined,
+            )
+          : undefined;
+      if (own) alias(qualified(c.name, o.binding), own.binding);
+      else
+        notAdded.push(
+          `${c.binding}: durable_objects binding ${o.binding} (script_name ${o.scriptName}: a class of another Worker)`,
+        );
+    }
+  }
+  return { aliases, redirected, extraClasses, notAdded };
+}
+
+/** An isolate with nothing shared. */
+export const noIsolate: ReturnType<typeof isolateOf> = {
+  aliases: {},
+  redirected: {},
+  extraClasses: {},
+  notAdded: [],
+};
 
 /** Where a callee's config path and entry sit, for messages. */
 export function describeCallee(c: CalleeConfig, scenarioDir: string): string {

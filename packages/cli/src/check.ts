@@ -25,12 +25,14 @@ import {
   calleeSteps,
   describeCallee,
   isolateBindings,
+  isolateOf,
   type LoadedScenario,
   loadScenario,
   mainModuleSource,
   mentionsCallee,
   miniflareOptionsSource,
   readCalleeConfig,
+  readCallerResources,
 } from "./callees.ts";
 import { checkTestSource, metaKey, vitestConfigSource } from "./generate.ts";
 import { globKey } from "./keys.ts";
@@ -223,6 +225,12 @@ export async function runCheck(o: CheckOptions): Promise<number> {
           `callee ${describeCallee(c, dir)}: not added to the test's isolate: ${c.notAdded.join(", ")}\n`,
         );
   }
+  // Shared resources, from the caller's config (readable as JSON or JSONC) and the callees'.
+  const isolate = isolateOf(
+    callees,
+    callees.length > 0 ? readCallerResources(wrangler) : undefined,
+  );
+  for (const reason of isolate.notAdded) o.stderr(`not added to the test's isolate: ${reason}\n`);
   mkdirSync(workDir, { recursive: true });
   try {
     const sqlImports: { key: string; importPath: string }[] = [];
@@ -256,6 +264,7 @@ export async function runCheck(o: CheckOptions): Promise<number> {
               })),
             }),
         ...(sqlImports.length === 0 ? {} : { sqlImports }),
+        ...(Object.keys(isolate.aliases).length === 0 ? {} : { aliases: isolate.aliases }),
       }),
     );
     const specModules = findSpecModules(dir);
@@ -268,12 +277,12 @@ export async function runCheck(o: CheckOptions): Promise<number> {
     if (callees.length > 0 && loaded) {
       // The caller's module as the scenario names it, whatever the wrangler config's format.
       const callerEntry = resolve(dir, loaded.worker.entry);
-      writeFileSync(mainPath, mainModuleSource(workDir, callerEntry, callees));
+      writeFileSync(mainPath, mainModuleSource(workDir, callerEntry, callees, isolate));
       writeFileSync(
         configPath,
         vitestConfigSource(wrangler, testPath, reportPath, {
           main: mainPath,
-          miniflare: miniflareOptionsSource(callees),
+          miniflare: miniflareOptionsSource(callees, isolate),
         }),
       );
     } else writeFileSync(configPath, vitestConfigSource(wrangler, testPath, reportPath));
@@ -345,7 +354,11 @@ export async function runCheck(o: CheckOptions): Promise<number> {
         schemaPaths,
         ...(Object.keys(calleePaths).length === 0
           ? {}
-          : { callees: calleePaths, calleeBindings: isolateBindings(callees) }),
+          : {
+              callees: calleePaths,
+              calleeBindings: isolateBindings(callees).filter((b) => !(b in isolate.aliases)),
+              ...(transport.aliases === undefined ? {} : { aliases: transport.aliases }),
+            }),
         ...(o.budgetMs === undefined ? {} : { budgetMs: o.budgetMs }),
         ...(transport.setup.some((s) => s.kind === "durable_object")
           ? { durableObjects: true }

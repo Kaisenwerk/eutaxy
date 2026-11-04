@@ -520,11 +520,19 @@ isolate, as Cloudflare routes a service-binding call on the same thread
   queries and in snapshots; the caller's keep their bare names. The
   callee's `env` is a view that maps its own names onto those entries, so
   its code runs unchanged. Two bindings that name one resource (the same
-  `database_id`, the same Durable Object class and script) are one
-  resource with one snapshot, under the caller's name, and the callee's
-  name is an alias of it. A service binding of the callee's own is
-  scripted (`service("orders/PARTNER", …)`) or a further callee; the
-  depth is not bounded by the design.
+  `database_id`, bucket or KV namespace; a Durable Object class the caller
+  binds from the callee's script with `script_name`, or the callee from
+  the caller's) are one resource with one snapshot, under the caller's
+  name, and the callee's name is an alias of it: the platform's `aliases`
+  option (`{ "orders/STOCK": "STOCK" }`), which `eutaxy check` derives from
+  the two configs, makes the alias read as the caller's binding in `env`,
+  so the callee's effects on it carry the caller's name; a setup step on an
+  alias is refused (one resource is set up once). A callee's Workflow runs
+  the callee's class with the callee's env, found among the callee's
+  exports. A service binding of the callee's own is scripted
+  (`service("orders/PARTNER", …)`) or a further callee
+  (`callee("orders/PARTNER", …)`), whose invocation nests
+  (`…/ORDERS.reserve/orders/PARTNER.quote`); the depth is not bounded.
 - _Running it under the Vitest plugin._ The plugin runs one `main` module in
   the test's isolate, where the engine's patches apply (its auxiliary
   Workers run elsewhere, unpatched, so they are not what this is built

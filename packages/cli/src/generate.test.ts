@@ -57,6 +57,13 @@ describe("a scenario with callees", () => {
     expect(src).toContain(
       'specEntries, callees: { "INVENTORY": { name: "inventory", exports: callee_0 } }, extraSql: { "../../inventory/schema.sql": sql_0 }, seed: "s" });',
     );
+    const aliased = checkTestSource({
+      seed: "s",
+      scenarioImport: "../x.sim.ts",
+      callees: [{ binding: "INVENTORY", name: "inventory", importPath: "../inventory/worker.ts" }],
+      aliases: { "inventory/DB": "DB" },
+    });
+    expect(aliased).toContain('}, aliases: {"inventory/DB":"DB"}, seed: "s" });');
   });
 
   test("the vitest config names the generated main module and the callees' resources", () => {

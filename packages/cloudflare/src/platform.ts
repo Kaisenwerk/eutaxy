@@ -81,6 +81,14 @@ export interface CloudflarePlatformOptions {
    * bindings in `env` (`orders/DB`), and its module's exports.
    */
   readonly callees?: Readonly<Record<string, CalleeModule>>;
+  /**
+   * Bindings that name a resource another binding already names (the same
+   * database, the same Durable Object namespace), by their qualified name
+   * (`inventory/DB`) to the name the resource is set up and snapshotted
+   * under (`DB`): one resource, one snapshot, the alias a second name for it
+   * in `env`. A setup step on an alias is refused.
+   */
+  readonly aliases?: Readonly<Record<string, string>>;
 }
 
 function isBindingLike(value: unknown): boolean {
@@ -99,6 +107,7 @@ const assumptions: readonly string[] = [
   "message.timestamp is the virtual clock's time at delivery",
   "only D1, Durable Object, R2, Workflow and scripted service bindings are proxied; touching any other binding makes the run UNSUPPORTED",
   "service bindings are scripted callees unless the scenario names a callee for them: the Worker behind a scripted binding is never called; each RPC method call or fetch() through it is one effect answered from the scenario's service() setup, where crash_before and error mean the call never reached the callee, ambiguous that it acted and the answer was lost, and crash_after that the caller died after it (developers.cloudflare.com/workers/runtime-apis/bindings/service-bindings/); Cloudflare does not retry such a call",
+  "a binding named as an alias of another (the same database, the same Durable Object namespace, in two Workers' configs) is that binding: its effects and snapshot carry the other's name, and a callee's Workflow runs the callee's class with the callee's env",
   "a service binding with a callee() setup runs that Worker's real code in the caller's simulation, in the same isolate, as Cloudflare runs both Workers on one thread (developers.cloudflare.com/workers/runtime-apis/bindings/service-bindings/): each RPC method call or fetch() through it is one effect hosting the callee's invocation (<caller invocation>/<binding>.<method>), which constructs the entrypoint anew with a fresh ExecutionContext and the callee's env (its bindings under <worker name>/<binding>) and answers with the return value, plain data by copy, or the Response as it is; what the callee throws reaches the caller as a new error with its name, message and serializable own properties, a built-in class as itself (developers.cloudflare.com/workers/runtime-apis/rpc/error-handling/); the callee's waitUntil work finishes before its answer crosses; crash_before means the call never reached the callee, ambiguous that it acted and the answer was lost, crash_after that the caller died after it, and a fault that crashes the callee ends its invocation and throws an Error to the caller; Cloudflare retries nothing",
   "R2 buckets are Miniflare's real ones, emptied and seeded before each run and snapshotted after it; R2 is strongly consistent and the last writer wins (developers.cloudflare.com/r2/reference/consistency/); each put, delete, get, head and list is one effect, a body is read inside its get, and an object's version and upload time are stand-ins so traces repeat; multipart uploads and conditions on the upload time are not modelled",
   "Durable Objects are the real objects workerd runs (storage, transactions, input and output gates are the runtime's own); each stub call is one effect: crash_before or error means it never reached the object, ambiguous means the object committed and the caller lost the answer, crash_after means the caller died after it; in a concurrent run an object's own outbound I/O during a call is a turn, so another event may enter the object meanwhile (its input gate is open then), except while it holds the gate with blockConcurrencyWhile, when its effects run at once; storage operations are not turns (the input gate holds other events during them); the object's own binding calls are not recorded; objects are cleared, seeded and evicted before each run and their storage is snapshotted after it (developers.cloudflare.com/durable-objects/api/storage-api/)",
@@ -114,6 +123,9 @@ const assumptions: readonly string[] = [
 
 export function createCloudflarePlatform(options: CloudflarePlatformOptions): Platform {
   const env = options.env as Record<string, unknown>;
+  const aliases = options.aliases ?? {};
+  /** The name a binding is known by: itself, or the name it is an alias of. */
+  const canonical = (name: string): string => aliases[name] ?? name;
   const maxRetries = options.maxRetries ?? 3;
   let hooksRef: RunHooks | null = null;
 
@@ -144,30 +156,55 @@ export function createCloudflarePlatform(options: CloudflarePlatformOptions): Pl
     d1Binding(options.schemas),
     durable,
     r2Binding(),
-    workflowBinding({ exports: options.exports, env: () => proxiedEnv }),
+    workflowBinding({
+      exports: options.exports,
+      env: () => proxiedEnv,
+      // A qualified binding's callee: the Worker whose name qualifies it.
+      calleeOf: (binding) => {
+        const at = binding.indexOf("/");
+        if (at < 0) return undefined;
+        const name = binding.slice(0, at);
+        return Object.values(options.callees ?? {}).find((c) => c.name === name);
+      },
+    }),
   ];
   // The Cloudflare Vitest plugin adds bindings of its own to env (its loopback and self services, its
   // runner object); a Worker that walks env (the Agents SDK's router does, to name each namespace) must
   // not meet them: they are the test environment's, not the Worker's.
   const own = (prop: string | symbol): boolean =>
     typeof prop !== "string" || !prop.startsWith("__VITEST_POOL_WORKERS_");
+  // An alias is read as the binding it names, so effects and snapshots carry that binding's name.
+  const aliasKeys = Object.keys(aliases).filter((a) => canonical(a) in env);
   const proxiedEnv = new Proxy(env, {
     get(target, prop, receiver) {
       if (!own(prop)) return undefined;
-      const value = Reflect.get(target, prop, receiver) as unknown;
-      if (typeof prop !== "string") return value;
+      if (typeof prop !== "string") return Reflect.get(target, prop, receiver) as unknown;
+      const name = canonical(prop);
+      const value = Reflect.get(target, name, receiver) as unknown;
       for (const binding of bindings) {
         if (!binding.is(value)) continue;
-        const proxied = binding.proxy(prop, value, ctx);
+        const proxied = binding.proxy(name, value, ctx);
         if (proxied !== undefined) return proxied;
       }
-      if (isBindingLike(value)) ctx.hooks.unsupported(`binding ${prop} is not proxied`);
+      if (isBindingLike(value)) ctx.hooks.unsupported(`binding ${name} is not proxied`);
       return value;
     },
-    has: (target, prop) => own(prop) && Reflect.has(target, prop),
-    ownKeys: (target) => Reflect.ownKeys(target).filter(own),
-    getOwnPropertyDescriptor: (target, prop) =>
-      own(prop) ? Reflect.getOwnPropertyDescriptor(target, prop) : undefined,
+    has: (target, prop) =>
+      own(prop) &&
+      (Reflect.has(target, prop) || (typeof prop === "string" && aliasKeys.includes(prop))),
+    // An alias may also be a key of env (the test declared it for the callee's sake): listed once.
+    ownKeys: (target) => [...new Set([...Reflect.ownKeys(target).filter(own), ...aliasKeys])],
+    getOwnPropertyDescriptor: (target, prop) => {
+      if (!own(prop)) return undefined;
+      if (typeof prop === "string" && aliasKeys.includes(prop))
+        return {
+          value: env[canonical(prop)],
+          enumerable: true,
+          configurable: true,
+          writable: false,
+        };
+      return Reflect.getOwnPropertyDescriptor(target, prop);
+    },
   });
   // An entrypoint class exposes RPC methods; the queue and http drives need the handler object.
   const handler: WorkerHandler = typeof options.handler === "function" ? {} : options.handler;
@@ -181,8 +218,14 @@ export function createCloudflarePlatform(options: CloudflarePlatformOptions): Pl
     async reset(spec: ScenarioSpec): Promise<void> {
       await connections.clear();
       for (const binding of bindings) binding.clear();
-      for (const [binding, setup] of ownedSetups(spec.setup, bindings))
+      for (const [binding, setup] of ownedSetups(spec.setup, bindings)) {
+        // One resource is set up once, under the name it is known by.
+        if (setup.binding in aliases)
+          throw new Error(
+            `binding ${setup.binding} is an alias of ${canonical(setup.binding)}: set it up and read it as ${canonical(setup.binding)}`,
+          );
         await binding.reset(setup, env[setup.binding]);
+      }
     },
 
     restrictEvents(spec: ScenarioSpec, keepIds: readonly string[]): ScenarioSpec {

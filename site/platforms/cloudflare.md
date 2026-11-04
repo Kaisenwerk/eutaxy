@@ -101,7 +101,13 @@ JSONC), generates a main module that re-exports the caller's exports and
 the callees' Durable Object and Workflow classes under qualified aliases,
 and adds the callees' D1 databases, R2 buckets, KV namespaces, Durable
 Object namespaces, Workflows, queue producers, service bindings and vars
-to the test's isolate under their qualified names.
+to the test's isolate under their qualified names. A resource both configs
+name (the same database or bucket; a Durable Object class one Worker binds
+from the other's script) is one resource, set up and snapshotted under the
+caller's binding, the callee's an alias of it (the platform's `aliases`
+option, which the command derives). A callee's Workflow runs the callee's
+class with the callee's env; a callee's own service bindings are scripted
+or further callees.
 
 ### Background work
 

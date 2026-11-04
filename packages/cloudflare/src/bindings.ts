@@ -16,7 +16,7 @@ import type {
   ScenarioSpec,
 } from "@eutaxy/core";
 import { alarmSource, deliverAlarm } from "./alarms.ts";
-import { type CalleeModule, CalleeState, proxyCallee } from "./callees.ts";
+import { type CalleeModule, CalleeState, calleeEnv, proxyCallee } from "./callees.ts";
 import { isD1, type ProxyContext, proxyD1, resetD1, snapshotD1 } from "./d1.ts";
 import {
   alarmRunner,
@@ -306,6 +306,8 @@ export interface WorkflowDeps {
   readonly exports: Readonly<Record<string, unknown>> | undefined;
   /** The env the instances run with: the Worker's proxied one. */
   readonly env: () => object;
+  /** The callee a qualified binding (`inventory/FLOW`) belongs to, if the platform was given it: its classes and env are the callee's. */
+  readonly calleeOf?: (binding: string) => CalleeModule | undefined;
 }
 
 /**
@@ -362,11 +364,15 @@ export function workflowBinding(deps: WorkflowDeps): Binding<object, WorkflowSet
       // A binding with no setup step was already reported when the Worker touched it.
       if (!setup) return { status: "errored", followUps: [] };
       const className = setup.className;
-      const cls = deps.exports?.[className];
+      // A callee's Workflow runs the callee's class with the callee's env, as the callee's code does.
+      const callee = deps.calleeOf?.(binding);
+      const cls = (callee?.exports ?? deps.exports)?.[className];
       const instance = registryFor(binding).instances.get(id);
       if (typeof cls !== "function" || !instance) {
         hooks.unsupported(
-          `Workflow ${binding}: class ${className} is not among the Worker module's exports; pass them as createCloudflarePlatform({ ..., exports })`,
+          callee
+            ? `Workflow ${binding}: class ${className} is not among the exports of the callee ${callee.name}`
+            : `Workflow ${binding}: class ${className} is not among the Worker module's exports; pass them as createCloudflarePlatform({ ..., exports })`,
         );
         return { status: "errored", followUps: [] };
       }
@@ -375,7 +381,7 @@ export function workflowBinding(deps: WorkflowDeps): Binding<object, WorkflowSet
         ...(setup.name === undefined ? {} : { name: setup.name }),
         instance,
         cls,
-        env: deps.env(),
+        env: callee ? calleeEnv(callee.name, deps.env()) : deps.env(),
         maxFaultsPerRun: spec.bounds.maxFaultsPerRun,
         maxRedeliveries: spec.bounds.maxRedeliveries,
       });

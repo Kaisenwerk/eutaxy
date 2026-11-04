@@ -8,6 +8,7 @@ import {
   calleeSteps,
   classAlias,
   isolateBindings,
+  isolateOf,
   loadScenario,
   mainModuleSource,
   mentionsCallee,
@@ -67,15 +68,16 @@ describe("a callee's config", () => {
     expect(c.d1).toEqual([{ binding: "DB", id: "inv-id" }]);
     expect(c.r2).toEqual([{ binding: "FILES", bucket: "inv-files" }]);
     expect(c.kv).toEqual([{ binding: "CACHE", id: "kv-1" }]);
-    expect(c.durableObjects).toEqual([{ binding: "LEASES", className: "Lease", sqlite: true }]);
+    expect(c.durableObjects).toEqual([
+      { binding: "LEASES", className: "Lease", sqlite: true },
+      { binding: "REMOTE", className: "Other", sqlite: false, scriptName: "elsewhere" },
+    ]);
     expect(c.workflows).toEqual([{ binding: "FLOW", className: "Fulfilment", name: "fulfilment" }]);
     expect(c.services).toEqual(["PARTNER"]);
     expect(c.queues).toEqual([{ binding: "EVENTS", queue: "inv-events" }]);
     expect(c.vars).toEqual({ REGION: "eu" });
-    expect(c.notAdded).toEqual([
-      "durable_objects binding REMOTE (script_name elsewhere: a class of another Worker)",
-      "analytics_engine_datasets",
-    ]);
+    expect(c.sqliteClasses).toEqual(["Lease"]);
+    expect(c.notAdded).toEqual(["analytics_engine_datasets"]);
     expect(workerName(config)).toBe("inventory");
   });
 
@@ -172,6 +174,150 @@ export class inventory__Fulfilment extends callee0_Fulfilment {
       services: [],
     };
     expect(miniflareOptionsSource([bare])).toBe(`{"serviceBindings":{"INVENTORY":${neverCalled}}}`);
+  });
+});
+
+describe("shared resources between the two configs", () => {
+  const callee = (over: Partial<ReturnType<typeof readCalleeConfig>>) =>
+    ({
+      binding: "INVENTORY",
+      name: "inventory",
+      entry: "/x/inventory/worker.ts",
+      d1: [{ binding: "DB", id: "inv-id" }],
+      r2: [],
+      kv: [],
+      durableObjects: [{ binding: "STOCK", className: "Stock", sqlite: true }],
+      workflows: [],
+      services: [],
+      queues: [],
+      vars: {},
+      sqliteClasses: ["Stock"],
+      notAdded: [],
+      ...over,
+    }) as ReturnType<typeof readCalleeConfig>;
+
+  test("a database both configs name is one, under the caller's binding; the rest is added", () => {
+    const isolate = isolateOf(
+      [
+        callee({
+          d1: [
+            { binding: "DB", id: "shared-id" },
+            { binding: "AUDIT", id: "audit-id" },
+          ],
+        }),
+      ],
+      {
+        name: "storefront",
+        d1: [{ binding: "DB", id: "shared-id" }],
+        r2: [],
+        kv: [],
+        durableObjects: [],
+      },
+    );
+    expect(isolate.aliases).toEqual({ "inventory/DB": "DB" });
+    expect(isolate.redirected).toEqual({});
+    // The caller declares the callee's database under its qualified name already: no alias to itself.
+    expect(
+      isolateOf([callee({})], {
+        name: "storefront",
+        d1: [{ binding: "inventory/DB", id: "inv-id" }],
+        r2: [],
+        kv: [],
+        durableObjects: [],
+      }).aliases,
+    ).toEqual({});
+    const options = new Function(
+      neverCalled,
+      `return ${miniflareOptionsSource(
+        [
+          callee({
+            d1: [
+              { binding: "DB", id: "shared-id" },
+              { binding: "AUDIT", id: "audit-id" },
+            ],
+          }),
+        ],
+        isolate,
+      )};`,
+    )(() => 0) as {
+      d1Databases: unknown;
+    };
+    expect(options.d1Databases).toEqual({ "inventory/AUDIT": "audit-id" });
+  });
+
+  test("a caller binding to a class of the callee's script is redirected to the alias class; the callee's own binding of it is an alias", () => {
+    const isolate = isolateOf([callee({})], {
+      name: "storefront",
+      d1: [],
+      r2: [],
+      kv: [],
+      durableObjects: [{ binding: "STOCK_RO", className: "Stock", scriptName: "inventory" }],
+    });
+    expect(isolate.redirected).toEqual({
+      STOCK_RO: { className: "inventory__Stock", useSQLite: true },
+    });
+    expect(isolate.aliases).toEqual({ "inventory/STOCK": "STOCK_RO" });
+    expect(isolate.extraClasses).toEqual({});
+    // The main module gives the class the aliases, so the object sees the shared binding under its own name.
+    const main = mainModuleSource("/x/.eutaxy", "/x/worker.ts", [callee({})], isolate);
+    expect(main).toContain(
+      'super(ctx as never, calleeEnv("inventory", env, {"inventory/STOCK":"STOCK_RO"}) as never);',
+    );
+    // A class the callee exports and migrates without binding it: still exported, still SQLite.
+    const unbound = isolateOf([callee({ durableObjects: [] })], {
+      name: "storefront",
+      d1: [],
+      r2: [],
+      kv: [],
+      durableObjects: [{ binding: "STOCK_RO", className: "Stock", scriptName: "inventory" }],
+    });
+    expect(unbound.redirected).toEqual({
+      STOCK_RO: { className: "inventory__Stock", useSQLite: true },
+    });
+    expect(unbound.extraClasses).toEqual({ inventory: ["Stock"] });
+    expect(
+      mainModuleSource("/x/.eutaxy", "/x/worker.ts", [callee({ durableObjects: [] })], unbound),
+    ).toContain("export class inventory__Stock extends callee0_Stock");
+    const options = new Function(
+      neverCalled,
+      `return ${miniflareOptionsSource([callee({})], isolate)};`,
+    )(() => 0) as {
+      durableObjects: unknown;
+    };
+    expect(options.durableObjects).toEqual({
+      STOCK_RO: { className: "inventory__Stock", useSQLite: true },
+    });
+  });
+
+  test("a callee binding to a class of the caller's script is an alias of the caller's binding; a third Worker's is not added", () => {
+    const isolate = isolateOf(
+      [
+        callee({
+          durableObjects: [
+            { binding: "ORDERS", className: "Orders", sqlite: false, scriptName: "storefront" },
+            { binding: "FAR", className: "Far", sqlite: false, scriptName: "elsewhere" },
+          ],
+        }),
+      ],
+      {
+        name: "storefront",
+        d1: [],
+        r2: [],
+        kv: [],
+        durableObjects: [{ binding: "ORDERS_DO", className: "Orders" }],
+      },
+    );
+    expect(isolate.aliases).toEqual({ "inventory/ORDERS": "ORDERS_DO" });
+    expect(isolate.notAdded).toEqual([
+      "INVENTORY: durable_objects binding FAR (script_name elsewhere: a class of another Worker)",
+    ]);
+    // Without the caller's config nothing is shared, and a class of another script is not added.
+    expect(isolateOf([callee({})], undefined)).toEqual({
+      aliases: {},
+      redirected: {},
+      extraClasses: {},
+      notAdded: [],
+    });
   });
 });
 
