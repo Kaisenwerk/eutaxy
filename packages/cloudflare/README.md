@@ -16,7 +16,7 @@ request and RPC call delivery under the caller's retry policy (`caller.ts`,
 `http.ts`, `rpc.ts`; `entrypoint.ts` constructs an entrypoint class outside the
 runtime), Workflows as a model of
 the engine running the scenario's own class (`exports`: the Worker
-module's exports; `workflows.ts`), callees run for real (`callees`: each named Worker's name and module exports; `callees.ts` hosts the callee's invocation inside the call through the engine's `hostInvocation`, its `env` a view of the scenario's under its own names; a callee's Workflow runs the callee's class with that view; `aliases` names the bindings that are a second name of another, read as that binding), R2 buckets (`r2.ts`), end-of-run D1,
+module's exports; `workflows.ts`), callees run for real (`callees`: each named Worker's name and module exports, and the `entrypoint` and `props` the caller's binding carries, which `ctx.props` holds; `callees.ts` hosts the callee's invocation inside the call through the engine's `hostInvocation`, its `env` a view of the scenario's under its own names; a callee's Workflow runs the callee's class with that view; `aliases` names the bindings that are a second name of another, read as that binding), R2 buckets (`r2.ts`), end-of-run D1,
 Durable Object, R2 and Workflow snapshots), `check`, `expectHolds`, `runDifferential`. Each binding kind is one record in
 `bindings.ts` (`d1Binding`, `r2Binding`, `durableObjectBinding`,
 `workflowBinding`: recognise, proxy, clear, reset, snapshot, and for alarms

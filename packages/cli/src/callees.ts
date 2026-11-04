@@ -518,6 +518,12 @@ export interface CallerResources {
     readonly className: string;
     readonly scriptName?: string;
   }[];
+  /** The caller's service bindings: the entrypoint each reaches and the props it carries, when set. */
+  readonly services: readonly {
+    readonly binding: string;
+    readonly entrypoint?: string;
+    readonly props?: Readonly<Record<string, JsonValue>>;
+  }[];
 }
 
 /** The caller's resources from its wrangler config, when the config can be read (JSON or JSONC); none otherwise. */
@@ -544,10 +550,29 @@ export function readCallerResources(wranglerPath: string): CallerResources | und
         className: str(b["class_name"]),
         ...(b["script_name"] === undefined ? {} : { scriptName: str(b["script_name"]) }),
       })),
+      services: list(config["services"]).map((b) => ({
+        binding: str(b["binding"]),
+        ...(typeof b["entrypoint"] === "string" ? { entrypoint: b["entrypoint"] } : {}),
+        ...(typeof b["props"] === "object" && b["props"] !== null
+          ? { props: b["props"] as Record<string, JsonValue> }
+          : {}),
+      })),
     };
   } catch {
     return undefined;
   }
+}
+
+/** What the caller's binding to a callee carries (its entrypoint and props), for the test to pass with the module. */
+export function bindingCarries(
+  caller: CallerResources | undefined,
+  binding: string,
+): { readonly entrypoint?: string; readonly props?: Readonly<Record<string, JsonValue>> } {
+  const s = caller?.services.find((x) => x.binding === binding);
+  return {
+    ...(s?.entrypoint === undefined ? {} : { entrypoint: s.entrypoint }),
+    ...(s?.props === undefined ? {} : { props: s.props }),
+  };
 }
 
 /**

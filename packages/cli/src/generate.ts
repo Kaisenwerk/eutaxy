@@ -26,6 +26,9 @@ export interface GeneratedCheck {
     readonly binding: string;
     readonly name: string;
     readonly importPath: string;
+    /** From the caller's config: the entrypoint the binding reaches, the props it carries. */
+    readonly entrypoint?: string;
+    readonly props?: Readonly<Record<string, unknown>>;
   }[];
   /** SQL files outside the scenario's directory (a callee's schema), by the key `schemasFor` looks up, with their import specifiers. */
   readonly sqlImports?: readonly { readonly key: string; readonly importPath: string }[];
@@ -58,7 +61,7 @@ export function checkTestSource(g: GeneratedCheck): string {
       : `, callees: { ${callees
           .map(
             (c, i) =>
-              `${JSON.stringify(c.binding)}: { name: ${JSON.stringify(c.name)}, exports: callee_${i} }`,
+              `${JSON.stringify(c.binding)}: { name: ${JSON.stringify(c.name)}, exports: callee_${i}${c.entrypoint === undefined ? "" : `, entrypoint: ${JSON.stringify(c.entrypoint)}`}${c.props === undefined ? "" : `, props: ${JSON.stringify(c.props)}`} }`,
           )
           .join(", ")} }`;
   const extraSql =

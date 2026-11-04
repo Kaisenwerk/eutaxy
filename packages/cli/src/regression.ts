@@ -29,7 +29,17 @@ export interface CloudflareRegressionOptions {
    * binding: each one's name from its wrangler config and the import path of
    * its module.
    */
-  readonly callees?: Readonly<Record<string, { readonly name: string; readonly path: string }>>;
+  readonly callees?: Readonly<
+    Record<
+      string,
+      {
+        readonly name: string;
+        readonly path: string;
+        readonly entrypoint?: string;
+        readonly props?: Readonly<Record<string, unknown>>;
+      }
+    >
+  >;
   /**
    * The qualified names the callees' bindings had in the check's isolate: the
    * replay needs them in its own, so the test says so at its top.
@@ -113,7 +123,7 @@ export function cloudflareRegressionTest(
       : `, callees: { ${callees
           .map(
             (b) =>
-              `${key(b)}: { name: ${JSON.stringify(options.callees?.[b]?.name)}, exports: callee_${calleeIds.get(b)} }`,
+              `${key(b)}: { name: ${JSON.stringify(options.callees?.[b]?.name)}, exports: callee_${calleeIds.get(b)}${options.callees?.[b]?.entrypoint === undefined ? "" : `, entrypoint: ${JSON.stringify(options.callees?.[b]?.entrypoint)}`}${options.callees?.[b]?.props === undefined ? "" : `, props: ${JSON.stringify(options.callees?.[b]?.props)}`} }`,
           )
           .join(", ")} }`;
   const retries = options.maxRetries === undefined ? "" : `, maxRetries: ${options.maxRetries}`;

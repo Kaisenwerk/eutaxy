@@ -493,7 +493,9 @@ isolate, as Cloudflare routes a service-binding call on the same thread
   waits on the hosted code without counting as I/O of its own; and the
   hosted code's timers are virtual (inside an effect's perform the
   library's are real). An RPC call constructs the
-  callee's `WorkerEntrypoint` anew with a fresh `ExecutionContext` and the
+  callee's `WorkerEntrypoint` anew with a fresh `ExecutionContext` (whose
+  `props` are what the caller's service binding carries in its wrangler
+  config, so the callee reads who called as in production) and the
   callee's `env`, calls the method and answers with its return value,
   plain data (a stub, a function or a stream in it makes the run
   `UNSUPPORTED`, as for the RPC drive); what the method throws reaches the

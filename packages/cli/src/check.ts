@@ -21,6 +21,7 @@ import { leanProver } from "@eutaxy/prover-lean";
 import { smtProver } from "@eutaxy/prover-smt";
 import { renderSpecs, renderText } from "@eutaxy/report";
 import {
+  bindingCarries,
   type CalleeConfig,
   calleeSteps,
   describeCallee,
@@ -226,10 +227,8 @@ export async function runCheck(o: CheckOptions): Promise<number> {
         );
   }
   // Shared resources, from the caller's config (readable as JSON or JSONC) and the callees'.
-  const isolate = isolateOf(
-    callees,
-    callees.length > 0 ? readCallerResources(wrangler) : undefined,
-  );
+  const callerResources = callees.length > 0 ? readCallerResources(wrangler) : undefined;
+  const isolate = isolateOf(callees, callerResources);
   for (const reason of isolate.notAdded) o.stderr(`not added to the test's isolate: ${reason}\n`);
   mkdirSync(workDir, { recursive: true });
   try {
@@ -261,6 +260,7 @@ export async function runCheck(o: CheckOptions): Promise<number> {
                 binding: c.binding,
                 name: c.name,
                 importPath: toPosix(relative(workDir, c.entry)),
+                ...bindingCarries(callerResources, c.binding),
               })),
             }),
         ...(sqlImports.length === 0 ? {} : { sqlImports }),
@@ -337,14 +337,22 @@ export async function runCheck(o: CheckOptions): Promise<number> {
           );
         }
       }
-      const calleePaths: Record<string, { name: string; path: string }> = {};
+      const calleePaths: Record<
+        string,
+        {
+          name: string;
+          path: string;
+          entrypoint?: string;
+          props?: Readonly<Record<string, unknown>>;
+        }
+      > = {};
       for (const step of transport.setup) {
         if (step.kind !== "callee") continue;
         const binding = String(step["binding"]);
-        const calleeName = transport.callees?.[binding];
-        if (calleeName === undefined) continue;
+        const carried = transport.callees?.[binding];
+        if (carried === undefined) continue;
         calleePaths[binding] = {
-          name: calleeName,
+          ...carried,
           path: toPosix(relative(outDir, resolve(dir, String(step["entry"])))),
         };
       }

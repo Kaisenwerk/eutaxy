@@ -64,6 +64,22 @@ describe("a scenario with callees", () => {
       aliases: { "inventory/DB": "DB" },
     });
     expect(aliased).toContain('}, aliases: {"inventory/DB":"DB"}, seed: "s" });');
+    const carried = checkTestSource({
+      seed: "s",
+      scenarioImport: "../x.sim.ts",
+      callees: [
+        {
+          binding: "ORDERS",
+          name: "orders",
+          importPath: "../orders/worker.ts",
+          entrypoint: "OrdersEntrypoint",
+          props: { caller: "storefront" },
+        },
+      ],
+    });
+    expect(carried).toContain(
+      '"ORDERS": { name: "orders", exports: callee_0, entrypoint: "OrdersEntrypoint", props: {"caller":"storefront"} }',
+    );
   });
 
   test("the vitest config names the generated main module and the callees' resources", () => {

@@ -93,7 +93,9 @@ what it throws reaches the caller as RPC carries it (name, message, a
 built-in class as itself), and a fault that crashes it is an error thrown
 from the call. The call's own faults are a call's: `crash_before`,
 `ambiguous`, `crash_after`. A test gives the platform the callee's name and
-module exports (`callees: { ORDERS: { name: "orders", exports } }`) and an
+module exports (`callees: { ORDERS: { name: "orders", exports, props } }`;
+`props` is what the caller's binding carries and the callee reads from
+`ctx.props`) and an
 `env` holding its bindings under their qualified names, which the caller's
 wrangler config may declare as such (`"binding": "orders/DB"`). `eutaxy
 check` does this itself: it reads each callee's wrangler config (JSON or

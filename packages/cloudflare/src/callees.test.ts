@@ -73,6 +73,10 @@ class Inventory extends WorkerEntrypoint<CalleeEnv> {
   }
   /** An instance field: not reachable over RPC. */
   field = "set";
+  /** What the caller's binding carries: the callee reads who called. */
+  whoCalled(): unknown {
+    return (this.ctx as { props: unknown }).props;
+  }
   /** What the callee sees of an argument the caller changed after calling. */
   take(order: { qty: number }): number {
     return order.qty;
@@ -174,7 +178,15 @@ async function run(
   handler: (stub: Stub, calleeLog: Log) => Promise<unknown>,
   faults: Schedule["faults"] = [],
   /** The callees given to the platform; null for none. */
-  callees: Record<string, { name: string; exports: Record<string, unknown> }> | null = {
+  callees: Record<
+    string,
+    {
+      name: string;
+      exports: Record<string, unknown>;
+      entrypoint?: string;
+      props?: Record<string, string>;
+    }
+  > | null = {
     INVENTORY: { name: "inventory", exports: inventoryModule },
   },
   extraEnv: Record<string, unknown> = {},
@@ -395,6 +407,30 @@ describe("a method call through the binding", () => {
     ]);
     expect(seen).toEqual([["pong", { other: "/x" }]]);
     expect(r.unsupportedReasons).toEqual([]);
+  });
+
+  test("the caller's binding props reach the callee as ctx.props, by copy; the module's entrypoint applies when the setup names none", async () => {
+    const { seen, run: r } = await run(
+      spec([inventory, partner]),
+      async (stub) => {
+        const first = (await stub["whoCalled"]?.()) as { channel: string };
+        first.channel = "changed";
+        return [first, await stub["whoCalled"]?.()];
+      },
+      [],
+      { INVENTORY: { name: "inventory", exports: inventoryModule, props: { channel: "lark" } } },
+    );
+    expect(seen).toEqual([[{ channel: "changed" }, { channel: "lark" }]]);
+    expect(r.unsupportedReasons).toEqual([]);
+    const named = await run(
+      spec([inventory]),
+      (stub) => stub["ping"]?.() ?? Promise.resolve(),
+      [],
+      {
+        INVENTORY: { name: "inventory", exports: inventoryModule, entrypoint: "Other" },
+      },
+    );
+    expect(named.seen).toEqual(["pong"]);
   });
 
   test("an instance field is not a property RPC exposes", async () => {

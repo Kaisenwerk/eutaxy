@@ -14,13 +14,16 @@ export interface RunningWorker {
 
 /**
  * The `ExecutionContext` handed to a handler; `waitUntil` work is collected to
- * run after it returns. A rejection is kept in `failures` when given: a
+ * run after it returns, and `props` is what the caller's binding carries
+ * (developers.cloudflare.com/workers/runtime-apis/bindings/service-bindings/rpc/, props). A rejection is kept in `failures` when given: a
  * scheduled invocation's status is that of its first failed `waitUntil`
  * (Cloudflare, Scheduled handler); a queue or HTTP delivery's is not.
  */
 export function executionContext(
   background: Promise<unknown>[],
   failures?: unknown[],
+  /** What `ctx.props` holds: for a callee, the `props` the caller's service binding carries (a copy). */
+  props: object = {},
 ): ExecutionContext {
   return {
     waitUntil: (promise: Promise<unknown>) => {
@@ -34,7 +37,7 @@ export function executionContext(
       );
     },
     passThroughOnException: () => {},
-    props: {},
+    props: structuredClone(props),
   } as unknown as ExecutionContext;
 }
 

@@ -33,10 +33,18 @@ import { describeError, entrypointClass, rpcMethod } from "./rpc.ts";
 import type { CalleeSetup } from "./scenario.ts";
 import { recordRequest, scriptedError, serviceStub } from "./services.ts";
 
-/** The callee's module as the test gives it: the Worker's name from its wrangler config, which qualifies its bindings, and its exports. */
+/**
+ * The callee's module as the test gives it: the Worker's name from its
+ * wrangler config, which qualifies its bindings, its exports, and what the
+ * caller's service binding carries in its own config: the `entrypoint` the
+ * binding reaches (the scenario's `callee()` may name one too, and wins)
+ * and the `props` the callee reads from `ctx.props`.
+ */
 export interface CalleeModule {
   readonly name: string;
   readonly exports: Readonly<Record<string, unknown>>;
+  readonly entrypoint?: string;
+  readonly props?: Readonly<Record<string, JsonValue>>;
 }
 
 /** The faults a call to a real callee admits; `error` is the callee's own to throw. */
@@ -184,6 +192,8 @@ export function proxyCallee(
 ): object {
   const target = `Service:${binding}`;
   const view = calleeEnv(module.name, env);
+  const entrypointName = setup.entrypoint ?? module.entrypoint;
+  const props = module.props ?? {};
   const unsupported = (what: string): never => {
     const reason = `callee ${binding}: ${what}`;
     ctx.hooks.unsupported(reason);
@@ -213,7 +223,9 @@ export function proxyCallee(
     const id = invocationId(method);
     return hostInvocation(hooks, id, async (inv) => {
       const background: Promise<unknown>[] = [];
-      const ran = await runInvocation(hooks, inv, () => work(executionContext(background)));
+      const ran = await runInvocation(hooks, inv, () =>
+        work(executionContext(background, undefined, props)),
+      );
       // A cut-off here crashes the callee after it answered: the answer stands, work not started is lost.
       if (ran.status !== "crashed") await drainBackground(hooks, inv, id, target, background);
       return ran;
@@ -260,10 +272,10 @@ export function proxyCallee(
   };
 
   const entrypoint = (): unknown => {
-    const cls = entrypointClass(undefined, module.exports, setup.entrypoint);
+    const cls = entrypointClass(undefined, module.exports, entrypointName);
     if (typeof cls !== "function")
       unsupported(
-        `${setup.entrypoint === undefined ? "the default export" : `export ${setup.entrypoint}`} of ${module.name} is not a WorkerEntrypoint class`,
+        `${entrypointName === undefined ? "the default export" : `export ${entrypointName}`} of ${module.name} is not a WorkerEntrypoint class`,
       );
     return cls;
   };
@@ -319,15 +331,10 @@ export function proxyCallee(
         point(method, { url: request.url, method, headers, body }),
         async () => {
           const outcome = await invoke("fetch", (executionContext) => {
-            const handler = fetchHandlerOf(
-              module.exports,
-              setup.entrypoint,
-              executionContext,
-              view,
-            );
+            const handler = fetchHandlerOf(module.exports, entrypointName, executionContext, view);
             if (!handler)
               return unsupported(
-                `${setup.entrypoint === undefined ? module.name : `export ${setup.entrypoint} of ${module.name}`} has no fetch handler`,
+                `${entrypointName === undefined ? module.name : `export ${entrypointName} of ${module.name}`} has no fetch handler`,
               );
             return handler(request);
           });

@@ -29,8 +29,17 @@ export interface CheckTransport {
   /** The scenario's drive, for what the regression test must pass the platform (a named entrypoint). */
   readonly drive?: { readonly kind: string; readonly [key: string]: unknown };
   /** The core modules observed (as the scenario's specs name them) and the functions on each. */
-  /** The callees the platform ran, by binding: each one's Worker name, for the regression test. */
-  readonly callees?: Readonly<Record<string, string>>;
+  /** The callees the platform ran, by binding: each one's Worker name, and what the binding carried, for the regression test. */
+  readonly callees?: Readonly<
+    Record<
+      string,
+      {
+        readonly name: string;
+        readonly entrypoint?: string;
+        readonly props?: Readonly<Record<string, unknown>>;
+      }
+    >
+  >;
   /** The aliases the platform ran with, for the regression test. */
   readonly aliases?: Readonly<Record<string, string>>;
   readonly observed?: readonly { readonly module: string; readonly functions: readonly string[] }[];
@@ -189,7 +198,14 @@ export async function checkInWorkerd(input: WorkerdCheckInput): Promise<CheckTra
       ? {}
       : {
           callees: Object.fromEntries(
-            Object.entries(input.callees).map(([binding, c]) => [binding, c.name]),
+            Object.entries(input.callees).map(([binding, c]) => [
+              binding,
+              {
+                name: c.name,
+                ...(c.entrypoint === undefined ? {} : { entrypoint: c.entrypoint }),
+                ...(c.props === undefined ? {} : { props: c.props }),
+              },
+            ]),
           ),
         }),
     ...(input.aliases === undefined ? {} : { aliases: input.aliases }),

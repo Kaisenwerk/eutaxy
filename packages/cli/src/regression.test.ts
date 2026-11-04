@@ -90,6 +90,22 @@ test("callees are imported as modules and passed with their names; qualified bin
     calleeBindings: ["inventory/DB", "inventory/LEASES"],
     aliases: { "inventory/ORDERS": "ORDERS_DO" },
   });
+  const carried = cloudflareRegressionTest(verdict, {
+    scenarioPath: "./scenario.sim.ts",
+    workerPath: "./worker.ts",
+    schemaPaths: {},
+    callees: {
+      ORDERS: {
+        name: "orders",
+        path: "./orders/worker.ts",
+        entrypoint: "OrdersEntrypoint",
+        props: { caller: "storefront" },
+      },
+    },
+  });
+  expect(carried).toContain(
+    'callees: { ORDERS: { name: "orders", exports: callee_ORDERS, entrypoint: "OrdersEntrypoint", props: {"caller":"storefront"} } }',
+  );
   expect(noted).toContain(
     'callees: { INVENTORY: { name: "inventory", exports: callee_INVENTORY } }, aliases: {"inventory/ORDERS":"ORDERS_DO"} })',
   );

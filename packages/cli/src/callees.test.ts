@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { callee } from "@eutaxy/cloudflare";
 import { afterAll, describe, expect, test } from "vitest";
 import {
+  bindingCarries,
   calleeSteps,
   classAlias,
   isolateBindings,
@@ -17,6 +18,7 @@ import {
   parseJsonc,
   qualified,
   readCalleeConfig,
+  readCallerResources,
   workerName,
 } from "./callees.ts";
 
@@ -211,6 +213,7 @@ describe("shared resources between the two configs", () => {
         d1: [{ binding: "DB", id: "shared-id" }],
         r2: [],
         kv: [],
+        services: [],
         durableObjects: [],
       },
     );
@@ -223,6 +226,7 @@ describe("shared resources between the two configs", () => {
         d1: [{ binding: "inventory/DB", id: "inv-id" }],
         r2: [],
         kv: [],
+        services: [],
         durableObjects: [],
       }).aliases,
     ).toEqual({});
@@ -251,6 +255,7 @@ describe("shared resources between the two configs", () => {
       d1: [],
       r2: [],
       kv: [],
+      services: [],
       durableObjects: [{ binding: "STOCK_RO", className: "Stock", scriptName: "inventory" }],
     });
     expect(isolate.redirected).toEqual({
@@ -269,6 +274,7 @@ describe("shared resources between the two configs", () => {
       d1: [],
       r2: [],
       kv: [],
+      services: [],
       durableObjects: [{ binding: "STOCK_RO", className: "Stock", scriptName: "inventory" }],
     });
     expect(unbound.redirected).toEqual({
@@ -304,6 +310,7 @@ describe("shared resources between the two configs", () => {
         d1: [],
         r2: [],
         kv: [],
+        services: [],
         durableObjects: [{ binding: "ORDERS_DO", className: "Orders" }],
       },
     );
@@ -318,6 +325,30 @@ describe("shared resources between the two configs", () => {
       extraClasses: {},
       notAdded: [],
     });
+  });
+});
+
+describe("what the caller's binding carries", () => {
+  test("the entrypoint and props of a service binding are read from the caller's config", () => {
+    const config = join(dir, "caller.jsonc");
+    writeFileSync(
+      config,
+      `{ "name": "storefront", "services": [
+        { "binding": "ORDERS", "service": "orders", "entrypoint": "OrdersEntrypoint", "props": { "caller": "storefront" } },
+        { "binding": "BILLING", "service": "billing" }
+      ] }`,
+    );
+    const caller = readCallerResources(config);
+    expect(caller?.services).toEqual([
+      { binding: "ORDERS", entrypoint: "OrdersEntrypoint", props: { caller: "storefront" } },
+      { binding: "BILLING" },
+    ]);
+    expect(bindingCarries(caller, "ORDERS")).toEqual({
+      entrypoint: "OrdersEntrypoint",
+      props: { caller: "storefront" },
+    });
+    expect(bindingCarries(caller, "BILLING")).toEqual({});
+    expect(bindingCarries(undefined, "X")).toEqual({});
   });
 });
 
