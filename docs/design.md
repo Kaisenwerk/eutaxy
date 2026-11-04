@@ -458,8 +458,81 @@ type. A binding without its setup step, a method the script lacks, an
 unmatched `fetch()`, a redirect reply the runtime would follow (script the
 final reply, or fetch with `redirect: "manual"`), promise pipelining and
 `connect()` make the run `UNSUPPORTED`, and every verdict states that
-callees were scripted. Running the callee's real code
-in the same simulation is later work, which the scripted boundary teaches.
+callees were scripted. A callee the scenario runs for real is the next
+paragraph; the scripted boundary stays for the Workers it does not.
+
+**Workers calling each other, for real (v0.14).** A system split by
+business context is several Workers, each with its own bindings, calling
+one another through service bindings; a bug that crosses two of them (a
+reservation the callee committed and the caller then lost, a retry the
+callee did not make idempotent) hides from a check of either Worker alone
+with the other scripted. So a scenario can name a callee as it names its
+own Worker: the setup step `callee(binding, { entry, config, entrypoint? })`
+replaces `service(binding, …)` for that binding with the callee's module
+and wrangler config, relative to the scenario, and the Worker's name from
+that config (its `name`) qualifies everything of the callee's. The callee's
+real code then runs in the same simulation as the caller's, in the same
+isolate, as Cloudflare routes a service-binding call on the same thread
+(developers.cloudflare.com/workers/runtime-apis/bindings/service-bindings/).
+- _The call._ A call through the binding (an RPC method, or `fetch()`) is
+  one effect, `Service:<binding>`, as a scripted call is, with the faults
+  a call has in the network: `crash_before` (it never reached the
+  callee), `ambiguous` (the callee acted, the answer was lost) and
+  `crash_after` (the caller died after it); `error` is gone, since what
+  the callee throws is now real. The effect hosts the callee's invocation,
+  as a Durable Object stub call hosts the object's effects and a WebSocket
+  `send` the handler's: inside it the callee's code runs as a fresh
+  invocation of its own (`<caller invocation>/<binding>.<method>`, numbered
+  per attempt), so its effects are recorded under it, interleave with
+  other invocations' as turns, and take faults by their position within
+  it, while the caller is parked at the call. An RPC call constructs the
+  callee's `WorkerEntrypoint` anew with a fresh `ExecutionContext` and the
+  callee's `env`, calls the method and answers with its return value,
+  plain data (a stub, a function or a stream in it makes the run
+  `UNSUPPORTED`, as for the RPC drive); what the method throws reaches the
+  caller as RPC propagates it, a new error of the built-in class with the
+  message (developers.cloudflare.com/workers/runtime-apis/rpc/error-handling/).
+  A `fetch()` through the binding calls the callee's default `fetch`
+  handler with the request, its `env` and `ctx`, and the response crosses
+  as it is. The callee's `waitUntil` work runs after its answer, as the
+  caller's does after a response (a `background` point, admitting
+  `cut_off`). A crash inside the callee (a fault on one of its effects)
+  ends its invocation, and the caller sees an error thrown from the call,
+  as it does when the Worker behind a binding fails; Cloudflare retries
+  nothing, so the caller's own code decides what follows. These are the
+  model's assumptions and every verdict states them.
+- _The callee's bindings._ The callee's wrangler config names its bindings;
+  Eutaxy proxies them with the same binding records as the caller's and
+  tells the two Workers' apart by qualifying the callee's with the
+  Worker's name: its `DB` is `orders/DB` in effect targets
+  (`D1:orders/DB`), in setup steps (`d1Schema("orders/DB", …)`), in state
+  queries and in snapshots; the caller's keep their bare names. The
+  callee's `env` is a view that maps its own names onto those entries, so
+  its code runs unchanged. Two bindings that name one resource (the same
+  `database_id`, the same Durable Object class and script) are one
+  resource with one snapshot, under the caller's name, and the callee's
+  name is an alias of it. A service binding of the callee's own is
+  scripted (`service("orders/PARTNER", …)`) or a further callee; the
+  depth is not bounded by the design.
+- _Running it under the Vitest plugin._ The plugin runs one `main` module in
+  the test's isolate, where the engine's patches apply (its auxiliary
+  Workers run elsewhere, unpatched, so they are not what this is built
+  on). `eutaxy check` therefore generates, beside its test and config,
+  one main module that imports both Workers' modules and re-exports the
+  caller's exports as they are and the callee's Durable Object classes
+  under their qualified names, and a Vitest config whose `miniflare`
+  options add the callee's resources (D1 databases, R2 buckets, Durable
+  Object namespaces pointing at those classes, queues) under their
+  qualified names, read from the callee's wrangler config; the caller's
+  config stays the plugin's `wrangler.configPath`. A scenario run from a
+  user's own test, without the command, gives the platform the callee's
+  exports and an `env` that holds the qualified entries, as it gives the
+  caller's today.
+- _Not modelled._ `connect()`, promise pipelining, RPC stubs passed by
+  reference, streams across the call, and a callee reached by anything but
+  a service binding (a queue the callee consumes is the callee's own drive,
+  and a scenario drives one Worker). The differential corpus keeps to the
+  binding proxies: both Workers' code is real on either side.
 
 ## Fault model and platform model
 

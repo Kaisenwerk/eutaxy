@@ -174,12 +174,16 @@ callee's effects run under an invocation of its own (the call's), on the
 callee's bindings, which the scenario's setup seeds and snapshots as it
 does the caller's; the trace names which Worker made each effect. v0.10's
 scripted callees stay for the Workers a scenario does not run. This is
-the hardest design, and its first step is the design itself, written in
-`docs/design.md` before any code (one isolate or two, how the callee's
-module is loaded under the Cloudflare Vitest plugin, what a crash on
-either side means for the call in flight, how the two Workers' bindings
-are told apart); v0.10's scripted callees and v0.13's objects show what
-it needs.
+the hardest design, so it was written before any code: `docs/design.md`,
+"Workers calling each other, for real" (one isolate, the plugin's main
+module generated to hold both Workers, the call an effect hosting the
+callee's invocation, a crash in the callee an error to the caller, the
+callee's bindings qualified by its Worker's name); v0.10's scripted
+callees and v0.13's objects are what it is built from. The first slice is
+the call path with the callee's exports and bindings given by the user's
+test; the second the command's generation of the main module and the
+Vitest config from the callee's wrangler config; the third shared
+resources, nested callees and the gate entry.
 
 Gate: a scenario that drives one Worker, which calls another through a
 service binding, runs both Workers' real code with no `UNSUPPORTED`
