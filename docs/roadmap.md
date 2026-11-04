@@ -66,10 +66,10 @@ pinned to each in turn. `readSpecs` takes the module's path
 (`modulePath`, and `specPath`) in place of the import specifiers it used
 to match by; the import is resolved by the compiler.
 
-## Patch work alongside v0.14
+## Patch work after v0.14
 
-Work toward v0.14 ships as `0.13.x`, and so does the following, each when
-a target needs it:
+Until the next phase opens, work ships as `0.14.x`: the following, each when
+a target needs it, and what the system's first users ask for:
 - The remaining performance items: `report`'s module workers and the
   engines' modules run in parallel, toolchain lookups once per process,
   one Z3 prelude per module.
@@ -162,7 +162,7 @@ is no model of their storage to hold to workerd; what Eutaxy adds around
 them (reset, seed, snapshot, the alarm takeover, connections) is what the
 planted-bug and gate corpora exercise.
 
-## v0.14 — The system (current)
+## v0.14 — The system (done)
 
 The called Worker's real code runs in the same simulation as its caller:
 its effects are recorded and interleaved with the caller's, and a fault
@@ -210,10 +210,12 @@ the same scenario with the callee scripted misses.
 
 ## After v0.14
 
-The phases after v0.14 are driven by the same target, and each one's text
-is made exact, gate included, when it starts. When a target needs them, outside these phases: an email binding with a
-recorded outbox, containers as a scripted external, and Durable Object to
-Durable Object calls. AWS gets nothing new until a target uses it.
+No phase is open. The next one is chosen with the target once the system
+runs its Workers together, and its text is made exact, gate included, when
+it starts; until then the patch work above is what ships. When a target
+needs them, outside any phase: an email binding with a recorded outbox,
+containers as a scripted external, and Durable Object to Durable Object
+calls. AWS gets nothing new until a target uses it.
 
 ## Long-term direction
 
