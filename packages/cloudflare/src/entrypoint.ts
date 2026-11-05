@@ -44,3 +44,32 @@ export function constructEntrypoint(
     Object.setPrototypeOf(direct, original);
   }
 }
+
+/**
+ * The handler object a `WorkerEntrypoint` class stands for when it is the Worker's default export: each
+ * of `fetch`, `queue` and `scheduled` the class defines constructs it anew with the invocation's env and
+ * ctx, as workerd does per event, and calls the method with the event alone (its env and ctx are on the
+ * instance) (developers.cloudflare.com/workers/runtime-apis/bindings/service-bindings/rpc/).
+ */
+export function entrypointHandler(cls: unknown): {
+  readonly [handler in "fetch" | "queue" | "scheduled"]?: (
+    event: never,
+    env: unknown,
+    ctx: unknown,
+  ) => unknown;
+} {
+  const proto = (typeof cls === "function" ? cls.prototype : undefined) as
+    | Record<string, unknown>
+    | undefined;
+  const out: Record<string, (event: never, env: unknown, ctx: unknown) => unknown> = {};
+  for (const name of ["fetch", "queue", "scheduled"] as const)
+    if (typeof proto?.[name] === "function")
+      out[name] = (event, env, ctx) => {
+        const instance = constructEntrypoint(cls, "WorkerEntrypoint", ctx, env) as Record<
+          string,
+          (event: unknown) => unknown
+        >;
+        return (instance[name] as (event: unknown) => unknown).call(instance, event);
+      };
+  return out;
+}

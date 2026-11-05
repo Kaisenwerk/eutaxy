@@ -30,6 +30,7 @@ import {
 import type { CalleeModule } from "./callees.ts";
 import type { ProxyContext } from "./d1.ts";
 import type { DurableObjectTestHelpers } from "./durable-objects.ts";
+import { entrypointHandler } from "./entrypoint.ts";
 import { deliverRequest } from "./http.ts";
 import { deliverMessage } from "./queues.ts";
 import { deliverCall, entrypointClass } from "./rpc.ts";
@@ -206,8 +207,12 @@ export function createCloudflarePlatform(options: CloudflarePlatformOptions): Pl
       return Reflect.getOwnPropertyDescriptor(target, prop);
     },
   });
-  // An entrypoint class exposes RPC methods; the queue and http drives need the handler object.
-  const handler: WorkerHandler = typeof options.handler === "function" ? {} : options.handler;
+  // An entrypoint class exposes RPC methods, and its fetch(), queue() and scheduled() are the Worker's
+  // handlers, called on an instance constructed for each invocation.
+  const handler: WorkerHandler =
+    typeof options.handler === "function"
+      ? (entrypointHandler(options.handler) as WorkerHandler)
+      : options.handler;
   const worker: RunningWorker = { handler, env: proxiedEnv };
 
   return {

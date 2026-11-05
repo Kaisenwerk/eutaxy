@@ -78,6 +78,44 @@ describe("ticks", () => {
   });
 });
 
+describe("a WorkerEntrypoint class as the default export", () => {
+  test("each tick constructs the class anew with the env and calls its scheduled()", async () => {
+    // A stand-in for the runtime's base class, which the platform finds by name.
+    class WorkerEntrypoint {
+      readonly ctx: unknown;
+      readonly env: { readonly REGION: string };
+      constructor(ctx: unknown, env: { readonly REGION: string }) {
+        this.ctx = ctx;
+        this.env = env;
+      }
+    }
+    const seen: [string, number, boolean][] = [];
+    const instances = new Set<object>();
+    class Reports extends WorkerEntrypoint {
+      async scheduled(controller: ScheduledController): Promise<void> {
+        instances.add(this);
+        seen.push([
+          this.env.REGION,
+          controller.scheduledTime - virtualEpoch,
+          this.ctx !== undefined,
+        ]);
+      }
+    }
+    const platform = createCloudflarePlatform({
+      env: { REGION: "eu" },
+      handler: Reports as never,
+      schemas: {},
+    });
+    const r = new Run({ chooser: replayChooser({ seed: 1, faults: [] }), bounds });
+    await runOnce(spec(cron("*/5 * * * *", { ticks: 2 })), platform, r);
+    expect(seen).toEqual([
+      ["eu", 0, true],
+      ["eu", 300_000, true],
+    ]);
+    expect(instances.size).toBe(2);
+  });
+});
+
 describe("failures and re-runs", () => {
   test("a handler that throws is not re-run by default: the tick is given up", async () => {
     const { log } = await run(spec(cron("* * * * *")), () => {
