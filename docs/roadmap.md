@@ -66,14 +66,11 @@ pinned to each in turn. `readSpecs` takes the module's path
 (`modulePath`, and `specPath`) in place of the import specifiers it used
 to match by; the import is resolved by the compiler.
 
-## Patch work after v0.14
+## Patch work alongside v0.15
 
-Until the next phase opens, work ships as `0.14.x`: the following, each when
-a target needs it, and what the system's first users ask for:
-- The remaining performance items: `report`'s module workers and the
-  engines' modules run in parallel, toolchain lookups once per process,
-  one Z3 prelude per module.
-- The proof cache keyed by source, spec and engine version.
+Work toward v0.15 ships as `0.14.x`, and so does the following, each when
+a target needs it (the performance items and the proof cache are v0.16's
+and wait for it unless a target needs one sooner):
 - A configurable number of `TESTED` draws on the command line (the API
   takes `inputs`).
 - The command loads the spec reader and the engines only where specs are
@@ -208,14 +205,76 @@ service binding, runs both Workers' real code with no `UNSUPPORTED`
 verdict, and catches a planted bug that crosses the two Workers, which
 the same scenario with the callee scripted misses.
 
-## After v0.14
+## v0.15 — Worked examples, and the first scenario in minutes (current)
 
-No phase is open. The next one is chosen with the target once the system
-runs its Workers together, and its text is made exact, gate included, when
-it starts; until then the patch work above is what ships. When a target
-needs them, outside any phase: an email binding with a recorded outbox,
-containers as a scripted external, and Durable Object to Durable Object
-calls. AWS gets nothing new until a target uses it.
+The binding surface is wide; the thin part is the first hour of use. The
+corpora hold the shapes real Workers take, twenty planted bugs and four
+gate Workers, none of them published; this phase makes those shapes the
+public face. `examples/` grows from one entry to six, each a realistic
+Worker, its scenario, the bug the scenario catches and the fix, checked
+through `eutaxy check` in CI (examples double as acceptance tests) and
+rendered as a guide page on the site: a webhook with an idempotency key, a
+queue consumer over a D1 ledger, a lease pool object with an alarm, an
+Agent with a schedule and a WebSocket connection, two Workers over a
+service binding, a Workflow waiting for an event. `eutaxy draft` (a
+command and an MCP tool) writes a scenario skeleton from a wrangler config
+and a Worker module: bindings become setup steps, handlers become drives,
+and the invariants are left as named holes, so the first scenario is a
+matter of filling them. The documentation gains what a first visitor
+needs beside the guides: a reference page per public export, a catalogue
+of every `UNSUPPORTED` reason with what to do about it, and a page on
+what Eutaxy is next to a Vitest run under Miniflare, property testing and
+a model checker. Nothing here changes a verdict; the phase is about who
+can reach one.
+
+Gate: every example checks green in CI through the command; `eutaxy
+draft` on each example's Worker and wrangler config produces a skeleton
+that differs from the example's scenario only in the invariants and the
+drive's data (a test diffs them); and the site builds with a page per
+example and per public export.
+
+## After v0.15
+
+Each phase's text is made exact, gate included, when it starts.
+
+### v0.16 — Runs that scale
+
+The time a check and a report take, as scenarios and spec modules grow:
+`report`'s modules and the engines' modules in parallel, toolchain lookups
+once per process, one Z3 prelude per module, the proof cache keyed by
+source, spec and engine version; and the engine items a growing scenario
+meets: one random stream per invocation, so a shrunk violation gets past
+the random ids an earlier event drew, and dynamic partial-order reduction
+where the sleep-set reduction loses too often. The gate states a ceiling
+on the corpora's check and report time on the CI runner and holds it.
+
+### v0.17 — The model proven
+
+The first step of the long-term direction: the platform model of queues,
+Durable Objects, D1 and alarms in Lean, validated against the executable
+model as the engine's translation is validated today, so a scenario
+invariant on the shell can be `PROVEN` against the model, not only
+`BOUNDED` by exploration. It waits for v0.15 and v0.16 because it needs
+the semantics stable and the runs fast enough to validate against.
+
+## Toward 1.0
+
+`1.0.0` is the release after which the public API changes only with a
+major version. It is cut on four conditions, each checkable, none a date:
+- A production system of several Workers runs its scenarios under Eutaxy
+  in its own CI for weeks with no `UNSUPPORTED` surprise: the second
+  concrete use the design rules ask for.
+- A reader new to Eutaxy writes a passing scenario for a Worker of their
+  own from the documentation alone, which v0.15 exists to make true.
+- The public API, the platform options and the JSON report schema have
+  held still for three minor releases, deprecated aliases removed and a
+  migration page written.
+- CI has been green twenty consecutive runs with no retry: a flake is a
+  bug to understand first.
+
+When a target needs them, outside any phase: an email binding with a
+recorded outbox, containers as a scripted external, and Durable Object to
+Durable Object calls. AWS gets nothing new until a target uses it.
 
 ## Long-term direction
 
