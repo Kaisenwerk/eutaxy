@@ -453,6 +453,16 @@ class PollingFlow extends WorkflowEntrypoint {
   }
 }
 
+/** A step run alongside a wait: the engine runs it while the wait is pending, which is not modelled. */
+class AlongsideFlow extends WorkflowEntrypoint {
+  async run(_e: unknown, step: Step) {
+    await Promise.all([
+      step.waitForEvent("go", { type: "go", timeout: "1 minute" }).catch(() => undefined),
+      step.do("meanwhile", async () => "done"),
+    ]);
+  }
+}
+
 /** Starts one instance per message, keyed by the message id; a duplicate create is caught. */
 const webhook: WorkerHandler = {
   async fetch(request, env) {
@@ -547,6 +557,7 @@ const platform = () =>
       GiveUpFlow,
       WaitingFlow,
       PollingFlow,
+      AlongsideFlow,
       TimingFlow,
       NamedFlow,
       ContextFlow,
@@ -1240,6 +1251,13 @@ describe("a Workflow started from a webhook", () => {
     // timeout into a poll. The recovery never runs: no suspension reached the code.
     expect(instances(r)[0]).toMatchObject({ status: "complete", output: { got: false } });
     expect(outside).toEqual(["poll-0", "poll-1", "poll-2"]);
+  });
+
+  test("a step started alongside a wait is not modelled: reported, not frozen", async () => {
+    const r = await run(scenario("AlongsideFlow"));
+    expect(r.unsupportedReasons.join()).toContain(
+      "step.do started alongside step.waitForEvent; steps running in parallel with a wait are not modelled",
+    );
   });
 
   test("what is not modelled makes the run UNSUPPORTED", async () => {

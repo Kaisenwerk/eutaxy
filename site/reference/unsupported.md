@@ -207,6 +207,12 @@ test, pass the module's exports.
 Instance management beyond `create`, `get`, `status` and `sendEvent`.
 Keep it out of the scenario's path.
 
+**`Workflow <binding>: step.do started alongside step.waitForEvent; steps running in parallel with a wait are not modelled`**
+(also `step.waitForEvent` and `step.sleep`) A step was started while a wait
+was pending, from code running in parallel with it (`Promise.all` of a
+wait and a step). The engine runs such a step while the wait is pending;
+the model does not. Wait first, then run the step, or run the step first.
+
 **`Workflow <binding>: rollback handlers are not modelled`**
 A `step.do` with a `rollback`. Leave it out of the scenario's Workflow.
 

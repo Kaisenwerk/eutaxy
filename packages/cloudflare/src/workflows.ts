@@ -499,7 +499,7 @@ export async function deliverWorkflow(
         (ctx: unknown) => unknown,
         { rollback?: unknown } | undefined,
       ];
-      if (suspending !== undefined) return hibernated();
+      if (suspending !== undefined) return alongsideWait("step.do");
       if (options?.rollback !== undefined) {
         hooks.unsupported(`Workflow ${d.binding}: rollback handlers are not modelled`);
         throw new Error("eutaxy: rollback handlers are not modelled");
@@ -687,7 +687,7 @@ export async function deliverWorkflow(
       name: string,
       options: { readonly type?: unknown; readonly timeout?: unknown } = {},
     ): Promise<unknown> => {
-      if (suspending !== undefined) return hibernated();
+      if (suspending !== undefined) return alongsideWait("step.waitForEvent");
       const type = validEventType(options.type);
       const timeoutMs = durationMs(options.timeout ?? "24 hours");
       if (!(timeoutMs >= 1000 && timeoutMs <= 365 * 24 * 3_600_000)) {
@@ -758,8 +758,20 @@ export async function deliverWorkflow(
   };
   /** Set once a wait hibernated this run; the run then ends with the wait, wherever its code was. */
   let suspending: { readonly gen: number; readonly deadline: number } | undefined;
+  /**
+   * A step call once a wait hibernated the run. Code after the wait never runs (its promise never
+   * settles), so the call comes from code running in parallel with the wait (`Promise.all` of a wait and
+   * a step), which the engine would run while the wait is pending: not modelled, so reported, and the
+   * call never settles, as the hibernated run's other calls.
+   */
+  const alongsideWait = <T>(what: string): Promise<T> => {
+    hooks.unsupported(
+      `Workflow ${d.binding}: ${what} started alongside step.waitForEvent; steps running in parallel with a wait are not modelled`,
+    );
+    return hibernated();
+  };
   async function sleepStep(k: string, name: string, ms: number, until?: number): Promise<void> {
-    if (suspending !== undefined) return hibernated();
+    if (suspending !== undefined) return alongsideWait("step.sleep");
     if (instance.persisted.has(k)) return;
     const pending = instance.deadlines.get(k);
     if (pending !== undefined) {
