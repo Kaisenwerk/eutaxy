@@ -277,6 +277,25 @@ example and per public export.
 
 Each phase's text is made exact, gate included, when it starts.
 
+### Next: what an adopter's flows across Workers need
+
+Two model features a real multi-Worker system reached first, ahead of
+v0.16 unless that system's needs change, since a flow it checks waits on
+them:
+- **Work an object starts and does not await.** A Durable Object (an
+  Agent in particular) that answers a call and goes on with work it did
+  not await, through `ctx.waitUntil`, a fiber or a promise left running:
+  today that work outlives the call's effect and the run is
+  `UNSUPPORTED`. The model runs it as the object's own turns after the
+  answer, with its effects and faults, until it settles or the object is
+  evicted.
+- **A step attempt that outlives its timeout.** Workflows retries a step
+  whose attempt passed its `timeout` while that attempt may still be
+  running; today an attempt runs to its end before the retry, so a race
+  between the late attempt and the retry, or the code that recovers from
+  it, is never explored. The model measures step timeouts and lets the
+  timed-out attempt run on as a concurrent turn.
+
 ### v0.16 — Runs that scale
 
 The time a check and a report take, as scenarios and spec modules grow:
