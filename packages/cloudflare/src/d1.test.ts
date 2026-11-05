@@ -8,6 +8,10 @@ describe("splitSql", () => {
     ).toEqual(["CREATE TABLE a (x)", "CREATE TABLE b (y)"]);
   });
 
+  test("a block comment between two tokens separates them", () => {
+    expect(splitSql("CREATE/* c */TABLE t (x INTEGER);")).toEqual(["CREATE TABLE t (x INTEGER)"]);
+  });
+
   test("keeps semicolons, comment markers and doubled quotes inside literals and identifiers", () => {
     const create = `CREATE TABLE t (a TEXT DEFAULT 'a;b', b TEXT DEFAULT '--', c TEXT DEFAULT 'it''s', "we;ird" INT)`;
     expect(splitSql(`${create}; INSERT INTO t (a) VALUES (';');`)).toEqual([

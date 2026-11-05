@@ -198,6 +198,8 @@ export function splitSql(sql: string): readonly string[] {
     if (c === "/" && next === "*") {
       const end = sql.indexOf("*/", i + 2);
       i = end === -1 ? sql.length : end + 2;
+      // A comment separates the tokens around it (`CREATE/* c */TABLE`), as whitespace would.
+      cur += " ";
       continue;
     }
     if (c === "'" || c === '"' || c === "`" || c === "[") {
