@@ -149,6 +149,9 @@ export default defineConfig({
     return pageData.isNotFound ? [["meta", { name: "robots", content: "noindex" }]] : [];
   },
   themeConfig: {
+    // The date in the page's language (its lang), not the reader's browser's, so it matches the text
+    // around it; the day only, since the time would be in the reader's zone.
+    lastUpdated: { formatOptions: { dateStyle: "medium", forceLocale: true } },
     logo: { light: "/logo-light.svg", dark: "/logo-dark.svg", alt: "" },
     nav: [
       { text: "Guide", link: "/guide/what-is-eutaxy", activeMatch: "^/guide/" },
