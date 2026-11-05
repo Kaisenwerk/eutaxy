@@ -13,7 +13,6 @@ can rely on it.
 
 The phases through v0.15 are done; `docs/design.md` describes what they
 built, and each phase's gate keeps running in CI on every change.
-
 - **v0.4, the simulator.** A Worker's queue consumer run under explored
   schedules: faults at every effect, redelivery as Cloudflare Queues
   does, invariants over the effect log, shrinking, a regression test per

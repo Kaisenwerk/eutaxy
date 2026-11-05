@@ -113,6 +113,7 @@ test("every reason the code reports UNSUPPORTED for has its entry in the catalog
 
 test("the extraction reads nested templates and skips declarations", () => {
   const nested = literalChunks(
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: the source text of a template literal, as input
     '`WebSocket ${id}: ${n === 0 ? "the object accepted nothing" : `${n} sockets were accepted`}`',
   );
   expect(nested).toContain("WebSocket ");
