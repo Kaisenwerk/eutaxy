@@ -628,7 +628,7 @@ describe("seeded fault placement", () => {
             (n) => n,
           );
           return { status: "completed", followUps: [] };
-        } catch (err) {
+        } catch {
           if (inv.isCrashed() && event.attempt < 3)
             return { status: "crashed", followUps: [{ ...event, attempt: event.attempt + 1 }] };
           return { status: "errored", followUps: [] };
