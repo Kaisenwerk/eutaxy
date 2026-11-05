@@ -109,6 +109,21 @@ function schemaOf(configDir: string, database: string): { file: string; found: b
   return { file: join(configDir, "schema.sql"), found: false };
 }
 
+/**
+ * A migrations directory's files in the order wrangler applies them (by name): its `.sql` files, and a
+ * subdirectory's `migration.sql` (one folder per migration, as drizzle-kit writes them).
+ */
+function migrationFiles(dir: string): string[] {
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir, { withFileTypes: true })
+    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+    .flatMap((e) => {
+      if (e.isFile() && e.name.endsWith(".sql")) return [join(dir, e.name)];
+      const nested = join(dir, e.name, "migration.sql");
+      return e.isDirectory() && existsSync(nested) ? [nested] : [];
+    });
+}
+
 /** Wrangler configs under `root` (not in node_modules or dot directories), by their `name`. */
 function configsByName(root: string, depth = 3): Map<string, string> {
   const out = new Map<string, string>();
@@ -264,13 +279,23 @@ export function draftScenario(input: DraftInput): Draft {
         );
         continue;
       }
-      const migrations = text(db["migrations_dir"]) || "migrations";
       const schema = schemaOf(dir, text(db["database_name"]));
+      const migrations = schema.found
+        ? []
+        : migrationFiles(join(dir, text(db["migrations_dir"]) || "migrations"));
+      if (migrations.length > 0) {
+        // No schema file, but migrations: one step per migration, applied in order as wrangler does.
+        for (const file of migrations)
+          setup.push({
+            kind: "d1",
+            binding: `${prefix}${binding}`,
+            schemaFile: ref(scenarioDir, file),
+          });
+        continue;
+      }
       if (!schema.found)
         notes.push(
-          existsSync(join(dir, migrations))
-            ? `D1 ${prefix}${binding}: its migrations are in ${ref(scenarioDir, join(dir, migrations))}; d1Schema takes one file, so put the schema they build into ${ref(scenarioDir, schema.file)}`
-            : `D1 ${prefix}${binding}: no schema file found; write the tables it needs into ${ref(scenarioDir, schema.file)}`,
+          `D1 ${prefix}${binding}: no schema file found; write the tables it needs into ${ref(scenarioDir, schema.file)}`,
         );
       setup.push({
         kind: "d1",

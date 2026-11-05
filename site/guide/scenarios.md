@@ -171,7 +171,7 @@ Setup steps run before every run, so each run starts from the same state.
 
 | Step                                                    | Does                                                                                                 |
 | ------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `d1Schema(binding, "./schema.sql")`                     | Drops every user table in the D1 binding and applies the schema                                      |
+| `d1Schema(binding, "./schema.sql")`                     | Drops every user table in the D1 binding (children before parents) and applies the schema; several steps on one binding apply their files in order, a migration per file |
 | `durableObject(binding, objects?, { alarmsPerObject })` | Clears the namespace, seeds the named objects' storage, evicts them; snapshots storage after the run |
 | `r2Bucket(binding, objects?)`                           | Empties the bucket and seeds these objects; snapshots it after the run                               |
 | `workflow(binding, className, { name })`                | Names the class (an export of the Worker module) a Workflow binding's instances run                  |

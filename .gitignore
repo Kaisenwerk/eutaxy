@@ -16,7 +16,7 @@ packages/*/src/**/*.d.ts.map
 .layering-fixture-*/
 .probe-*/
 # Left by tests/cli.test.ts if a run is interrupted
-examples/*/config-elsewhere-*/
+examples/*/cli-test-*/
 
 # Working files of `eutaxy check`
 .eutaxy/

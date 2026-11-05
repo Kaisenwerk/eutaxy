@@ -60,7 +60,7 @@ describe("draftScenario", () => {
     ]);
   });
 
-  test("a D1 binding without a schema file names one to write, or the migrations to build it from", () => {
+  test("a D1 binding without a schema file names one to write, or takes its migrations in order", () => {
     const bare = project("no-schema", {
       "wrangler.json": { name: "a", main: "w.ts", d1_databases: [{ binding: "DB" }] },
       "w.ts": worker,
@@ -70,14 +70,34 @@ describe("draftScenario", () => {
     const d = draftScenario({ config: join(bare, "wrangler.json") });
     expect(d.setup).toEqual([{ kind: "d1", binding: "DB", schemaFile: "./schema.sql" }]);
     expect(d.notes[0]).toContain("no schema file found");
+    // Migrations instead of a schema: one step per migration, in order, as plain files or one folder each.
     const migrated = project("migrations", {
       "wrangler.json": { name: "a", main: "w.ts", d1_databases: [{ binding: "DB" }] },
       "w.ts": worker,
+      "migrations/0002_more.sql": "ALTER TABLE t ADD y TEXT;",
       "migrations/0001_init.sql": "CREATE TABLE t (id TEXT);",
+      "migrations/README.md": "not a migration",
     });
-    expect(draftScenario({ config: join(migrated, "wrangler.json") }).notes[0]).toContain(
-      "its migrations are in ./migrations",
-    );
+    const m = draftScenario({ config: join(migrated, "wrangler.json") });
+    expect(m.setup).toEqual([
+      { kind: "d1", binding: "DB", schemaFile: "./migrations/0001_init.sql" },
+      { kind: "d1", binding: "DB", schemaFile: "./migrations/0002_more.sql" },
+    ]);
+    expect(m.notes).toEqual([]);
+    const drizzle = project("drizzle", {
+      "wrangler.json": {
+        name: "a",
+        main: "w.ts",
+        d1_databases: [{ binding: "DB", migrations_dir: "drizzle" }],
+      },
+      "w.ts": worker,
+      "drizzle/20260101_init/migration.sql": "CREATE TABLE t (id TEXT);",
+      "drizzle/20260202_more/migration.sql": "ALTER TABLE t ADD y TEXT;",
+    });
+    expect(draftScenario({ config: join(drizzle, "wrangler.json") }).setup).toEqual([
+      { kind: "d1", binding: "DB", schemaFile: "./drizzle/20260101_init/migration.sql" },
+      { kind: "d1", binding: "DB", schemaFile: "./drizzle/20260202_more/migration.sql" },
+    ]);
   });
 
   test("the drive: a queue consumer, else a Cron Trigger, else an Agent's route, else fetch()", () => {

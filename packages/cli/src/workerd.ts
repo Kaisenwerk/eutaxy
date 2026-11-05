@@ -60,7 +60,10 @@ export interface SpecEntry {
 /** Vite globs, keyed as `import.meta.glob` keys them from `.eutaxy/` (see `globKey`). */
 export type ModuleGlob = Readonly<Record<string, () => Promise<unknown>>>;
 
-/** Each D1 binding's schema, read from the `.sql` files next to the scenario. */
+/**
+ * Each D1 binding's schema, read from the `.sql` files next to the scenario. Several `d1Schema` steps
+ * on one binding (a migration per file) are joined in setup order, each file its own statements.
+ */
 export function schemasFor(
   scenario: ScenarioSpec,
   sqlFiles: Readonly<Record<string, string>>,
@@ -71,7 +74,9 @@ export function schemasFor(
     const file = String(step["schemaFile"]);
     const sql = sqlFiles[globKey(file)];
     if (sql === undefined) throw new Error(`schema file ${file} not found next to the scenario`);
-    schemas[String(step["binding"])] = sql;
+    const binding = String(step["binding"]);
+    const earlier = schemas[binding];
+    schemas[binding] = earlier === undefined ? sql : `${earlier}\n;\n${sql}`;
   }
   return schemas;
 }

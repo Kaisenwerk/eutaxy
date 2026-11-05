@@ -148,7 +148,7 @@ describe("eutaxy check", () => {
     // A copy of the payments example whose config lives in deploy/; nothing named wrangler.* sits beside
     // the scenario. Inside the example, so the copy resolves the example's dependencies.
     const example = join(root, "examples", "payments-queue");
-    const dir = join(example, `config-elsewhere-${process.pid}`);
+    const dir = join(example, `cli-test-config-${process.pid}`);
     mkdirSync(join(dir, "deploy"), { recursive: true });
     try {
       for (const f of ["worker.fixed.ts", "worker.ts", "schema.fixed.sql"])
@@ -179,6 +179,40 @@ describe("eutaxy check", () => {
       const missing = eutaxy(["check", join(dir, "missing.sim.ts")]);
       expect(missing.status).toBe(3);
       expect(missing.stderr).toContain("the scenario's wrangler config was not found");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 180_000);
+
+  test("several d1Schema steps on one binding are applied in order, a migration per file", () => {
+    // The payments example's table built by two migrations: the second adds the column the Worker writes,
+    // so the check runs only if both are applied, the first first.
+    const example = join(root, "examples", "payments-queue");
+    const dir = join(example, `cli-test-migrations-${process.pid}`);
+    mkdirSync(join(dir, "migrations"), { recursive: true });
+    try {
+      writeFileSync(join(dir, "worker.ts"), readFileSync(join(example, "worker.fixed.ts")));
+      writeFileSync(join(dir, "wrangler.jsonc"), readFileSync(join(example, "wrangler.jsonc")));
+      writeFileSync(
+        join(dir, "migrations", "0001_init.sql"),
+        "CREATE TABLE payments (id INTEGER PRIMARY KEY AUTOINCREMENT, order_id TEXT NOT NULL UNIQUE);\n",
+      );
+      writeFileSync(
+        join(dir, "migrations", "0002_amount.sql"),
+        "ALTER TABLE payments ADD amount_cents INTEGER NOT NULL DEFAULT 0;\n",
+      );
+      writeFileSync(
+        join(dir, "payments.sim.ts"),
+        readFileSync(join(example, "payments.fixed.sim.ts"), "utf8")
+          .replace(
+            'setup: [d1Schema("DB", "./schema.fixed.sql")]',
+            'setup: [d1Schema("DB", "./migrations/0001_init.sql"), d1Schema("DB", "./migrations/0002_amount.sql")]',
+          )
+          .replace('"./worker.fixed.ts"', '"./worker.ts"'),
+      );
+      const r = eutaxy(["check", join(dir, "payments.sim.ts"), "--max-runs", "3", "--seed", "cli"]);
+      expect(r.status, `${r.stdout}\n${r.stderr}`).toBe(0);
+      expect(r.stdout).toContain("BOUNDED  payments-fixed");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

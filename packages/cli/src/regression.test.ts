@@ -30,6 +30,21 @@ describe("cloudflareRegressionTest", () => {
     expect(src).not.toContain("maxRetries");
   });
 
+  test("a binding with several schema files imports each and joins them in setup order", () => {
+    const src = cloudflareRegressionTest(verdict, {
+      scenarioPath: "./scenario.sim.js",
+      workerPath: "./worker.js",
+      schemaPaths: { DB: ["./m/0001.sql", "./m/0002.sql"], DB_2: "./other.sql" },
+    });
+    expect(src).toContain('import schema_DB from "./m/0001.sql?raw";');
+    // The second file's name would be DB_2, which the binding DB_2 also wants: each gets its own.
+    expect(src).toContain('import schema_DB_2 from "./m/0002.sql?raw";');
+    expect(src).toContain('import schema_DB_2_2 from "./other.sql?raw";');
+    expect(src).toContain(
+      'schemas: { DB: [schema_DB, schema_DB_2].join("\\n;\\n"), DB_2: schema_DB_2_2 }',
+    );
+  });
+
   test("passes the Worker module's exports when asked (Workflows set up, a named entrypoint driven)", () => {
     for (const flag of [{ exports: true }, { workflows: true }]) {
       const src = cloudflareRegressionTest(verdict, {

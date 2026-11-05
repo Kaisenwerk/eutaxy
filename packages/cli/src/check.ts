@@ -353,12 +353,12 @@ export async function runCheck(o: CheckOptions): Promise<number> {
     if (regressionPath !== undefined) {
       const outPath = regressionPath;
       const outDir = dirname(outPath);
-      const schemaPaths: Record<string, string> = {};
+      const schemaPaths: Record<string, string[]> = {};
       for (const step of transport.setup) {
         if (step.kind === "d1") {
-          schemaPaths[String(step["binding"])] = toPosix(
-            relative(outDir, resolve(dir, String(step["schemaFile"]))),
-          );
+          const binding = String(step["binding"]);
+          const path = toPosix(relative(outDir, resolve(dir, String(step["schemaFile"]))));
+          schemaPaths[binding] = [...(schemaPaths[binding] ?? []), path];
         }
       }
       const calleePaths: Record<

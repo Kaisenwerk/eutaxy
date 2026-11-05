@@ -6,8 +6,8 @@ export interface CloudflareRegressionOptions {
   readonly scenarioPath: string;
   /** Import path of the Worker module. */
   readonly workerPath: string;
-  /** D1 binding name to schema file path, imported with `?raw`. */
-  readonly schemaPaths: Readonly<Record<string, string>>;
+  /** D1 binding name to its schema file path, or its files in setup order (joined), imported with `?raw`. */
+  readonly schemaPaths: Readonly<Record<string, string | readonly string[]>>;
   /**
    * The time budget the check ran with, when it replaced the scenario's: the
    * replay gets the same, so I/O that finished within it does not time out.
@@ -84,10 +84,22 @@ export function cloudflareRegressionTest(
 ): string {
   const bindings = Object.keys(options.schemaPaths).sort();
   const callees = Object.keys(options.callees ?? {}).sort();
-  const schemaIds = identifiers(bindings);
+  /**
+   * Each binding's files, in setup order, each with an identifier of its own: the binding's name for the
+   * first, a count after it for the later ones, made unique across all files as `identifiers` does.
+   */
+  const taken = new Set<string>();
+  const files = bindings.flatMap((b) => {
+    const paths = options.schemaPaths[b] ?? [];
+    return (typeof paths === "string" ? [paths] : paths).map((path, i) => {
+      const base = (i === 0 ? b : `${b}_${i + 1}`).replace(/[^A-Za-z0-9_$]/g, "_");
+      let id = base;
+      for (let n = 2; taken.has(id); n++) id = `${base}_${n}`;
+      taken.add(id);
+      return { binding: b, path, id };
+    });
+  });
   const calleeIds = identifiers(callees);
-  const ident = (binding: string): string =>
-    schemaIds.get(binding) ?? calleeIds.get(binding) ?? binding;
   const withExports = options.exports === true || options.workflows === true;
   const note =
     callees.length === 0 || (options.calleeBindings ?? []).length === 0
@@ -102,9 +114,7 @@ export function cloudflareRegressionTest(
     'import { env } from "cloudflare:workers";',
     ...(options.durableObjects ? ['import * as cloudflareTest from "cloudflare:test";'] : []),
     `import scenario from ${JSON.stringify(options.scenarioPath)};`,
-    ...bindings.map(
-      (b) => `import schema_${ident(b)} from ${JSON.stringify(`${options.schemaPaths[b]}?raw`)};`,
-    ),
+    ...files.map((f) => `import schema_${f.id} from ${JSON.stringify(`${f.path}?raw`)};`),
     ...callees.map(
       (b) =>
         `import * as callee_${calleeIds.get(b)} from ${JSON.stringify(options.callees?.[b]?.path)};`,
@@ -116,7 +126,11 @@ export function cloudflareRegressionTest(
       (m, i) => `import * as core_${i} from ${JSON.stringify(m.path)};`,
     ),
   ];
-  const schemas = `{ ${bindings.map((b) => `${key(b)}: schema_${ident(b)}`).join(", ")} }`;
+  const schemaOf = (b: string): string => {
+    const own = files.filter((f) => f.binding === b).map((f) => `schema_${f.id}`);
+    return own.length === 1 ? (own[0] as string) : `[${own.join(", ")}].join("\\n;\\n")`;
+  };
+  const schemas = `{ ${bindings.map((b) => `${key(b)}: ${schemaOf(b)}`).join(", ")} }`;
   const calleeOption =
     callees.length === 0
       ? ""

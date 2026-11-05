@@ -37,6 +37,22 @@ describe("schemasFor", () => {
     });
   });
 
+  test("joins several schema files on one binding in setup order, a migration per file", () => {
+    const migrations = {
+      ...base,
+      setup: [
+        { kind: "d1", binding: "DB", schemaFile: "./migrations/0001/migration.sql" },
+        { kind: "d1", binding: "DB", schemaFile: "./migrations/0002/migration.sql" },
+      ],
+    };
+    expect(
+      schemasFor(migrations, {
+        "../migrations/0002/migration.sql": "ALTER TABLE t ADD y",
+        "../migrations/0001/migration.sql": "CREATE TABLE t (x)",
+      }),
+    ).toEqual({ DB: "CREATE TABLE t (x)\n;\nALTER TABLE t ADD y" });
+  });
+
   test("names a schema file that is not next to the scenario", () => {
     expect(() => schemasFor(base, {})).toThrow(/schema file \.\/schema\.sql not found/);
   });
