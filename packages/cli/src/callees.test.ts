@@ -164,6 +164,10 @@ export class inventory__Fulfilment extends callee0_Fulfilment {
       bindings: { "inventory/REGION": "eu" },
     });
     expect(miniflareOptionsSource([])).toBe("{}");
+    // The caller's own service bindings, scripted or not, are replaced too: the platform answers them.
+    expect(miniflareOptionsSource([], undefined, ["BILLING", "MAIL"])).toBe(
+      `{"serviceBindings":{"BILLING":${neverCalled},"MAIL":${neverCalled}}}`,
+    );
     const bare = {
       ...c,
       d1: [],

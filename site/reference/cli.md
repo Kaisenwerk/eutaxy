@@ -42,7 +42,10 @@ What it does:
    classes that run are the ones that module exports, even when it is not
    the config's `main`, as a fixed variant of a Worker usually is. (The
    regression test it writes runs under your own Vitest config, whose
-   `main` decides the classes there.) For a scenario with `callee()` steps it also reads
+   `main` decides the classes there.) Every service binding in your config
+   is replaced in the isolate by a function that is never called, since
+   the scenario answers it (`service()`) or runs its Worker (`callee()`),
+   so a binding may name a Worker that is not there. For a scenario with `callee()` steps it also reads
    each callee's wrangler config (JSON or JSONC), writes a main module that
    re-exports your Worker's exports and the callees' Durable Object and
    Workflow classes under qualified aliases, and adds the callees'

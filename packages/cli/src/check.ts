@@ -242,8 +242,10 @@ export async function runCheck(o: CheckOptions): Promise<number> {
         `callee ${describeCallee(c, dir)}: not added to the test's isolate: ${c.notAdded.join(", ")}\n`,
       );
   // Shared resources, from the caller's config (readable as JSON or JSONC) and the callees'.
-  const callerResources = callees.length > 0 ? readCallerResources(wrangler) : undefined;
-  const isolate = isolateOf(callees, callerResources);
+  const callerResources = readCallerResources(wrangler);
+  const isolate = isolateOf(callees, callees.length > 0 ? callerResources : undefined);
+  // The caller's service bindings, replaced in the isolate: the platform answers each one.
+  const callerServices = (callerResources?.services ?? []).map((s) => s.binding).filter((b) => b);
   for (const reason of isolate.notAdded) o.stderr(`not added to the test's isolate: ${reason}\n`);
   mkdirSync(workDir, { recursive: true });
   try {
@@ -297,7 +299,7 @@ export async function runCheck(o: CheckOptions): Promise<number> {
         configPath,
         vitestConfigSource(wrangler, testPath, reportPath, {
           main: mainPath,
-          miniflare: miniflareOptionsSource(callees, isolate),
+          miniflare: miniflareOptionsSource(callees, isolate, callerServices),
         }),
       );
     } else
@@ -307,7 +309,14 @@ export async function runCheck(o: CheckOptions): Promise<number> {
           wrangler,
           testPath,
           reportPath,
-          loaded ? { main: resolve(dir, loaded.worker.entry) } : undefined,
+          loaded
+            ? {
+                main: resolve(dir, loaded.worker.entry),
+                ...(callerServices.length > 0
+                  ? { miniflare: miniflareOptionsSource([], undefined, callerServices) }
+                  : {}),
+              }
+            : undefined,
         ),
       );
     const { code, output } = await runVitest(vitestBin(dir), configPath, dir);

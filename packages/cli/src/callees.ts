@@ -450,6 +450,11 @@ export const neverCalled = "neverCalled";
 export function miniflareOptionsSource(
   callees: readonly CalleeConfig[],
   isolate: ReturnType<typeof isolateOf> = noIsolate,
+  /**
+   * The caller's own service bindings: each is answered by the platform (scripted with service(), or a
+   * callee hosted inside the call), never by the Worker its config names, which the isolate may not hold.
+   */
+  callerServices: readonly string[] = [],
 ): string {
   const d1: Record<string, string> = {};
   const r2: Record<string, string> = {};
@@ -462,6 +467,7 @@ export function miniflareOptionsSource(
   // An alias is a second name of the caller's binding in env, which the platform gives it: nothing to add.
   const aliased = (name: string): boolean => name in isolate.aliases;
   Object.assign(dos, isolate.redirected);
+  for (const b of callerServices) services[b] = neverCalled;
   for (const c of callees) {
     for (const d of c.d1)
       if (!aliased(qualified(c.name, d.binding))) d1[qualified(c.name, d.binding)] = d.id;

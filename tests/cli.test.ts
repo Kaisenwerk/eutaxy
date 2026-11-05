@@ -218,6 +218,31 @@ describe("eutaxy check", () => {
     }
   }, 180_000);
 
+  test("a scripted service binding to a Worker the isolate does not hold still runs", () => {
+    // The scripted-billing entry, its binding pointed at the billing Worker by name (not at itself, as
+    // the corpus config does so that workerd starts): the scenario scripts it, so it is never called.
+    const entry = join(root, "corpus", "planted-bugs", "service-charge-twice");
+    const dir = join(root, "examples", "payments-queue", `cli-test-service-${process.pid}`);
+    mkdirSync(dir, { recursive: true });
+    try {
+      for (const f of ["worker.ts", "scenario.sim.ts", "schema.sql"])
+        writeFileSync(join(dir, f), readFileSync(join(entry, f)));
+      writeFileSync(
+        join(dir, "wrangler.jsonc"),
+        readFileSync(join(entry, "wrangler.jsonc"), "utf8").replace(
+          '"service": "planted-service-charge-twice"',
+          '"service": "billing"',
+        ),
+      );
+      const r = eutaxy(["check", join(dir, "scenario.sim.ts"), "--seed", "cli", "--no-regression"]);
+      expect(r.stderr).not.toContain("no such service is defined");
+      expect(r.status, `${r.stdout}\n${r.stderr}`).toBe(1);
+      expect(r.stdout).toContain("Invariant charged-once is violated");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 180_000);
+
   test("fails clearly without a scenario or a wrangler config", () => {
     expect(eutaxy(["check"]).status).toBe(3);
     const bad = eutaxy([
