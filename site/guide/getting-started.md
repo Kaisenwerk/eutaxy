@@ -8,7 +8,8 @@ This page takes a small queue consumer from "looks fine" to a bug found,
 fixed, and kept fixed by a regression test. The complete project is
 [`examples/payments-queue`](https://github.com/Kaisenwerk/eutaxy/tree/main/examples/payments-queue)
 in the repository; the [examples](/examples/payments-queue) show the same
-steps for a webhook and for a Durable Object with an alarm.
+steps for a webhook, a Durable Object with an alarm, an Agent, two
+Workers over a service binding and a Workflow.
 
 ## Requirements
 

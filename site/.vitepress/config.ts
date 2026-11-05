@@ -85,6 +85,9 @@ const examples: readonly { readonly dir: string; readonly text: string }[] = [
   { dir: "payments-queue", text: "A queue consumer over D1" },
   { dir: "webhook-idempotency", text: "A webhook with an idempotency key" },
   { dir: "lease-pool", text: "A lease pool object with an alarm" },
+  { dir: "agent-poll", text: "An Agent with a schedule and WebSockets" },
+  { dir: "service-binding", text: "Two Workers over a service binding" },
+  { dir: "workflow-approval", text: "A Workflow waiting for an event" },
 ];
 
 /** Pages that include a repository file: their date is that file's last commit, not the wrapper's. */

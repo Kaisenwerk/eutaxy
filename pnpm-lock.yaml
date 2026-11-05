@@ -269,6 +269,24 @@ importers:
         specifier: workspace:*
         version: link:../../packages/spec
 
+  examples/agent-poll:
+    devDependencies:
+      '@cloudflare/vitest-plugin':
+        specifier: 1.4.6
+        version: 1.4.6(@cloudflare/workers-types@5.20261022.1)(@types/node@24.19.2)(vitest@5.0.5(@opentelemetry/api@1.10.0)(@types/node@24.19.2)(vite@8.3.5(@types/node@24.19.2)(esbuild@0.28.2)(yaml@2.9.1)))
+      '@cloudflare/workers-types':
+        specifier: 5.20261022.1
+        version: 5.20261022.1
+      agents:
+        specifier: 0.32.0
+        version: 0.32.0(@babel/core@8.0.10)(@babel/runtime@7.29.10)(@modelcontextprotocol/client@2.4.0)(rolldown@1.2.15)(vite@8.3.5(@types/node@24.19.2)(esbuild@0.28.2)(yaml@2.9.1))(zod@4.6.5)
+      eutaxy:
+        specifier: workspace:*
+        version: link:../../packages/eutaxy
+      vitest:
+        specifier: 5.0.5
+        version: 5.0.5(@opentelemetry/api@1.10.0)(@types/node@24.19.2)(vite@8.3.5(@types/node@24.19.2)(esbuild@0.28.2)(yaml@2.9.1))
+
   examples/lease-pool:
     devDependencies:
       '@cloudflare/vitest-plugin':
@@ -299,7 +317,37 @@ importers:
         specifier: 5.0.5
         version: 5.0.5(@opentelemetry/api@1.10.0)(@types/node@24.19.2)(vite@8.3.5(@types/node@24.19.2)(esbuild@0.28.2)(yaml@2.9.1))
 
+  examples/service-binding:
+    devDependencies:
+      '@cloudflare/vitest-plugin':
+        specifier: 1.4.6
+        version: 1.4.6(@cloudflare/workers-types@5.20261022.1)(@types/node@24.19.2)(vitest@5.0.5(@opentelemetry/api@1.10.0)(@types/node@24.19.2)(vite@8.3.5(@types/node@24.19.2)(esbuild@0.28.2)(yaml@2.9.1)))
+      '@cloudflare/workers-types':
+        specifier: 5.20261022.1
+        version: 5.20261022.1
+      eutaxy:
+        specifier: workspace:*
+        version: link:../../packages/eutaxy
+      vitest:
+        specifier: 5.0.5
+        version: 5.0.5(@opentelemetry/api@1.10.0)(@types/node@24.19.2)(vite@8.3.5(@types/node@24.19.2)(esbuild@0.28.2)(yaml@2.9.1))
+
   examples/webhook-idempotency:
+    devDependencies:
+      '@cloudflare/vitest-plugin':
+        specifier: 1.4.6
+        version: 1.4.6(@cloudflare/workers-types@5.20261022.1)(@types/node@24.19.2)(vitest@5.0.5(@opentelemetry/api@1.10.0)(@types/node@24.19.2)(vite@8.3.5(@types/node@24.19.2)(esbuild@0.28.2)(yaml@2.9.1)))
+      '@cloudflare/workers-types':
+        specifier: 5.20261022.1
+        version: 5.20261022.1
+      eutaxy:
+        specifier: workspace:*
+        version: link:../../packages/eutaxy
+      vitest:
+        specifier: 5.0.5
+        version: 5.0.5(@opentelemetry/api@1.10.0)(@types/node@24.19.2)(vite@8.3.5(@types/node@24.19.2)(esbuild@0.28.2)(yaml@2.9.1))
+
+  examples/workflow-approval:
     devDependencies:
       '@cloudflare/vitest-plugin':
         specifier: 1.4.6

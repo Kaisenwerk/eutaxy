@@ -50,13 +50,22 @@
       "path": "corpus/prover-contracts"
     },
     {
+      "path": "examples/agent-poll"
+    },
+    {
       "path": "examples/lease-pool"
     },
     {
       "path": "examples/payments-queue"
     },
     {
+      "path": "examples/service-binding"
+    },
+    {
       "path": "examples/webhook-idempotency"
+    },
+    {
+      "path": "examples/workflow-approval"
     },
     {
       "path": "site"

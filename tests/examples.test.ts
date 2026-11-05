@@ -49,6 +49,30 @@ const examples: readonly Example[] = [
     fixed: "leases.fixed",
     fixedName: "leases-fixed",
   },
+  {
+    dir: "agent-poll",
+    scenario: "poll",
+    name: "poll",
+    invariant: "result-counts-every-vote",
+    fixed: "poll.fixed",
+    fixedName: "poll-fixed",
+  },
+  {
+    dir: "service-binding",
+    scenario: "checkout",
+    name: "checkout",
+    invariant: "one-charge-per-order",
+    fixed: "checkout.fixed",
+    fixedName: "checkout-fixed",
+  },
+  {
+    dir: "workflow-approval",
+    scenario: "expenses",
+    name: "expenses",
+    invariant: "paid-once",
+    fixed: "expenses.fixed",
+    fixedName: "expenses-fixed",
+  },
 ];
 
 function eutaxy(

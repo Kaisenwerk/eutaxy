@@ -1,0 +1,7 @@
+{
+  "name": "checkout",
+  "main": "worker.ts",
+  "compatibility_date": "2026-10-01",
+  // The payments Worker, by its name, through its Payments entrypoint.
+  "services": [{ "binding": "PAYMENTS", "service": "payments", "entrypoint": "Payments" }]
+}

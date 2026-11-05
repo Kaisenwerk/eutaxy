@@ -240,9 +240,18 @@ consumer over D1. Writing them showed that the command took a Worker's
 Durable Object and Workflow classes from the wrangler config's `main`
 even when the scenario's `worker.entry` named another module, so a fixed
 variant's object never ran; the entry is now the isolate's main module.
-The second slice is the other three examples, the third `eutaxy draft`,
-the fourth the reference pages, the `UNSUPPORTED` catalogue and the page
-on neighbours.
+The second slice, done, is the other three: `agent-poll` (an Agents SDK
+class over WebSocket connections whose schedule closes the poll; two
+votes at once, each awaiting a membership check, read the same tally, so
+the poll closes twice with one vote each, with no injected fault),
+`service-binding` (a checkout Worker charging through a payments Worker
+run for real with `callee()`; the payments Worker is idempotent per key,
+the checkout draws a key per request, so a resend after a lost answer
+charges twice) and `workflow-approval` (an expense approval waiting for
+the manager's decision event, then paying out in `step.do` with no
+idempotency key; a step that runs again pays again). The third slice is
+`eutaxy draft`, the fourth the reference pages, the `UNSUPPORTED`
+catalogue and the page on neighbours.
 
 Gate: every example checks green in CI through the command; `eutaxy
 draft` on each example's Worker and wrangler config produces a skeleton

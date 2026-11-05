@@ -1,0 +1,8 @@
+{
+  "name": "workflow-approval",
+  "main": "worker.ts",
+  "compatibility_date": "2026-10-01",
+  "workflows": [
+    { "name": "expense-approval", "binding": "APPROVALS", "class_name": "ExpenseApproval" }
+  ]
+}

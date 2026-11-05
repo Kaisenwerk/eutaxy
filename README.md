@@ -80,7 +80,9 @@ eutaxy check ./payments.sim.ts
 version of this: a queue consumer with a bug the check finds, and the fixed
 Worker it reports `BOUNDED` for. [examples/](examples) holds the others,
 each a Worker, its scenario, the bug and the fix: a webhook with an
-idempotency key, and a lease pool object with an alarm.
+idempotency key, a lease pool object with an alarm, an Agent with a
+schedule and WebSocket connections, two Workers over a service binding,
+and a Workflow waiting for an event.
 
 A scenario drives the Worker through its `queue()` handler, with
 `http(...)` through its `fetch()` handler, with `websocket(...)` over
