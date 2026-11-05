@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, test } from "vitest";
-import { agentSegment, draftScenario, renderDraft, runDraft } from "./draft.ts";
+import { agentSegment, draftScenario, migrationOrder, renderDraft, runDraft } from "./draft.ts";
 
 const root = mkdtempSync(join(tmpdir(), "eutaxy-draft-"));
 afterAll(() => rmSync(root, { recursive: true, force: true }));
@@ -283,6 +283,29 @@ test("an Agent's route segment is the Agents SDK's kebab case of its binding", (
     "my-a-p-i",
     "room-v2",
   ]);
+});
+
+test("migrations are ordered as wrangler orders them: by their number, compared as a number", () => {
+  expect(
+    ["10_seed.sql", "2_add.sql", "1_init.sql", "notes.sql", "0003_x.sql"].sort(migrationOrder),
+  ).toEqual(["1_init.sql", "2_add.sql", "0003_x.sql", "10_seed.sql", "notes.sql"]);
+});
+
+test("a migrations_pattern is left to the author, with a note", () => {
+  const dir = project("pattern", {
+    "wrangler.json": {
+      name: "p",
+      main: "w.ts",
+      d1_databases: [{ binding: "DB", migrations_pattern: "migrations/*/migration.sql" }],
+    },
+    "w.ts": worker,
+    "migrations/0001/migration.sql": "",
+    "migrations/stray.sql": "",
+  });
+  const d = draftScenario({ config: join(dir, "wrangler.json") });
+  expect(d.setup).toEqual([{ kind: "d1", binding: "DB", schemaFile: "./schema.sql" }]);
+  expect(d.notes).toHaveLength(1);
+  expect(d.notes[0]).toContain("its migrations are the files matching migrations/*/migration.sql");
 });
 
 describe("renderDraft", () => {

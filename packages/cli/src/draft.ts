@@ -110,13 +110,27 @@ function schemaOf(configDir: string, database: string): { file: string; found: b
 }
 
 /**
- * A migrations directory's files in the order wrangler applies them (by name): its `.sql` files, and a
+ * Migrations in the order wrangler applies them: by the number a name starts with, compared as a number
+ * (`2_add` before `10_seed`), then by name; a name with no number after the numbered ones.
+ */
+export function migrationOrder(a: string, b: string): number {
+  const na = /^\d+/.exec(a)?.[0];
+  const nb = /^\d+/.exec(b)?.[0];
+  if (na !== undefined && nb !== undefined && Number(na) !== Number(nb))
+    return Number(na) - Number(nb);
+  if (na !== undefined && nb === undefined) return -1;
+  if (na === undefined && nb !== undefined) return 1;
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+/**
+ * A migrations directory's files in the order wrangler applies them: its `.sql` files, and a
  * subdirectory's `migration.sql` (one folder per migration, as drizzle-kit writes them).
  */
 function migrationFiles(dir: string): string[] {
   if (!existsSync(dir)) return [];
   return readdirSync(dir, { withFileTypes: true })
-    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+    .sort((a, b) => migrationOrder(a.name, b.name))
     .flatMap((e) => {
       if (e.isFile() && e.name.endsWith(".sql")) return [join(dir, e.name)];
       const nested = join(dir, e.name, "migration.sql");
@@ -280,9 +294,16 @@ export function draftScenario(input: DraftInput): Draft {
         continue;
       }
       const schema = schemaOf(dir, text(db["database_name"]));
-      const migrations = schema.found
-        ? []
-        : migrationFiles(join(dir, text(db["migrations_dir"]) || "migrations"));
+      // A pattern choosing the migration files is the config's own rule, which the draft does not apply.
+      const pattern = text(db["migrations_pattern"]);
+      if (!schema.found && pattern)
+        notes.push(
+          `D1 ${prefix}${binding}: its migrations are the files matching ${pattern}; add a d1Schema step for each, in the order wrangler applies them`,
+        );
+      const migrations =
+        schema.found || pattern
+          ? []
+          : migrationFiles(join(dir, text(db["migrations_dir"]) || "migrations"));
       if (migrations.length > 0) {
         // No schema file, but migrations: one step per migration, applied in order as wrangler does.
         for (const file of migrations)
@@ -293,7 +314,7 @@ export function draftScenario(input: DraftInput): Draft {
           });
         continue;
       }
-      if (!schema.found)
+      if (!schema.found && !pattern)
         notes.push(
           `D1 ${prefix}${binding}: no schema file found; write the tables it needs into ${ref(scenarioDir, schema.file)}`,
         );
