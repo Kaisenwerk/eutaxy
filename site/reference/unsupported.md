@@ -12,6 +12,8 @@ page lists every reason the code can give, in the words the report uses
 (a name in angle brackets, `<binding>`, stands for the name in your
 scenario), with what it means and what to do. A test keeps the page and
 the code in step: a reason the code can give that is not here fails it.
+Which of these the model will close, and which stay by design, is in the
+[roadmap](/reference/roadmap) under the patch work and the candidates.
 
 The verdict's `cause` sorts the reasons:
 

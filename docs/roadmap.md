@@ -87,18 +87,19 @@ v0.16's and wait for it unless a target needs one sooner):
   outside the phases because it changes no behaviour; `docs/design.md` and
   this roadmap are included in it verbatim, so they stay the one record of
   what is decided.
-- Left over from v0.5: concurrent delivery on the AWS platform (it still
-  delivers one event at a time); latency on scripted externals; Workers KV,
-  and Durable Object SQL storage (objects use key-value storage so far);
-  dynamic partial-order reduction if real scenarios lose the sleep-set
-  reduction too often; Workflows beyond the model and v0.10 (step timeouts
-  in virtual time, `createBatch`, rollback handlers, pausing and
-  terminating instances); one random stream per invocation, when a shrunk
-  violation that keeps extra events gets in a target's way (randomness is
-  one stream per run, so dropping an earlier event shifts the random ids
-  drawn after it, and a violation keyed on them cannot shrink past it;
-  fault positions are already per invocation; every committed trace
-  changes with it).
+- The `UNSUPPORTED` reasons that close with little model work (the site's
+  catalogue of reasons lists them all): `newUniqueId()` drawn from the
+  run's seed, so it repeats on replay, in place of being refused; an R2
+  object's upload time on the virtual clock, so `onlyIf` conditions on it
+  are modelled; alarm calls inside `transactionSync()`, applied at its
+  commit; the AWS SDK's callback form of `send`, as the promise form; and
+  Workflow instance management, `terminate()`, `pause()`, `resume()`,
+  `restart()`, `createBatch()` and `deleteBatch()`, as the engine
+  documents them.
+- Left over from earlier phases: concurrent delivery on the AWS platform
+  (it still delivers one event at a time); latency on scripted externals;
+  Workflow rollback handlers. Dynamic partial-order reduction and one
+  random stream per invocation are v0.16's.
 
 `0.6.0` removed `checkSpecModule`, `lemmaBool`, `lemmaUnresolved` and
 `ModulePredicates` from the public facade (internal to `eutaxy check` since
@@ -305,6 +306,37 @@ them:
   between the late attempt and the retry, or the code that recovers from
   it, is never explored. The model measures step timeouts and lets the
   timed-out attempt run on as a concurrent turn.
+
+### Candidates: the larger gaps in the model
+
+The `UNSUPPORTED` reasons that need model work of their own, most useful
+first. Each waits until a target's code reaches it rather than being
+built for coverage, and each becomes a phase, or joins one, with a gate
+when it does:
+- **Calls between Durable Objects.** One object calling another through
+  its own `env` ends the run today; the call becomes an effect hosting
+  the second object's turn, with the faults a stub call has.
+- **Workers KV.** The most used binding the simulation does not proxy.
+  KV is eventually consistent, so the model explores reads that see an
+  older value within the documented propagation window, which is where
+  KV bugs live.
+- **Queue producers.** A `send()` feeds the scenario's own consumer of
+  that queue, so a chain of producing and consuming Workers is checked
+  end to end.
+- **A scripted binding for request-and-answer bindings** (Workers AI,
+  Vectorize, Images and the like), answered from the scenario as
+  `service()` answers a service binding.
+- **Later:** RPC promise pipelining and capabilities (stubs returned,
+  functions passed); the standard WebSocket API and auto-responses; D1
+  sessions; R2 multipart uploads; constructors that read the alarm, as an
+  Agents SDK class does; steps run in parallel with a wait.
+
+Some reasons stay by design: the replay and leak checks (`not_replayable`,
+`module_state_leak`) are what make a verdict trustworthy, and work Eutaxy
+cannot see (a promise nothing settles, real I/O past the budget, a raw TCP
+socket) is reported rather than guessed. The leak check could fire less
+often with fresh module state per run, at a cost in speed that is
+v0.16's to weigh.
 
 ### v0.16 — Runs that scale
 
