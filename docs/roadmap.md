@@ -9,62 +9,101 @@ passes, not on a date. The planted-bug and differential corpora grow with
 every phase. The JSON report schema is versioned, so CI and coding agents
 can rely on it.
 
-## v0.12 — The agent loop (done)
+## As of now
 
-v0.4 (the simulator), v0.5 (Durable Objects and specs), v0.6 (provers:
-the `TESTED` rung, the first-party `prover-lean` engine with its contract
-corpus and translation validation, the `Prover` interface, the `PROVEN`
-rung and the aggregation across engines), v0.7 (specs in TypeScript, the
-`prover-smt` engine over Z3 with doubles, code-unit strings and replayed
-models, and nullable types and tagged unions in the subset reader), v0.8
-(the self-check: `eutaxy report`, arrays and lists in the subset,
-structural recursion in Lean, proofs supplied beside the spec file and
-checked by the kernel, the invariant checkers held to naive references,
-the enumeration model proven and the enumerator held to it), v0.9 (the
-reader on the TypeScript compiler's API: binder types and the subset's
-types are what the user's compiler resolves, so generic aliases
-instantiated, inline object types, an alias declared later in the file,
-a record literal told apart by its declared return type and types
-imported from other files all read; narrowing by a union's tag) and
-v0.10 (one Worker of a system of Workers checkable on its own, the
-Workers it calls scripted: how a run chooses is one `Chooser` deciding
-faults and turns alike, and each binding one record that the platform
-and the differential runner both iterate; a drive that calls a
-`WorkerEntrypoint` method over RPC, resends under the caller's declared
-policy since Cloudflare does not retry a call; service bindings answered
-from scripted replies with the fault meanings of a stub call, every
-verdict stating that the callee was scripted; a drive for the
-`scheduled` handler with its ticks from the cron expression and the
-virtual clock; `step.waitForEvent` and `instance.sendEvent`, an instance
-waiting in virtual time up to its timeout; its gate, a Worker driven over
-RPC and by cron, calling another Worker through a service binding and
-handing each order to a Workflow that waits for its event, runs with no
-`UNSUPPORTED` verdict in `corpus/gates/`) and v0.11 (`eutaxy prover
-install lean` and `… smt`: each engine's upstream release file per
-platform, with its checksum, in a table beside the pin; downloaded only on
-the command, checked before unpacking, into a cache the engines look in
-first; a mirror or offline copy; the archives read with Node alone; its
-gate, the `check` workflow installing both engines with the command and
-the contract corpus passing on them) and v0.12 (`eutaxy mcp`, a stdio
-server for the Model Context Protocol written with the standard library,
-speaking both the stateless 2026-07-28 revision and the `initialize`
-handshake before it, whose tools `check`, `report`, `goals`, `prove` and
-`prover_status` return the JSON report; goal files, the Lean engine's open
-goals written beside the spec file as a proof file with every proof open,
-under the hashes of the module and the spec, so a proof file is stale once
-either changed and nothing in it is `PROVEN`) are done; the design
-describes what they built. The v0.12 gate: an end-to-end test over stdio
-goes from a check to a violation with its regression test, and from the
-open goals to a supplied proof to `PROVEN`, then stale once the module
-changes, in both protocol eras.
+The phases through v0.15 are done; `docs/design.md` describes what they
+built, and each phase's gate keeps running in CI on every change.
 
-`0.9.0` needs TypeScript 7.1 in the project (`typescript@7.1.0-beta`
-until the release on 2026-11-24, then the release): the spec reader runs
-the project's compiler. The reader follows the compiler's own releases
-(the beta, the release candidate on 2026-11-10, the release) and is
-pinned to each in turn. `readSpecs` takes the module's path
-(`modulePath`, and `specPath`) in place of the import specifiers it used
-to match by; the import is resolved by the compiler.
+- **v0.4, the simulator.** A Worker's queue consumer run under explored
+  schedules: faults at every effect, redelivery as Cloudflare Queues
+  does, invariants over the effect log, shrinking, a regression test per
+  violation, and traces that repeat byte for byte from a seed.
+- **v0.5, Durable Objects and specs.** Durable Objects as the real
+  objects workerd runs, with their alarms in virtual time, and spec files
+  beside the pure core.
+- **v0.6, provers.** The `TESTED` rung, the first-party `prover-lean`
+  engine with its contract corpus and translation validation, the
+  `Prover` interface, the `PROVEN` rung and the aggregation across
+  engines.
+- **v0.7, specs in TypeScript.** The `prover-smt` engine over Z3 with
+  doubles, code-unit strings and replayed models, and nullable types and
+  tagged unions in the subset reader.
+- **v0.8, the self-check.** `eutaxy report`, arrays and lists in the
+  subset, structural recursion in Lean, proofs supplied beside the spec
+  file and checked by the kernel, the invariant checkers held to naive
+  references, the enumeration model proven and the enumerator held to it.
+- **v0.9, the reader on the compiler.** Binder types and the subset's
+  types are what the user's TypeScript compiler resolves: generic aliases
+  instantiated, inline object types, aliases declared later, record
+  literals told apart by their declared return type, types imported from
+  other files, narrowing by a union's tag.
+- **v0.10, one Worker of a system.** How a run chooses is one `Chooser`
+  for faults and turns, and each binding one record the platform and the
+  differential runner iterate. An RPC drive resent under the caller's
+  policy, service bindings answered from scripted replies, a cron drive
+  on the virtual clock, and `step.waitForEvent` with `sendEvent`. Gate: a
+  Worker driven over RPC and by cron, calling a scripted Worker and
+  handing orders to a Workflow that waits for its event, runs with no
+  `UNSUPPORTED` verdict.
+- **v0.11, the provers installed.** `eutaxy prover install lean` and
+  `… smt`: each engine's pinned upstream release, checksum-verified before
+  it is unpacked, into a cache the engines look in first, or from a mirror
+  or offline copy. Gate: the `check` workflow installs both with the
+  command and the contract corpus passes on them.
+- **v0.12, the agent loop.** `eutaxy mcp`, a Model Context Protocol
+  server over stdio in both protocol eras, whose tools return the JSON
+  report; goal files, the Lean engine's open goals written beside the
+  spec file, stale once the module or the spec changes. Gate: over stdio,
+  a check to a violation and its regression test, and open goals to a
+  supplied proof to `PROVEN`, then stale once the module changes.
+- **v0.13, Durable Objects on SQLite, and Agents.** The `durableObject`
+  step resets, seeds and snapshots SQL tables beside key-value rows, and
+  state invariants read them as they read D1. An Agents SDK class runs as
+  written: its state, `this.sql`, schedules over the object's alarm, and
+  WebSocket connections as events (`websocket` drive) delivered to its
+  `webSocketMessage`, with what it sends recorded per connection. Gate:
+  an Agent with a schedule and WebSocket connections, and other objects on
+  SQLite, run with no `UNSUPPORTED` verdict, and a planted bug in an
+  object's SQL rows is caught.
+- **v0.14, the system.** The Worker behind a service binding runs for
+  real in its caller's simulation (`callee()`): the call is an effect
+  hosting the callee's invocation, a fault can land on either side, the
+  callee's bindings are qualified by its Worker's name, shared resources
+  are one resource, nested callees and a callee's Workflows run, and
+  `eutaxy check` builds the isolate from both wrangler configs. Gate: two
+  Workers' real code in one scenario with no `UNSUPPORTED` verdict, and a
+  planted bug across them caught where the same scenario with the callee
+  scripted is `BOUNDED`.
+- **v0.15, worked examples, and the first scenario in minutes.** Six
+  examples, each a Worker, its scenario, the bug it catches and the fix,
+  checked through the command and shown on the site: a queue consumer
+  over D1, a webhook with an idempotency key, a lease pool object with an
+  alarm, an Agent with a schedule and WebSockets, two Workers over a
+  service binding, a Workflow waiting for an event. `eutaxy draft` (a
+  command and an MCP tool) writes a scenario from a wrangler config, with
+  the invariants and events left as holes. The site gained a reference
+  page per entry point, generated from the source with a doc comment on
+  every public name, the catalogue of `UNSUPPORTED` reasons, and a page on
+  Eutaxy next to its neighbours. Writing the examples also made `eutaxy
+  check` run the scenario's own entry and wrangler config. Gate: every
+  example green through the command, each draft matching its example in
+  everything the author does not supply, and the site built with a page
+  per example and per entry point.
+
+Notes on releases along the way:
+- `0.9.0` needs TypeScript 7.1 in the project (`typescript@7.1.0-beta`
+  until the release on 2026-11-24, then the release): the spec reader runs
+  the project's compiler. The reader follows the compiler's own releases
+  (the beta, the release candidate on 2026-11-10, the release) and is
+  pinned to each in turn. `readSpecs` takes the module's path
+  (`modulePath`, and `specPath`) in place of the import specifiers it used
+  to match by; the import is resolved by the compiler.
+- `0.6.0` removed `checkSpecModule`, `lemmaBool`, `lemmaUnresolved` and
+  `ModulePredicates` from the public facade (internal to `eutaxy check` since
+  `0.5.1`) and `QueueHandler` from `eutaxy/cloudflare` (the former name of
+  `WorkerHandler`), all deprecated through `0.5.x`. `observeCore` stays
+  public: a user's own test needs it to give `refines` its decisions, and
+  generated regression tests import it.
 
 ## Patch work after v0.15
 
@@ -100,189 +139,6 @@ v0.16's and wait for it unless a target needs one sooner):
   (it still delivers one event at a time); latency on scripted externals;
   Workflow rollback handlers. Dynamic partial-order reduction and one
   random stream per invocation are v0.16's.
-
-`0.6.0` removed `checkSpecModule`, `lemmaBool`, `lemmaUnresolved` and
-`ModulePredicates` from the public facade (internal to `eutaxy check` since
-`0.5.1`) and `QueueHandler` from `eutaxy/cloudflare` (the former name of
-`WorkerHandler`), all deprecated through `0.5.x`. `observeCore` stays
-public: a user's own test needs it to give `refines` its decisions, and
-generated regression tests import it.
-
-## v0.13 — Durable Objects on SQLite, and Agents (done)
-
-Durable Object SQLite storage, the backend Cloudflare recommends for every
-new namespace and the one the Agents SDK requires. The objects stay the
-real ones workerd runs, with their gates and transactions; what changes
-is what Eutaxy resets, seeds and snapshots. The `durableObject` setup
-step takes tables beside its key-value rows: a reset clears SQL and
-key-value data alike (as `deleteAll` does), the seed creates the
-scenario's tables and inserts their rows through the Cloudflare Vitest
-plugin's helpers as the key-value seed does, and the snapshot lists every
-user table (from `sqlite_master`) with its rows beside the key-value
-rows, so the state invariants read an object's SQL rows as they read D1
-rows. `ctx.storage.sql.exec`, `transactionSync` and the synchronous
-`ctx.storage.kv` need no new effect points: the input gate holds storage
-calls, so they are not turns, as key-value calls are not; a `setAlarm`
-inside `transactionSync` stays `UNSUPPORTED`, and so do the
-point-in-time bookmarks. The differential corpus holds the model to
-workerd, which implements SQLite-backed objects locally.
-
-A class built on the Agents SDK (`Agent<Env, State>`) runs as written on
-that storage: its state, one value in SQLite (`initialState`,
-`this.state`, `setState`, `onStateChanged`), its `this.sql` tagged
-template, and its schedules (`schedule`, `scheduleEvery`,
-`listSchedules`, `cancelSchedule`), which the SDK keeps in SQLite and
-runs over the object's one alarm, which Eutaxy already fires in virtual
-time with several schedules over it. The Worker reaches the Agent as it
-reaches any object, through `routeAgentRequest` or `getAgentByName` from
-the HTTP drive. The target's Agents hold WebSocket connections, so these
-are events too (`websocket` drive): a connection opened by the scenario
-through the Worker's `fetch` and handed to an object (`onConnect`), and
-each message it sends, delivered inside the object by its
-`webSocketMessage` handler (`onMessage`) with the faults an alarm has; a
-crash drops the instance and the runtime keeps the connection, as it does
-across hibernation, so the next instance finds its server end again. What
-the Agent sends back (`send`, `broadcast`, state sync) is recorded per
-connection at the end of the run, in arrival order, and a close the
-object makes is recorded; a client's close as a scenario event (`onClose`)
-and the runtime's auto-response are not modelled, and a scenario that
-needs them makes the run `UNSUPPORTED`.
-
-Gate: object scenarios written the way the target writes them, on SQLite
-storage and including an Agents SDK class with a schedule and WebSocket
-connections (`corpus/gates/v0-13-agent-board`,
-`corpus/gates/v0-13-websocket-connections`), run with no `UNSUPPORTED`
-verdict, and a planted bug in an object's SQL rows is caught
-(`corpus/planted-bugs/inventory-oversell-sqlite`). No differential entry:
-the differential holds Eutaxy's binding proxies to the raw bindings, and
-Durable Objects are the real objects workerd runs on both sides, so there
-is no model of their storage to hold to workerd; what Eutaxy adds around
-them (reset, seed, snapshot, the alarm takeover, connections) is what the
-planted-bug and gate corpora exercise.
-
-## v0.14 — The system (done)
-
-The called Worker's real code runs in the same simulation as its caller:
-its effects are recorded and interleaved with the caller's, and a fault
-can land on either side, so a run follows a request across Workers end to
-end. The scenario names the callee the way it names the caller (its
-module and wrangler config), the service binding reaches that module's
-`WorkerEntrypoint` or `fetch` instead of a scripted reply, and the
-callee's effects run under an invocation of its own (the call's), on the
-callee's bindings, which the scenario's setup seeds and snapshots as it
-does the caller's; the trace names which Worker made each effect. v0.10's
-scripted callees stay for the Workers a scenario does not run. This is
-the hardest design, so it was written before any code: `docs/design.md`,
-"Workers calling each other, for real" (one isolate, the plugin's main
-module generated to hold both Workers, the call an effect hosting the
-callee's invocation, a crash in the callee an error to the caller, the
-callee's bindings qualified by its Worker's name); v0.10's scripted
-callees and v0.13's objects are what it is built from. The first slice, done,
-is the call path with the callee's exports and bindings given by the
-user's test: `callee()` names the Worker, the platform's `callees` option
-gives its name and module, the engine hosts its invocation inside the
-call (`hostInvocation`), and the planted bug `callee-reserve-twice` (an
-idempotency key drawn per attempt, so a resend after a lost answer
-reserves the same order twice in the callee's database) is caught, which
-the same scenario with the callee scripted misses. The second slice, done,
-is the command's generation: `eutaxy check` reads each callee's wrangler
-config, writes a main module beside its test that re-exports the caller's
-exports and the callees' classes under qualified aliases, and adds the
-callees' resources to the isolate through the plugin's miniflare options,
-so the corpus entry runs through the command as it runs from its own
-test. The third slice, done, is
-shared resources (a binding both configs name is one resource under the
-caller's name, the callee's an alias: the platform's `aliases`, derived by
-the command from the two configs, with a caller's binding to a callee's
-class redirected to the generated alias class), nested callees, a callee's
-own Workflows (its class, its env) and the gate entry
-`corpus/gates/v0-14-the-system`, checked through the command: a storefront
-naming the inventory Worker by its real name and binding its stock class,
-both Workers' real code, the stock object shared, the callee's Workflow,
-two orders in flight, `BOUNDED`.
-
-Gate: a scenario that drives one Worker, which calls another through a
-service binding, runs both Workers' real code with no `UNSUPPORTED`
-verdict, and catches a planted bug that crosses the two Workers, which
-the same scenario with the callee scripted misses.
-
-## v0.15 — Worked examples, and the first scenario in minutes (done)
-
-The binding surface is wide; the thin part is the first hour of use. The
-corpora hold the shapes real Workers take, twenty planted bugs and four
-gate Workers, none of them published; this phase makes those shapes the
-public face. `examples/` grows from one entry to six, each a realistic
-Worker, its scenario, the bug the scenario catches and the fix, checked
-through `eutaxy check` in CI (examples double as acceptance tests) and
-rendered as a guide page on the site: a webhook with an idempotency key, a
-queue consumer over a D1 ledger, a lease pool object with an alarm, an
-Agent with a schedule and a WebSocket connection, two Workers over a
-service binding, a Workflow waiting for an event. `eutaxy draft` (a
-command and an MCP tool) writes a scenario skeleton from a wrangler config
-and a Worker module: bindings become setup steps, handlers become drives,
-and the invariants are left as named holes, so the first scenario is a
-matter of filling them. The documentation gains what a first visitor
-needs beside the guides: a reference page per public export, a catalogue
-of every `UNSUPPORTED` reason with what to do about it, and a page on
-what Eutaxy is next to a Vitest run under Miniflare, property testing and
-a model checker. Nothing here changes a verdict; the phase is about who
-can reach one.
-
-The first slice, done, is the examples' frame and the first three:
-`tests/examples.test.ts` runs every directory under `examples/` through
-the command (the bug found, the regression test written, the fix
-`BOUNDED`) and checks that each has its site page, which includes the
-example's README and code. `webhook-idempotency` (a table of processed
-events beside the credit, two writes, so a lost answer between them
-credits twice) and `lease-pool` (a SQLite-backed object that leases
-runners and reclaims them from its alarm; a lost answer and the Worker's
-retry grant one request two runners) join `payments-queue`, the queue
-consumer over D1. Writing them showed that the command took a Worker's
-Durable Object and Workflow classes from the wrangler config's `main`
-even when the scenario's `worker.entry` named another module, so a fixed
-variant's object never ran; the entry is now the isolate's main module.
-The second slice, done, is the other three: `agent-poll` (an Agents SDK
-class over WebSocket connections whose schedule closes the poll; two
-votes at once, each awaiting a membership check, read the same tally, so
-the poll closes twice with one vote each, with no injected fault),
-`service-binding` (a checkout Worker charging through a payments Worker
-run for real with `callee()`; the payments Worker is idempotent per key,
-the checkout draws a key per request, so a resend after a lost answer
-charges twice) and `workflow-approval` (an expense approval waiting for
-the manager's decision event, then paying out in `step.do` with no
-idempotency key; a step that runs again pays again). The third slice,
-done, is `eutaxy draft` (the command and the MCP tool `draft`): the
-config's bindings become setup steps, a service binding a `callee()`
-when the other Worker's config is found under the directory, the
-Worker's entry points the drive, the hosts its code fetches the
-externals, and the invariants and events are holes marked TODO.
-`tests/draft.test.ts` drafts each example from its wrangler config and
-compares the result with the example's scenario on the Worker, the
-drive's kind and target, the setup steps with their files and classes,
-and the externals' names and hosts, leaving out what the author supplies
-(the invariants, the drive's events, seed data, the externals' answers,
-the bounds and the name); a draft filled in by hand finds the payments
-example's bug through the command. `eutaxy check` now also reads the
-wrangler config the scenario names, which need not sit beside it. The
-fourth slice, done, is the documentation a first visitor needs: a
-reference page per entry point of the package (`eutaxy`,
-`eutaxy/cloudflare`, `eutaxy/aws`, `eutaxy/spec`), every exported name
-with its declaration and doc comment, written by `scripts/reference.ts`
-from the source and checked against it by a test that also requires a
-doc comment on every public name; the catalogue of `UNSUPPORTED`
-reasons, each with what to do, which a test keeps in step with every
-reason the code can give; and a page on Eutaxy next to a Vitest run under
-Miniflare, property-based testing, model checkers and deterministic
-simulation testing.
-
-Gate: every example checks green in CI through the command; `eutaxy
-draft` on each example's Worker and wrangler config produces a skeleton
-that differs from the example's scenario only in what the author
-supplies: the invariants, the drive's events, seed data, the externals'
-answers, the bounds and the name (a test diffs them); and the site builds with a page per
-example and per public export. Passed in CI with the phase's last slice:
-six examples checked through the command, each draft matching its
-example, and the site built with a page per example and per entry point.
 
 ## After v0.15
 
