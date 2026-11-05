@@ -1091,8 +1091,8 @@ Vitest, rather than hosting workerd itself. That keeps the CLI free of
 runtime dependencies. Concretely, `eutaxy check <scenario.sim.ts>` writes a
 `.eutaxy/` directory beside the scenario holding a test that performs the
 check inside workerd and a Vitest config with the Cloudflare plugin pointed
-at the wrangler config found beside the scenario (or given with
-`--wrangler`). The test holds only the Vite globs (they resolve at build
+at the wrangler config the scenario names (or given with `--wrangler`;
+for a scenario that does not load in Node, the one beside it). The test holds only the Vite globs (they resolve at build
 time, so they must be written in it) and one call to `checkInWorkerd`, a
 typed function of the `cli` package that resolves the Worker and schema
 files from the scenario's own `worker.entry` and `setup`, observes the

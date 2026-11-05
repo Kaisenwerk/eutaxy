@@ -20,7 +20,7 @@ on a violation.
 
 | Option               | Does                                                                                    |
 | -------------------- | --------------------------------------------------------------------------------------- |
-| `--wrangler <path>`  | The wrangler config (default: `wrangler.jsonc`, `.json` or `.toml` beside the scenario) |
+| `--wrangler <path>`  | The wrangler config (default: the one the scenario names, else `wrangler.jsonc`, `.json` or `.toml` beside it) |
 | `--seed <seed>`      | The exploration seed (default: the scenario's file name)                                |
 | `--max-runs <n>`     | Cap the exploration runs, in addition to the time budget                                |
 | `--budget-ms <n>`    | Replace the scenario's time budget; with `--max-runs`, the run cap decides              |

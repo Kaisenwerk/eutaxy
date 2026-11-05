@@ -144,6 +144,46 @@ describe("eutaxy check", () => {
     expect(r.stdout).toContain("This is not a proof.");
   }, 180_000);
 
+  test("reads the wrangler config the scenario names, which need not sit beside it", () => {
+    // A copy of the payments example whose config lives in deploy/; nothing named wrangler.* sits beside
+    // the scenario. Inside the example, so the copy resolves the example's dependencies.
+    const example = join(root, "examples", "payments-queue");
+    const dir = join(example, `config-elsewhere-${process.pid}`);
+    mkdirSync(join(dir, "deploy"), { recursive: true });
+    try {
+      for (const f of ["worker.fixed.ts", "worker.ts", "schema.fixed.sql"])
+        writeFileSync(join(dir, f), readFileSync(join(example, f)));
+      const config = JSON.parse(readFileSync(join(example, "wrangler.jsonc"), "utf8")) as Record<
+        string,
+        unknown
+      >;
+      writeFileSync(
+        join(dir, "deploy", "wrangler.jsonc"),
+        JSON.stringify({ ...config, main: "../worker.fixed.ts" }),
+      );
+      writeFileSync(
+        join(dir, "payments.sim.ts"),
+        readFileSync(join(example, "payments.fixed.sim.ts"), "utf8").replace(
+          '"./wrangler.jsonc"',
+          '"./deploy/wrangler.jsonc"',
+        ),
+      );
+      const r = eutaxy(["check", join(dir, "payments.sim.ts"), "--max-runs", "3", "--seed", "cli"]);
+      expect(r.status, `${r.stdout}\n${r.stderr}`).toBe(0);
+      expect(r.stdout).toContain("BOUNDED  payments-fixed");
+      // A config the scenario names that does not exist is an error that names it.
+      writeFileSync(
+        join(dir, "missing.sim.ts"),
+        readFileSync(join(dir, "payments.sim.ts"), "utf8").replace("./deploy/", "./nowhere/"),
+      );
+      const missing = eutaxy(["check", join(dir, "missing.sim.ts")]);
+      expect(missing.status).toBe(3);
+      expect(missing.stderr).toContain("the scenario's wrangler config was not found");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 180_000);
+
   test("fails clearly without a scenario or a wrangler config", () => {
     expect(eutaxy(["check"]).status).toBe(3);
     const bad = eutaxy([

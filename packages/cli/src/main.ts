@@ -13,7 +13,8 @@ Usage:
   eutaxy mcp
 
 check options:
-  --wrangler <path>     wrangler config (default: wrangler.jsonc/json/toml beside the scenario)
+  --wrangler <path>     wrangler config (default: the one the scenario names, else
+                        wrangler.jsonc/json/toml beside the scenario)
   --seed <seed>         exploration seed (default: the scenario file name)
   --max-runs <n>        cap on exploration runs in addition to the scenario's time budget
   --budget-ms <n>       replace the scenario's time budget (with --max-runs, the run cap decides)

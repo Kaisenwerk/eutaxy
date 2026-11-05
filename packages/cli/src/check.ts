@@ -194,11 +194,6 @@ export async function runCheck(o: CheckOptions): Promise<number> {
   const name = basename(scenarioPath)
     .replace(/\.sim\.ts$/, "")
     .replace(/\.ts$/, "");
-  const wrangler = findWrangler(dir, o.wrangler, o.cwd);
-  if (!wrangler || !existsSync(wrangler)) {
-    o.stderr(`no wrangler config found next to the scenario; pass --wrangler <path>\n`);
-    return exitCodes.error;
-  }
   // One run's files carry a stamp of their own, so two checks of one scenario running at once (a CLI run
   // beside the MCP server's, say) never share a test, a config or Vitest's report file; specs.ts is the
   // same for every run of the directory and is shared.
@@ -223,6 +218,17 @@ export async function runCheck(o: CheckOptions): Promise<number> {
     o.stderr(
       `could not read the scenario in Node, so the isolate's main module is the wrangler config's: ${String(err).split("\n")[0]}\n`,
     );
+  }
+  // The wrangler config: --wrangler, else the one the scenario names, else one beside the scenario.
+  const named = o.wrangler === undefined ? loaded?.worker.config : undefined;
+  const wrangler = named !== undefined ? resolve(dir, named) : findWrangler(dir, o.wrangler, o.cwd);
+  if (!wrangler || !existsSync(wrangler)) {
+    o.stderr(
+      named !== undefined
+        ? `the scenario's wrangler config was not found: ${wrangler}; pass --wrangler <path>\n`
+        : `no wrangler config found next to the scenario; pass --wrangler <path>\n`,
+    );
+    return exitCodes.error;
   }
   try {
     callees = calleeSteps(loaded?.setup ?? []).map((step) => readCalleeConfig(step, dir));

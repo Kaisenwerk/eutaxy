@@ -196,7 +196,8 @@ export const tools: readonly Tool[] = [
         },
         wrangler: {
           type: "string",
-          description: "Wrangler config path; default: the one beside the scenario",
+          description:
+            "Wrangler config path; default: the one the scenario names, else the one beside it",
         },
         seed: { type: "string", description: "Exploration seed; default: the scenario file name" },
         maxRuns: { type: "integer", minimum: 1, description: "Cap on exploration runs" },
