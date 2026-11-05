@@ -66,11 +66,11 @@ pinned to each in turn. `readSpecs` takes the module's path
 (`modulePath`, and `specPath`) in place of the import specifiers it used
 to match by; the import is resolved by the compiler.
 
-## Patch work alongside v0.15
+## Patch work after v0.15
 
-Work toward v0.15 ships as `0.14.x`, and so does the following, each when
-a target needs it (the performance items and the proof cache are v0.16's
-and wait for it unless a target needs one sooner):
+Until the next phase opens, work ships as `0.15.x`: the following, each
+when a target needs it (the performance items and the proof cache are
+v0.16's and wait for it unless a target needs one sooner):
 - A configurable number of `TESTED` draws on the command line (the API
   takes `inputs`).
 - The command loads the spec reader and the engines only where specs are
@@ -205,7 +205,7 @@ service binding, runs both Workers' real code with no `UNSUPPORTED`
 verdict, and catches a planted bug that crosses the two Workers, which
 the same scenario with the callee scripted misses.
 
-## v0.15 — Worked examples, and the first scenario in minutes (current)
+## v0.15 — Worked examples, and the first scenario in minutes (done)
 
 The binding surface is wide; the thin part is the first hour of use. The
 corpora hold the shapes real Workers take, twenty planted bugs and four
@@ -279,7 +279,9 @@ draft` on each example's Worker and wrangler config produces a skeleton
 that differs from the example's scenario only in what the author
 supplies: the invariants, the drive's events, seed data, the externals'
 answers, the bounds and the name (a test diffs them); and the site builds with a page per
-example and per public export.
+example and per public export. Passed in CI with the phase's last slice:
+six examples checked through the command, each draft matching its
+example, and the site built with a page per example and per entry point.
 
 ## After v0.15
 
