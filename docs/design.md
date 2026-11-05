@@ -887,7 +887,11 @@ shares the reading of the limit and none of the proxy code.
   wait with no event suspends the instance (`wait`; status `waiting`) until
   the event wakes it or its deadline passes (default 24 hours, in virtual
   time), when the wait throws a `WorkflowTimeoutError` the code may catch
-  (`wait_timeout`); resuming re-runs `run()` with the persisted results, as
+  (`wait_timeout`). The suspension is the engine's hibernation, not an
+  error: the wait's promise never settles and the run ends there, so no
+  `catch` around the wait sees it and nothing after it runs until the
+  wake (a step call from code still running alongside never settles
+  either); resuming re-runs `run()` with the persisted results, as
   every restart does, and the wait's result or error is persisted by step
   name and count, so a later restart replays it. `sendEvent` is one effect
   with a stub call's faults (`send_event`), refused for a complete or

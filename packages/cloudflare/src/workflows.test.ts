@@ -427,6 +427,32 @@ class WaitingFlow extends WorkflowEntrypoint {
   }
 }
 
+/**
+ * Polls: waits briefly for an event, treats the wait's timeout as "poll now" by catching it, all inside a
+ * try that recovers. A wait with no event yet hibernates the instance, which no catch sees: nothing after
+ * it runs until the wake, so the timeout path and the recovery run only when the engine says so.
+ */
+class PollingFlow extends WorkflowEntrypoint {
+  async run(_e: unknown, step: Step) {
+    try {
+      for (let round = 0; round < 3; round++) {
+        const got = await step
+          .waitForEvent("go", { type: "go", timeout: "15 seconds" })
+          .catch(() => undefined);
+        if (got) return { got: true, round };
+        await step.do(`poll-${round}`, async () => {
+          outside.push(`poll-${round}`);
+          return "polled";
+        });
+      }
+      return { got: false };
+    } catch {
+      await step.do("recover", async () => "recovered");
+      return { recovered: true };
+    }
+  }
+}
+
 /** Starts one instance per message, keyed by the message id; a duplicate create is caught. */
 const webhook: WorkerHandler = {
   async fetch(request, env) {
@@ -520,6 +546,7 @@ const platform = () =>
       SleepyFlow,
       GiveUpFlow,
       WaitingFlow,
+      PollingFlow,
       TimingFlow,
       NamedFlow,
       ContextFlow,
@@ -1204,6 +1231,15 @@ describe("a Workflow started from a webhook", () => {
     expect(instances(r)[0]?.output).toEqual({ name: "named-flow" });
     const r2 = await run(scenario("NamedFlow"));
     expect(r2.unsupportedReasons.join()).toContain("event.workflowName needs the Workflow's name");
+  });
+
+  test("a wait no catch can see: catching around it polls on its timeout, and nothing runs while it waits", async () => {
+    const r = await run(scenario("PollingFlow"));
+    expect(r.unsupportedReasons).toEqual([]);
+    // Each wait hibernates the instance until its 15-second deadline, then times out; the catch turns the
+    // timeout into a poll. The recovery never runs: no suspension reached the code.
+    expect(instances(r)[0]).toMatchObject({ status: "complete", output: { got: false } });
+    expect(outside).toEqual(["poll-0", "poll-1", "poll-2"]);
   });
 
   test("what is not modelled makes the run UNSUPPORTED", async () => {

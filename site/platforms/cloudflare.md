@@ -223,7 +223,9 @@ time.
 event sent before the wait is buffered and returned at once; a wait with no
 event suspends the instance (status `waiting`) until the event or its
 deadline (default 24 hours, in virtual time) wakes it, when the wait throws
-the catchable `WorkflowTimeoutError`. Resuming re-runs `run()` with the
+the catchable `WorkflowTimeoutError`. The suspension is not an error: a
+`catch` around the wait sees only that timeout, and nothing after the wait
+runs until the instance wakes. Resuming re-runs `run()` with the
 persisted results, so code outside steps repeats here too, and the wait's
 result is replayed, not consumed again.
 

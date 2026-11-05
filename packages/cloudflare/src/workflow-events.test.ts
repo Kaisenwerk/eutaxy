@@ -71,7 +71,8 @@ class ApprovalFlow extends WorkflowEntrypoint {
         got.push((await step.waitForEvent("second", { type: "signed" })) as Received);
     } catch (err) {
       if (event.payload.swallow) {
-        // Catching the suspension itself: not modelled, and reported.
+        // Catching anything the wait throws: only its timeout ever reaches here, never its hibernation.
+        seen.push(`swallowed at ${Date.now() - virtualEpoch}`);
         return step.do("after swallow", () => "continued");
       }
       if (!event.payload.catchIt) throw err;
@@ -351,11 +352,16 @@ describe("waiting for an event", () => {
     });
   });
 
-  test("code that catches the suspension and goes on is not modelled", async () => {
+  test("a catch around a wait sees its timeout, never its hibernation", async () => {
     const r = await run(scenario([start("s-1", { swallow: true })]));
-    expect(r.unsupportedReasons.join("\n")).toContain(
-      "after step.waitForEvent suspended the instance",
-    );
+    expect(r.unsupportedReasons).toEqual([]);
+    // The instance hibernated at the wait; the catch ran once, when the 24-hour timeout woke it.
+    const swallowed = seen.filter((s) => s.startsWith("swallowed"));
+    expect(swallowed).toHaveLength(1);
+    // At the deadline, plus the virtual millisecond each effect takes.
+    expect(Number(swallowed[0]?.split(" at ")[1])).toBeGreaterThanOrEqual(86_400_000);
+    expect(Number(swallowed[0]?.split(" at ")[1])).toBeLessThan(86_400_100);
+    expect(instances(r)[0]).toMatchObject({ status: "complete", output: "continued" });
   });
 });
 

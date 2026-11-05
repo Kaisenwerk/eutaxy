@@ -296,13 +296,12 @@ function validEventType(type: unknown): string {
   );
 }
 
-/** Thrown through `run()` to suspend an instance waiting for an event; never meant to be caught. */
-class Suspension {
-  readonly gen: number;
-  constructor(gen: number) {
-    this.gen = gen;
-  }
-}
+/**
+ * A promise that never settles: what a step call gives once its instance hibernated. The engine stops a
+ * waiting instance's code where it is, so nothing after the wait runs, caught or not, until a wake re-runs
+ * `run()` from the start.
+ */
+const hibernated = <T>(): Promise<T> => new Promise<T>(() => {});
 
 /** A wake event's data: which wait's generation it ends. */
 interface WakeData {
@@ -500,7 +499,7 @@ export async function deliverWorkflow(
         (ctx: unknown) => unknown,
         { rollback?: unknown } | undefined,
       ];
-      if (suspending !== undefined) continuedAfterSuspension("step.do");
+      if (suspending !== undefined) return hibernated();
       if (options?.rollback !== undefined) {
         hooks.unsupported(`Workflow ${d.binding}: rollback handlers are not modelled`);
         throw new Error("eutaxy: rollback handlers are not modelled");
@@ -688,7 +687,7 @@ export async function deliverWorkflow(
       name: string,
       options: { readonly type?: unknown; readonly timeout?: unknown } = {},
     ): Promise<unknown> => {
-      if (suspending !== undefined) continuedAfterSuspension("step.waitForEvent");
+      if (suspending !== undefined) return hibernated();
       const type = validEventType(options.type);
       const timeoutMs = durationMs(options.timeout ?? "24 hours");
       if (!(timeoutMs >= 1000 && timeoutMs <= 365 * 24 * 3_600_000)) {
@@ -753,18 +752,14 @@ export async function deliverWorkflow(
       const gen = ++instance.waitGen;
       instance.waiting = { type, gen, woken: false };
       suspending = { gen, deadline };
-      throw new Suspension(gen);
+      hibernate();
+      return hibernated();
     },
   };
-  /** Set once a wait suspended this run: anything the code does after it caught the suspension is not modelled. */
+  /** Set once a wait hibernated this run; the run then ends with the wait, wherever its code was. */
   let suspending: { readonly gen: number; readonly deadline: number } | undefined;
-  const continuedAfterSuspension = (what: string): never => {
-    const reason = `Workflow ${d.binding}: ${what} after step.waitForEvent suspended the instance; the code caught the suspension (catch only the wait's WorkflowTimeoutError)`;
-    hooks.unsupported(reason);
-    throw new Error(`eutaxy: ${reason}`);
-  };
   async function sleepStep(k: string, name: string, ms: number, until?: number): Promise<void> {
-    if (suspending !== undefined) continuedAfterSuspension("step.sleep");
+    if (suspending !== undefined) return hibernated();
     if (instance.persisted.has(k)) return;
     const pending = instance.deadlines.get(k);
     if (pending !== undefined) {
@@ -788,6 +783,11 @@ export async function deliverWorkflow(
     instance.persisted.set(k, { ok: true, value: null });
   }
 
+  // Resolved when a wait hibernates the instance: the run ends there, while run() itself never settles.
+  let hibernate = (): void => {};
+  const hibernation = new Promise<undefined>((resolve) => {
+    hibernate = () => resolve(undefined);
+  });
   const ran = await runInvocation(hooks, inv, () => {
     const flow = constructWorkflow(d.cls, executionContext(background), d.env) as {
       run(event: unknown, step: unknown): unknown;
@@ -808,7 +808,7 @@ export async function deliverWorkflow(
           return undefined;
         },
       });
-    return flow.run(workflowEvent, step);
+    return Promise.race([flow.run(workflowEvent, step), hibernation]);
   });
   // The engine keeps the result serialised: one it cannot keep fails the instance.
   const serialised = (value: unknown): RunOutcome<unknown> => {
@@ -825,14 +825,9 @@ export async function deliverWorkflow(
     }
   };
   let result: RunOutcome<unknown> = ran.status === "completed" ? serialised(ran.value) : ran;
-  if (suspending !== undefined) {
-    // The run ended by suspending: its outcome is the wait, whatever the code made of the sentinel.
-    if (!(ran.status === "errored" && ran.error instanceof Suspension) && ran.status !== "crashed")
-      hooks.unsupported(
-        `Workflow ${d.binding}: run() ${ran.status === "completed" ? "returned" : "threw"} after step.waitForEvent suspended the instance; the code caught the suspension (catch only the wait's WorkflowTimeoutError)`,
-      );
-    if (ran.status !== "crashed") result = { status: "completed", value: undefined };
-  }
+  // The run ended by hibernating: its outcome is the wait.
+  if (suspending !== undefined && ran.status !== "crashed")
+    result = { status: "completed", value: undefined };
   let status = result.status;
   if (suspending !== undefined && result.status === "completed") {
     instance.status = "waiting";
