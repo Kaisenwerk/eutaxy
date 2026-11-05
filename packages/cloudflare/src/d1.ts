@@ -253,8 +253,39 @@ export async function resetD1(real: D1Database, schema: string): Promise<void> {
       "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '\\_cf\\_%' ESCAPE '\\'",
     )
     .all<{ name: string }>();
+  // Children before parents: dropping a table deletes its rows first, which SQLite's foreign key checks
+  // refuse while another table's rows still reference them, and a child whose parent is already gone
+  // cannot be dropped at all. Each table's parents come from PRAGMA foreign_key_list.
+  const quote = (n: string): string => `"${n.replace(/"/g, '""')}"`;
+  const parents = new Map<string, Set<string>>();
   for (const { name } of tables.results) {
-    await real.prepare(`DROP TABLE IF EXISTS "${name.replace(/"/g, '""')}"`).run();
+    const keys = await real
+      .prepare(`PRAGMA foreign_key_list(${quote(name)})`)
+      .all<{ table: string }>();
+    parents.set(name, new Set(keys.results.map((k) => k.table).filter((t) => t !== name)));
+  }
+  const left = new Set(parents.keys());
+  for (;;) {
+    // A table no remaining table references is a leaf: dropped now.
+    const leaves = [...left].filter((t) => ![...left].some((o) => parents.get(o)?.has(t)));
+    if (leaves.length === 0) break;
+    for (const t of leaves) {
+      await real.prepare(`DROP TABLE IF EXISTS ${quote(t)}`).run();
+      left.delete(t);
+    }
+  }
+  if (left.size > 0) {
+    // Tables that reference each other in a cycle: emptied in one transaction with the checks deferred
+    // to its end, when nothing references anything, then dropped.
+    const cycle = [...left];
+    await real.batch([
+      real.prepare("PRAGMA defer_foreign_keys = on"),
+      ...cycle.map((t) => real.prepare(`DELETE FROM ${quote(t)}`)),
+    ]);
+    await real.batch([
+      real.prepare("PRAGMA defer_foreign_keys = on"),
+      ...cycle.map((t) => real.prepare(`DROP TABLE IF EXISTS ${quote(t)}`)),
+    ]);
   }
   for (const statement of splitSql(schema)) {
     await real.prepare(statement).run();
