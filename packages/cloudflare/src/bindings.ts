@@ -420,7 +420,7 @@ export function calleeBinding(deps: CalleeDeps): Binding<object, CalleeSetup> {
         const module = deps.callees?.[name];
         if (!module) {
           ctx.hooks.unsupported(
-            `callee ${name}: the platform was not given its module; pass createCloudflarePlatform({ ..., callees: { ${name}: { name, exports } } }) (eutaxy check does not load callees yet)`,
+            `callee ${name}: the platform was not given its module; pass createCloudflarePlatform({ ..., callees: { ${name}: { name, exports } } }), as eutaxy check does from the callee() step`,
           );
           // Never the real binding: a stub whose every call is reported.
           return proxyService(name, ctx, { kind: "service", binding: name, methods: {} });

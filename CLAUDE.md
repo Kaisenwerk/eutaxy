@@ -102,7 +102,7 @@ packages/eutaxy/           the published facade, eutaxy
 corpus/                    planted bugs, differential scenarios, prover contracts (never published)
 examples/                  runnable examples that double as acceptance tests
 site/                      the documentation site, eutaxy.dev (VitePress; never published to npm)
-scripts/                   release helpers (the README on the npm page)
+scripts/                   release and docs helpers (the README on the npm page, the API reference pages)
 ```
 
 ## 5. Changing these rules

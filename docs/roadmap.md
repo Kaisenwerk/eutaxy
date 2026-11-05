@@ -263,8 +263,16 @@ and the externals' names and hosts, leaving out what the author supplies
 the bounds and the name); a draft filled in by hand finds the payments
 example's bug through the command. `eutaxy check` now also reads the
 wrangler config the scenario names, which need not sit beside it. The
-fourth slice is the reference pages, the `UNSUPPORTED` catalogue and the
-page on neighbours.
+fourth slice, done, is the documentation a first visitor needs: a
+reference page per entry point of the package (`eutaxy`,
+`eutaxy/cloudflare`, `eutaxy/aws`, `eutaxy/spec`), every exported name
+with its declaration and doc comment, written by `scripts/reference.ts`
+from the source and checked against it by a test that also requires a
+doc comment on every public name; the catalogue of `UNSUPPORTED`
+reasons, each with what to do, which a test keeps in step with every
+reason the code can give; and a page on Eutaxy next to a Vitest run under
+Miniflare, property-based testing, model checkers and deterministic
+simulation testing.
 
 Gate: every example checks green in CI through the command; `eutaxy
 draft` on each example's Worker and wrangler config produces a skeleton

@@ -180,6 +180,7 @@ export default defineConfig({
           { text: "Provers", link: "/guide/provers" },
           { text: "Verdicts", link: "/guide/verdicts" },
           { text: "For coding agents", link: "/guide/agents" },
+          { text: "Eutaxy and its neighbours", link: "/guide/neighbours" },
         ],
       },
       {
@@ -197,6 +198,11 @@ export default defineConfig({
         text: "Reference",
         items: [
           { text: "CLI", link: "/reference/cli" },
+          { text: "eutaxy", link: "/reference/api/eutaxy" },
+          { text: "eutaxy/cloudflare", link: "/reference/api/cloudflare" },
+          { text: "eutaxy/aws", link: "/reference/api/aws" },
+          { text: "eutaxy/spec", link: "/reference/api/spec" },
+          { text: "UNSUPPORTED reasons", link: "/reference/unsupported" },
           { text: "Design", link: "/reference/design" },
           { text: "Roadmap", link: "/reference/roadmap" },
         ],
