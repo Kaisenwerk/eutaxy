@@ -1569,9 +1569,16 @@ export function block(x: number): number {
   /* @ts-ignore */
   return x + 1;
 }
+export function indented(x: number): number {
+  /*
+   * @ts-ignore */
+  return x + 1;
+}
 `);
     expect(m.functions.map((f) => f.name)).toEqual(["good", "quoted", "prose"]);
-    expect(m.outside.map((o) => o.name)).toEqual(["bad", "block"]);
+    // The compiler trims a block comment's last line before looking for the directive, so an
+    // indented one counts too.
+    expect(m.outside.map((o) => o.name)).toEqual(["bad", "block", "indented"]);
     // A directive above a statement reaches its first line, so every declaration sharing it.
     const shared = readSubset(`// @ts-ignore
 export const a = (x: number): number => x + 1, b = (x: number): number => x + 2;

@@ -1342,9 +1342,10 @@ function directiveIn(
   const check = (pos: number, commentEnd: number): void => {
     if (found || pos < start || commentEnd > end) return;
     const comment = text.slice(pos, commentEnd);
+    // The compiler trims the block comment's last line before looking (`trimStringStart`).
     const m = comment.startsWith("//")
       ? singleLine.exec(comment)
-      : lastLine.exec(comment.slice(comment.lastIndexOf("\n") + 1));
+      : lastLine.exec(comment.slice(comment.lastIndexOf("\n") + 1).trimStart());
     if (m) found = { text: `@ts-${m[1]}`, pos };
   };
   const visit = (node: Node): void => {
