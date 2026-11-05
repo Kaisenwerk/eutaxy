@@ -88,7 +88,10 @@ CREATE TABLE payments (
 
 A scenario is a TypeScript file, by convention `*.sim.ts`, whose default
 export says how to drive the Worker, what state to set up before each run,
-and what must hold afterwards:
+and what must hold afterwards. `npx eutaxy draft --out payments.sim.ts`
+writes one from your wrangler config, with the setup and the drive's kind
+filled in and the events and invariants left as holes marked TODO; filled
+in, it reads:
 
 ```ts
 // payments.sim.ts

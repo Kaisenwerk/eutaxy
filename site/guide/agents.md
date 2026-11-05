@@ -1,5 +1,5 @@
 ---
-description: Running Eutaxy from a coding agent through the Model Context Protocol - eutaxy mcp, its tools (check, report, goals, prove, prover_status), the proof loop with goal files, and what the agent cannot do.
+description: Running Eutaxy from a coding agent through the Model Context Protocol - eutaxy mcp, its tools (check, draft, report, goals, prove, prover_status), the proof loop with goal files, and what the agent cannot do.
 ---
 
 # For coding agents
@@ -9,7 +9,7 @@ counterexample comes back as a regression test, so the loop "check, read
 the report, fix or prove, check again" needs no human in the middle. For
 a coding agent, `eutaxy mcp` serves that loop over the
 [Model Context Protocol](https://modelcontextprotocol.io): one stdio
-server, five tools, each returning the same JSON report the command line
+server, six tools, each returning the same JSON report the command line
 prints with `--json`. Nothing in Eutaxy calls a model.
 
 ## Setup
@@ -35,6 +35,7 @@ where the scenarios and spec files are.
 | `report`        | Runs every spec file under a directory through `TESTED` and, with `provers`, `PROVEN`                                                                            |
 | `goals`         | Lists the properties the Lean engine could not prove, each with its statement, and writes them beside each spec file as `<spec>.goals.lean`                       |
 | `prove`         | Runs the Lean engine on one spec file's module with the proofs supplied beside it, and returns its verdicts                                                       |
+| `draft`         | Drafts a scenario from a wrangler config and the Worker module it names, with the invariants and events as holes to fill; returns the source and its notes        |
 | `prover_status` | Says which engines are installed, and how to install one                                                                                                         |
 
 A verdict is a result whatever it says: `VIOLATED` and `REFUTED` come back

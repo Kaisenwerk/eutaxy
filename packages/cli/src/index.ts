@@ -8,6 +8,16 @@ export {
   proveSpecs,
   runCheck,
 } from "./check.ts";
+export {
+  type Draft,
+  type DraftDrive,
+  type DraftInput,
+  type DraftOptions,
+  type DraftStep,
+  draftScenario,
+  renderDraft,
+  runDraft,
+} from "./draft.ts";
 export { checkTestSource, metaKey, vitestConfigSource } from "./generate.ts";
 export {
   InstallError,

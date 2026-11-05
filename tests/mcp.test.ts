@@ -106,6 +106,7 @@ describe("eutaxy mcp", () => {
       "report",
       "goals",
       "prove",
+      "draft",
       "prover_status",
     ]);
     const out = mkdtempSync(join(tmpdir(), "eutaxy-mcp-"));

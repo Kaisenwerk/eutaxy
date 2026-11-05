@@ -1,5 +1,6 @@
 import { parseArgs } from "./args.ts";
 import { exitCodes, runCheck } from "./check.ts";
+import { runDraft } from "./draft.ts";
 import { runInstall, toolchains } from "./install.ts";
 import { serveStdio } from "./mcp.ts";
 import { runReport } from "./report.ts";
@@ -8,6 +9,7 @@ const usage = `eutaxy — deterministic simulation checks and spec verdicts for 
 
 Usage:
   eutaxy check <scenario.sim.ts> [options]
+  eutaxy draft [wrangler config] [--worker <module>] [--out <file>] [--json]
   eutaxy report [dir] [--prover <names>] [--seed <seed>] [--json]
   eutaxy prover install <lean|smt> [--from <url or directory>] [--json]
   eutaxy mcp
@@ -27,6 +29,14 @@ check options:
   --expect-violation    write a regression test that asserts the violation (for corpora)
   --keep                keep the generated .eutaxy/ files
 
+draft writes a scenario skeleton from a wrangler config (JSON or JSONC; default:
+wrangler.jsonc or wrangler.json in the current directory) and the Worker module it names
+(--worker to name another): the bindings become setup steps (a service binding whose
+Worker's config is found under the directory becomes a callee), the handlers the drive,
+the hosts the code fetches the externals; the invariants and the events are left as holes
+marked TODO. It prints the scenario, or writes it to --out (never over an existing file);
+nothing is imported or run.
+
 report runs every spec file (*.props.ts) under dir (default: the current directory)
 through the TESTED rung, on inputs drawn from the parameter types with the seed
 (default: report), and the PROVEN rung with --prover. No scenario runs, so nothing
@@ -43,7 +53,8 @@ report options: --goals writes each module's open Lean goals beside its spec fil
 
 mcp serves the Model Context Protocol over stdio (one JSON-RPC message per line, logs on
 stderr) for a coding agent: tools check, report, goals, prove and prover_status, each
-returning the JSON report. Point the agent's MCP configuration at "eutaxy mcp".
+returning the JSON report, and draft, returning the drafted scenario. Point the agent's
+MCP configuration at "eutaxy mcp".
 
 Exit codes: 0 BOUNDED, 1 VIOLATED or a REFUTED or CONFLICT spec, 2 UNSUPPORTED, 3 error.
 report: 0, or 1 for a REFUTED or CONFLICT spec, 3 error. prover install: 0, or 3.
@@ -72,7 +83,7 @@ export async function main(argv: readonly string[], io: Io): Promise<number> {
   }
   // A value flag given without one would otherwise read as absent: `--prover` alone must not quietly
   // skip the PROVEN rung.
-  for (const k of ["wrangler", "seed", "max-runs", "budget-ms", "prover", "out", "from"])
+  for (const k of ["wrangler", "seed", "max-runs", "budget-ms", "prover", "out", "from", "worker"])
     if (flags[k] === true) {
       io.stderr(`--${k} needs a value\n`);
       return exitCodes.error;
@@ -133,6 +144,29 @@ export async function main(argv: readonly string[], io: Io): Promise<number> {
       ...(provers.length > 0 ? { provers } : {}),
       ...(str("seed") ? { seed: str("seed") as string } : {}),
       ...(flags["goals"] === true ? { goals: true } : {}),
+      json: flags["json"] === true,
+      stdout: io.stdout,
+      stderr: io.stderr,
+    });
+  }
+  if (command === "draft") {
+    if (positionals.length > 2) {
+      io.stderr(`draft takes one wrangler config\n\n${usage}`);
+      return exitCodes.error;
+    }
+    const other = Object.keys(flags).find((k) => !["worker", "out", "json"].includes(k));
+    if (other !== undefined) {
+      io.stderr(`draft does not take --${other}\n`);
+      return exitCodes.error;
+    }
+    const config = positionals[1];
+    const worker = str("worker");
+    const out = str("out");
+    return runDraft({
+      cwd: io.cwd,
+      ...(config === undefined ? {} : { config }),
+      ...(worker === undefined ? {} : { worker }),
+      ...(out === undefined ? {} : { out }),
       json: flags["json"] === true,
       stdout: io.stdout,
       stderr: io.stderr,

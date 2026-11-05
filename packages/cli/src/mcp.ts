@@ -17,6 +17,7 @@
 import { dirname } from "node:path";
 import { createInterface } from "node:readline";
 import { type CheckOptions, exitCodes, provers, runCheck } from "./check.ts";
+import { runDraft } from "./draft.ts";
 import { type ReportOptions, runReport } from "./report.ts";
 import { eutaxyVersion } from "./version.ts";
 
@@ -351,6 +352,55 @@ export const tools: readonly Tool[] = [
         }),
       );
       return asResult({ exitCode: r.code, report: reported("prove", r) });
+    },
+  },
+  {
+    name: "draft",
+    title: "Draft a scenario",
+    description:
+      "Draft a scenario (*.sim.ts) from a wrangler config (JSON or JSONC) and the Worker module it names: the bindings become setup steps (a service binding whose Worker's config is found under the directory becomes a callee), the Worker's handlers the drive, the hosts its code fetches the externals; the invariants and the drive's events are holes marked TODO for you to fill before calling check. Returns the source, the draft as data and its notes (bindings not modelled, guesses made); with out, also writes the file, never over an existing one. Nothing is imported or run.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        config: {
+          type: "string",
+          description:
+            "Wrangler config path, relative to the working directory; default: wrangler.jsonc or wrangler.json there",
+        },
+        worker: {
+          type: "string",
+          description: "The Worker module; default: the config's main",
+        },
+        out: {
+          type: "string",
+          description:
+            "Where to write the scenario; paths in it are relative to its directory. Default: not written",
+        },
+      },
+      additionalProperties: false,
+    },
+    async run(args, ctx) {
+      only(args, ["config", "worker", "out"]);
+      const config = str(args, "config");
+      const worker = str(args, "worker");
+      const out = str(args, "out");
+      let stdout = "";
+      let stderr = "";
+      const code = runDraft({
+        cwd: ctx.cwd,
+        ...(config === undefined ? {} : { config }),
+        ...(worker === undefined ? {} : { worker }),
+        ...(out === undefined ? {} : { out }),
+        json: true,
+        stdout: (t) => {
+          stdout += t;
+        },
+        stderr: (t) => {
+          stderr += t;
+        },
+      });
+      if (code !== 0) throw new ToolError(stderr.trim() || `draft exited ${code}`);
+      return asResult(JSON.parse(stdout) as Json);
     },
   },
   {

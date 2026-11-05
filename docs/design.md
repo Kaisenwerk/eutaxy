@@ -1483,6 +1483,7 @@ Engine rules:
 | Command                        | Does                                                                                |
 | ------------------------------ | ----------------------------------------------------------------------------------- |
 | `eutaxy check <spec>`          | Run a scenario; print the verdict and the shrunk trace, write a regression test     |
+| `eutaxy draft [config]`        | Write a scenario skeleton from a wrangler config and the Worker module it names     |
 | `eutaxy report [dir]`          | Run the spec ladder on every spec file under a directory, without a scenario        |
 | `eutaxy prover install <name>` | Put the pinned Lean or Z3 release for this platform in the cache, checksum-verified |
 | `eutaxy mcp`                   | Serve the Model Context Protocol over stdio for a coding agent                      |
@@ -1494,6 +1495,25 @@ scenario runs inside workerd under a budget and running all of them is the
 job of the project's test suite, which the regression tests already join.
 A spec file run by itself needs no separate command: `report` on its
 directory is that.
+
+`draft` is the first scenario's starting point, and it guesses nothing it
+cannot read. The wrangler config (JSON or JSONC) gives the setup: each D1
+binding with its schema file (`schema.sql`, `<database_name>.sql`, or the
+only `.sql` file beside the config), each Durable Object, R2 bucket and
+Workflow the Worker owns, and each service binding as a `callee()` when a
+wrangler config of that Worker's name is found under the directory,
+otherwise as a scripted `service()`. The drive follows the Worker's entry
+points: a queue consumer, else a Cron Trigger, else an Agent's route
+(`routeAgentRequest` in the code), else `fetch()`. The externals are the
+hosts the code fetches by a literal URL, in the module and the modules it
+imports by relative path. The invariants and the drive's events are left
+as holes marked TODO, with example invariants for the bindings found as
+comments: what must hold is the author's to say, and a scenario with no
+invariant does not check. Bindings the simulation does not proxy, other
+drives the Worker also has and every guess are written into the file as
+notes. Nothing is imported or run, so a draft costs nothing and cannot
+fail on the Worker's own imports; the source is scanned as text, which is
+why a URL built at run time is not found.
 
 **The agent loop.** `eutaxy mcp` serves the Model Context Protocol over
 stdio (one JSON-RPC message per line, logs on stderr, exit when stdin
@@ -1508,7 +1528,9 @@ and the result is shaped for it (`resultType` and the server's identity
 in the stateless one). The tools are pure functions of the repository's
 files, each returning the JSON report as structured content beside its
 text: `check` (a scenario, the `check` options; on a violation the
-report names the regression test written, `regressionTest`), `report` (a
+report names the regression test written, `regressionTest`), `draft` (a
+wrangler config and optionally the Worker module and where to write;
+the source, the draft as data and its notes), `report` (a
 directory, the engines), `goals` (the Lean engine's open goals under a
 directory, written beside each spec file), `prove` (one spec file's
 module, with the proofs supplied beside it) and `prover_status` (the

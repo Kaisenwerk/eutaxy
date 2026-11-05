@@ -249,14 +249,28 @@ run for real with `callee()`; the payments Worker is idempotent per key,
 the checkout draws a key per request, so a resend after a lost answer
 charges twice) and `workflow-approval` (an expense approval waiting for
 the manager's decision event, then paying out in `step.do` with no
-idempotency key; a step that runs again pays again). The third slice is
-`eutaxy draft`, the fourth the reference pages, the `UNSUPPORTED`
-catalogue and the page on neighbours.
+idempotency key; a step that runs again pays again). The third slice,
+done, is `eutaxy draft` (the command and the MCP tool `draft`): the
+config's bindings become setup steps, a service binding a `callee()`
+when the other Worker's config is found under the directory, the
+Worker's entry points the drive, the hosts its code fetches the
+externals, and the invariants and events are holes marked TODO.
+`tests/draft.test.ts` drafts each example from its wrangler config and
+compares the result with the example's scenario on the Worker, the
+drive's kind and target, the setup steps with their files and classes,
+and the externals' names and hosts, leaving out what the author supplies
+(the invariants, the drive's events, seed data, the externals' answers,
+the bounds and the name); a draft filled in by hand finds the payments
+example's bug through the command. `eutaxy check` now also reads the
+wrangler config the scenario names, which need not sit beside it. The
+fourth slice is the reference pages, the `UNSUPPORTED` catalogue and the
+page on neighbours.
 
 Gate: every example checks green in CI through the command; `eutaxy
 draft` on each example's Worker and wrangler config produces a skeleton
-that differs from the example's scenario only in the invariants and the
-drive's data (a test diffs them); and the site builds with a page per
+that differs from the example's scenario only in what the author
+supplies: the invariants, the drive's events, seed data, the externals'
+answers, the bounds and the name (a test diffs them); and the site builds with a page per
 example and per public export.
 
 ## After v0.15

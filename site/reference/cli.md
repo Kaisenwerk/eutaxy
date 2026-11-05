@@ -59,6 +59,33 @@ For CI, or any test that asserts a verdict, give a generous `--budget-ms`
 and a `--max-runs` cap, so the number of runs does not depend on the
 machine.
 
+## `eutaxy draft`
+
+```sh
+eutaxy draft [wrangler config] [--worker <module>] [--out <file>] [--json]
+```
+
+Writes a scenario skeleton from a wrangler config (JSON or JSONC; default
+`wrangler.jsonc` or `wrangler.json` in the current directory) and the
+Worker module it names (`--worker` for another). It prints the scenario,
+or writes it to `--out`, never over an existing file; paths in it are
+relative to where it is written.
+
+- **Setup**: each D1 binding with its schema file, each Durable Object, R2
+  bucket and Workflow the Worker owns; a service binding becomes
+  `callee()` when a wrangler config of that Worker's name is found under
+  the directory, and a scripted `service()` otherwise.
+- **Drive**: a queue consumer, else a Cron Trigger, else an Agent's
+  WebSocket route, else `fetch()`; its events are a hole to fill.
+- **Externals**: the hosts the code fetches by a literal URL.
+- **Invariants**: a hole, with examples for the bindings found as
+  comments. The scenario does not check until it has one.
+- **Notes**: bindings the simulation does not model, other drives the
+  Worker has, and anything guessed, written into the file as comments.
+
+Nothing is imported or run. `--json` prints the draft as data with the
+source and its notes.
+
 ## `eutaxy report`
 
 Runs every spec file (`*.props.ts`) under a directory, default the current

@@ -1,3 +1,6 @@
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 import {
   handleLine,
@@ -108,7 +111,7 @@ describe("the stateless era (2026-07-28)", () => {
     expect(((bare?.["error"] ?? {}) as { code: number }).code).toBe(-32602);
   });
 
-  test("tools/list names the five tools in a fixed order, each with a JSON Schema; tools/call returns the report as structured content and text", async () => {
+  test("tools/list names the six tools in a fixed order, each with a JSON Schema; tools/call returns the report as structured content and text", async () => {
     const list = (await modern(4, "tools/list"))?.["result"] as {
       tools: { name: string; inputSchema: { type: string } }[];
     };
@@ -117,6 +120,7 @@ describe("the stateless era (2026-07-28)", () => {
       "report",
       "goals",
       "prove",
+      "draft",
       "prover_status",
     ]);
     expect(list.tools.every((t) => t.inputSchema.type === "object")).toBe(true);
@@ -282,6 +286,49 @@ describe("errors", () => {
         false,
       );
       expect(t.name).toMatch(/^[A-Za-z0-9_.-]{1,128}$/);
+    }
+  });
+});
+
+describe("the draft tool", () => {
+  test("returns the drafted scenario as data with its source, writes it with out, and an error as isError", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "eutaxy-mcp-draft-"));
+    try {
+      writeFileSync(
+        join(dir, "wrangler.json"),
+        JSON.stringify({ name: "jobs", main: "w.ts", queues: { consumers: [{ queue: "jobs" }] } }),
+      );
+      writeFileSync(join(dir, "w.ts"), "export default { async queue() {} };\n");
+      const call = async (args: Record<string, unknown>) => {
+        const line = await handleLine(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            method: "tools/call",
+            params: { name: "draft", arguments: args },
+          }),
+          { cwd: dir, log: () => {} },
+        );
+        return (JSON.parse(line as string) as { result: Record<string, unknown> }).result;
+      };
+      const drafted = await call({ out: "jobs.sim.ts" });
+      expect(drafted["isError"]).toBe(false);
+      const structured = drafted["structuredContent"] as {
+        draft: { drive: unknown };
+        source: string;
+        written: string;
+      };
+      expect(structured.draft.drive).toEqual({ kind: "queue", queue: "jobs" });
+      expect(structured.source).toContain('drive: queue("jobs", [{ body: {} }]),');
+      expect(readFileSync(join(dir, "jobs.sim.ts"), "utf8")).toBe(structured.source);
+      const again = await call({ out: "jobs.sim.ts" });
+      expect(again["isError"]).toBe(true);
+      expect((again["content"] as { text: string }[])[0]?.text).toContain("does not overwrite");
+      const nowhere = await call({ config: "nope.json" });
+      expect(nowhere["isError"]).toBe(true);
+      expect(existsSync(join(dir, "nope.json"))).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 });
