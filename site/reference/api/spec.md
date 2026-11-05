@@ -14,7 +14,7 @@ outline: 2
 
 ### `forall`
 
-`function forall<F extends Fn>(fn: F, property: { readonly sample?: (...args: Parameters<F>) => boolean; readonly when?: (...args: Parameters<F>) => boolean; readonly ensures: (...args: Parameters<F>) => boolean; }): Forall<F> { return { kind: "forall", fn, ...(property.sample === undefined ?`
+`function forall<F extends Fn>(fn: F, property: { readonly sample?: (...args: Parameters<F>) => boolean; readonly when?: (...args: Parameters<F>) => boolean; readonly ensures: (...args: Parameters<F>) => boolean; }): Forall<F>`
 
 Claim that `ensures` holds for every input of `fn` where `when` holds; `sample` narrows only the inputs the `TESTED` rung draws. [Source](https://github.com/Kaisenwerk/eutaxy/blob/main/packages/spec/src/combinators.ts)
 

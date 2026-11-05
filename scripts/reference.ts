@@ -139,7 +139,8 @@ function functionSignature(lines: readonly string[], index: number): string {
   for (let i = open; i < text.length; i++) {
     const c = text[i] as string;
     if (c === "(" || c === "<" || c === "[") depth++;
-    else if (c === ")" || c === ">" || c === "]") depth--;
+    // The `>` of an arrow (`=>`) closes nothing.
+    else if (c === ")" || (c === ">" && text[i - 1] !== "=") || c === "]") depth--;
     else if (c === "{" && depth === 0)
       return `${generic}${text.slice(open, i)}`
         .replace(/\s+/g, " ")

@@ -48,6 +48,12 @@ test("a signature is read across lines, and the page keeps `<` where Markdown an
   const names = exportsOf(cloudflare as (typeof entryPoints)[number]);
   const callee = names.find((n) => n.name === "callee");
   expect(callee?.signature).toMatch(/^\(binding: string, worker: \{ readonly entry: string;/);
+  // A callback type's arrow is not a closing bracket: the signature ends at the return type.
+  const spec = entryPoints.find((e) => e.specifier === "eutaxy/spec");
+  const forall = exportsOf(spec as (typeof entryPoints)[number]).find((n) => n.name === "forall");
+  expect(forall?.signature).toBe(
+    "<F extends Fn>(fn: F, property: { readonly sample?: (...args: Parameters<F>) => boolean; readonly when?: (...args: Parameters<F>) => boolean; readonly ensures: (...args: Parameters<F>) => boolean; }): Forall<F>",
+  );
   const page = referencePage(cloudflare as (typeof entryPoints)[number]);
   // Inside a code span `<` shows as written; in prose it is escaped, where Vue would read a tag.
   expect(page).toContain("aliases: Readonly<Record<string, string>> = {}): object`");
