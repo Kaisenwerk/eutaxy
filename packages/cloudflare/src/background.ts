@@ -66,7 +66,9 @@ export async function drainBackground(
       () => null,
     );
     await Promise.race([hooks.settle(Promise.all(background), invocation), inv.crashed]);
-    return false;
+    // A fault crashing an effect the work makes hangs that effect rather than throwing, so the
+    // race ends on `inv.crashed`: the invocation is crashed all the same.
+    return inv.isCrashed();
   } catch (err) {
     if (!(err instanceof CrashSignal)) throw err;
     return true;

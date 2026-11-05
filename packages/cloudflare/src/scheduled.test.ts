@@ -196,6 +196,45 @@ describe("failures and re-runs", () => {
     ]);
   });
 
+  test("a crash inside waitUntil work is the tick's status too: it is re-run", async () => {
+    let calls = 0;
+    const s = {
+      ...spec(cron("* * * * *", { retries: 1 })),
+      externals: [{ name: "ext", host: "ext.test", guarantees: {} }],
+    };
+    // Work that starts only once the handler has returned, inside the drain: a crash there ends the
+    // invocation without a CrashSignal reaching the drain, and must still be the tick's status.
+    const { log } = await run(
+      s,
+      (_c, _env, ctx) => {
+        calls++;
+        ctx.waitUntil(
+          new Promise((r) => setTimeout(r, 1000)).then(() => fetch("https://ext.test/x")),
+        );
+      },
+      [
+        {
+          invocation: "tick-1#1",
+          ordinal: 1,
+          fault: "crash_before",
+          target: "Fetch:ext",
+          op: "GET",
+        },
+      ],
+    );
+    expect(calls).toBe(2);
+    expect(ops(log)).toEqual([
+      "tick-1#1 call background",
+      "tick-1#1 result background",
+      "tick-1#1 call GET",
+      "tick-1#1 fault GET",
+      "tick-1#2 call background",
+      "tick-1#2 result background",
+      "tick-1#2 call GET",
+      "tick-1#2 result GET",
+    ]);
+  });
+
   test("background work runs after the handler and is a point of its own", async () => {
     let done = false;
     const { log } = await run(spec(cron("* * * * *")), (_c, _env, ctx) => {
