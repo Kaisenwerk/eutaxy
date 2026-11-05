@@ -497,9 +497,18 @@ export function ownedSetups(
   bindings: readonly Binding[],
 ): readonly (readonly [Binding, BindingSetup])[] {
   const out: (readonly [Binding, BindingSetup])[] = [];
+  // Several d1Schema steps on one binding are migrations of one database, whose schema is their files
+  // joined: it is reset and snapshotted once, at its first step.
+  const databases = new Set<string>();
   for (const step of setup) {
     const binding = bindings.find((b) => b.kind === step.kind);
-    if (binding) out.push([binding, step as BindingSetup]);
+    if (!binding) continue;
+    if (step.kind === "d1") {
+      const name = String(step["binding"]);
+      if (databases.has(name)) continue;
+      databases.add(name);
+    }
+    out.push([binding, step as BindingSetup]);
   }
   return out;
 }

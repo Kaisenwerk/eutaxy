@@ -53,7 +53,9 @@ test("the reset before each run clears tables that reference each other", async 
     CREATE TABLE sessions (id TEXT PRIMARY KEY, project TEXT NOT NULL REFERENCES projects(id));
     CREATE TABLE runs (id TEXT PRIMARY KEY, session TEXT NOT NULL REFERENCES sessions(id));
     CREATE TABLE owners (id TEXT PRIMARY KEY, pet TEXT REFERENCES pets(id));
-    CREATE TABLE pets (id TEXT PRIMARY KEY, owner TEXT REFERENCES owners(id));`;
+    CREATE TABLE pets (id TEXT PRIMARY KEY, owner TEXT REFERENCES owners(id));
+    CREATE TABLE audit (what TEXT NOT NULL);
+    CREATE TRIGGER owners_gone AFTER DELETE ON owners BEGIN INSERT INTO audit (what) VALUES (old.id); END;`;
   const scenario = defineScenario({
     name: "d1-reset-foreign-keys",
     worker: { entry: "./worker.ts", config: "./wrangler.jsonc" },

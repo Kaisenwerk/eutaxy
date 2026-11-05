@@ -257,6 +257,13 @@ export async function resetD1(real: D1Database, schema: string): Promise<void> {
   // refuse while another table's rows still reference them, and a child whose parent is already gone
   // cannot be dropped at all. Each table's parents come from PRAGMA foreign_key_list.
   const quote = (n: string): string => `"${n.replace(/"/g, '""')}"`;
+  // Triggers first: a trigger on a table being emptied or dropped can name a table already dropped,
+  // which SQLite resolves even when no row fires it.
+  const triggers = await real
+    .prepare("SELECT name FROM sqlite_master WHERE type = 'trigger'")
+    .all<{ name: string }>();
+  for (const { name } of triggers.results)
+    await real.prepare(`DROP TRIGGER IF EXISTS ${quote(name)}`).run();
   const parents = new Map<string, Set<string>>();
   for (const { name } of tables.results) {
     const keys = await real

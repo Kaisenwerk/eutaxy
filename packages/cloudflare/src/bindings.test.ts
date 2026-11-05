@@ -6,7 +6,13 @@
 import type { EffectLog, RunHooks, ScenarioSpec } from "@eutaxy/core";
 import { Run, replayChooser, runOnce } from "@eutaxy/engine";
 import { describe, expect, test } from "vitest";
-import { d1Binding, durableObjectBinding, r2Binding, workflowBinding } from "./bindings.ts";
+import {
+  d1Binding,
+  durableObjectBinding,
+  ownedSetups,
+  r2Binding,
+  workflowBinding,
+} from "./bindings.ts";
 import type { ProxyContext } from "./d1.ts";
 import { FakeR2 } from "./fake-r2.ts";
 import { createCloudflarePlatform } from "./platform.ts";
@@ -112,6 +118,24 @@ describe("each record answers for its own kind", () => {
 });
 
 describe("the platform iterates the records", () => {
+  test("several d1Schema steps on one binding are one database: reset and snapshotted once", () => {
+    const bindings = [d1Binding({}), r2Binding()];
+    const owned = ownedSetups(
+      [
+        { kind: "d1", binding: "DB", schemaFile: "./m/0001.sql" },
+        { kind: "d1", binding: "DB", schemaFile: "./m/0002.sql" },
+        { kind: "d1", binding: "AUDIT", schemaFile: "./audit.sql" },
+        r2Bucket("FILES"),
+      ],
+      bindings,
+    );
+    expect(owned.map(([b, s]) => `${b.kind}:${s.binding}`)).toEqual([
+      "d1:DB",
+      "d1:AUDIT",
+      "r2:FILES",
+    ]);
+  });
+
   const bounds = {
     maxFaultsPerRun: 0,
     maxRedeliveries: 0,
