@@ -151,6 +151,7 @@ function env(module: SubsetModule): Env {
     types: new WeakMap(),
     ctx: {
       records: new Map(module.records.map((r) => [r.name, r])),
+      unions: module.unions,
       signatures: new Map(
         module.functions.map((f) => [f.name, { params: f.params, returns: f.returns }]),
       ),

@@ -353,21 +353,14 @@ export function narrowsOf(test: Expr, holds: boolean): string[] {
   return [];
 }
 
-/** The field that tells a union's members apart: literal-typed in every member, with a different literal in each. */
+/**
+ * The field that tells a union's members apart, as the union names it: the
+ * one the types read chose (`UnionType.tag`), which the engines encode by.
+ * Re-deriving it from the member records could pick another field where two
+ * discriminate, and the reader would then refuse the test the engines take.
+ */
 export function tagOf(union: string, ctx: TypeContext): string | undefined {
-  const members = membersIn(union, ctx);
-  const first = members[0];
-  if (!first) return undefined;
-  return first.fields
-    .filter((f) => f.literal !== undefined)
-    .map((f) => f.name)
-    .find((name) => {
-      const values = members.map((m) => m.fields.find((f) => f.name === name)?.literal);
-      return (
-        values.every((v) => v !== undefined) &&
-        new Set(values.map((v) => JSON.stringify(v))).size === values.length
-      );
-    });
+  return ctx.unions.find((u) => u.name === union)?.tag;
 }
 
 /**
@@ -636,6 +629,8 @@ export interface CalleeSignature {
 /** What typing an expression needs to know about its module. */
 export interface TypeContext {
   readonly records: ReadonlyMap<string, RecordType>;
+  /** The unions read so far, each naming its tag; a live list while a module is being read. */
+  readonly unions: readonly UnionType[];
   readonly signatures: ReadonlyMap<string, CalleeSignature>;
 }
 
@@ -1145,12 +1140,15 @@ export interface ReadSubsetOptions {
 }
 
 /** What typing a module's expressions needs, shared by every function read. */
-function moduleContext(records: Map<string, RecordType>): {
+function moduleContext(
+  records: Map<string, RecordType>,
+  unions: readonly UnionType[],
+): {
   ctx: TypeContext;
   signatures: Map<string, CalleeSignature>;
 } {
   const signatures = new Map<string, CalleeSignature>();
-  return { ctx: { records, signatures }, signatures };
+  return { ctx: { records, unions, signatures }, signatures };
 }
 
 /** The contextual type the compiler gives a record literal, as the subset reads it; undefined where it has none the subset takes. */
@@ -2093,7 +2091,7 @@ export function readSubset(
         }
       }
       // Pass 2: signatures, so every function's return type is known before any body is read.
-      const { ctx, signatures } = moduleContext(types.records);
+      const { ctx, signatures } = moduleContext(types.records, types.unions);
       const names: Names = {
         callable: (n) => declared.has(n) && !generic.has(n),
         target: (n) => n,
@@ -2269,7 +2267,13 @@ function arrowReader(
   const signatures = new Map<string, CalleeSignature>(
     module.functions.map((f) => [f.name, { params: f.params, returns: f.returns }]),
   );
-  return new ExprReader(sf, names, typeSource, { records, signatures }, () => 0);
+  return new ExprReader(
+    sf,
+    names,
+    typeSource,
+    { records, unions: module.unions, signatures },
+    () => 0,
+  );
 }
 
 /** The one expression a fragment `(text)` parsed to, or why the text is not one expression. */

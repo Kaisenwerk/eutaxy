@@ -1051,6 +1051,24 @@ export function twoOfThree(d: Decision): number {
 `;
   const m = readSubset(module);
 
+  test("the tag is the union's own, not re-derived from the records: two discriminating fields, declared in different orders", () => {
+    // B's literal fields are ok, kind; A's are kind, ok. The union names kind as its tag (its first
+    // member's order); the records read in B's order would name ok, and refuse a test of kind.
+    const two =
+      readSubset(`export interface B { readonly ok: false; readonly kind: "b"; readonly why: string }
+export interface A { readonly kind: "a"; readonly ok: true; readonly n: number }
+export type U = A | B;
+export function pick(u: U): number { if (u.kind === "a") return u.n; return 0; }
+`);
+    expect(two.unions.map((u) => [u.name, u.tag])).toEqual([["U", "kind"]]);
+    expect(two.outside).toEqual([]);
+    expect(two.functions.map((f) => f.name)).toEqual(["pick"]);
+    expect(two.functions[0]?.body).toMatchObject({
+      kind: "cond",
+      ifTrue: { kind: "narrowTag", name: "u", member: "A" },
+    });
+  });
+
   test("a tag test narrows the name it guards to the member with that tag, in the branch it guards", () => {
     expect(m.outside.map((o) => o.name)).toEqual(["twoOfThree"]);
     expect(m.outside[0]?.message).toContain("not on every member");
@@ -1142,6 +1160,7 @@ export function f(u: U, b: boolean): U | null { return u.ok ? (b ? u : null) : (
         new Map([["res", { kind: "union", name: "Result<number, Locked>" }]]),
         {
           records: new Map(m.records.map((r) => [r.name, r])),
+          unions: m.unions,
           signatures: new Map(),
         },
         (msg) => {
