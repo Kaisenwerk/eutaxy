@@ -1,0 +1,6 @@
+CREATE TABLE ledger (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_id TEXT NOT NULL UNIQUE,
+  account TEXT NOT NULL,
+  amount_cents INTEGER NOT NULL
+);

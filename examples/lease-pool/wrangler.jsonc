@@ -1,0 +1,9 @@
+{
+  "name": "lease-pool",
+  "main": "worker.ts",
+  "compatibility_date": "2026-10-01",
+  "durable_objects": {
+    "bindings": [{ "name": "POOL", "class_name": "LeasePool" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["LeasePool"] }]
+}

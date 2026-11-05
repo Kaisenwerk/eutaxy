@@ -1,0 +1,6 @@
+{
+  "name": "webhook-idempotency",
+  "main": "worker.ts",
+  "compatibility_date": "2026-10-01",
+  "d1_databases": [{ "binding": "DB", "database_name": "ledger", "database_id": "local" }]
+}

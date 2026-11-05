@@ -80,10 +80,20 @@ function seoHead(page: PageData): HeadConfig[] {
   ];
 }
 
-/** Pages that include a file from `docs/`: their date is that file's last commit, not the wrapper's. */
+/** The worked examples under `examples/`, each rendered at `/examples/<dir>` from its README and code. */
+const examples: readonly { readonly dir: string; readonly text: string }[] = [
+  { dir: "payments-queue", text: "A queue consumer over D1" },
+  { dir: "webhook-idempotency", text: "A webhook with an idempotency key" },
+  { dir: "lease-pool", text: "A lease pool object with an alarm" },
+];
+
+/** Pages that include a repository file: their date is that file's last commit, not the wrapper's. */
 const includedFrom: Readonly<Record<string, string>> = {
   "reference/design.md": "docs/design.md",
   "reference/roadmap.md": "docs/roadmap.md",
+  ...Object.fromEntries(
+    examples.map((e) => [`examples/${e.dir}.md`, `examples/${e.dir}/README.md`]),
+  ),
 };
 
 /** The last commit time of a repository file in milliseconds, or undefined outside git history. */
@@ -139,6 +149,7 @@ export default defineConfig({
     logo: { light: "/logo-light.svg", dark: "/logo-dark.svg", alt: "" },
     nav: [
       { text: "Guide", link: "/guide/what-is-eutaxy", activeMatch: "^/guide/" },
+      { text: "Examples", link: `/examples/${examples[0]?.dir}`, activeMatch: "^/examples/" },
       { text: "Platforms", link: "/platforms/cloudflare", activeMatch: "^/platforms/" },
       { text: "Reference", link: "/reference/cli", activeMatch: "^/reference/" },
       {
@@ -166,6 +177,10 @@ export default defineConfig({
         ],
       },
       {
+        text: "Examples",
+        items: examples.map((e) => ({ text: e.text, link: `/examples/${e.dir}` })),
+      },
+      {
         text: "Platforms",
         items: [
           { text: "Cloudflare Workers", link: "/platforms/cloudflare" },
@@ -191,7 +206,9 @@ export default defineConfig({
         `https://github.com/Kaisenwerk/eutaxy/edit/main/${
           filePath.startsWith("reference/design.") || filePath.startsWith("reference/roadmap.")
             ? `docs/${filePath.slice("reference/".length)}`
-            : `site/${filePath}`
+            : filePath.startsWith("examples/")
+              ? `${filePath.replace(/\.md$/, "")}/README.md`
+              : `site/${filePath}`
         }`,
       text: "Edit this page on GitHub",
     },

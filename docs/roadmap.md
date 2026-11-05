@@ -227,6 +227,23 @@ what Eutaxy is next to a Vitest run under Miniflare, property testing and
 a model checker. Nothing here changes a verdict; the phase is about who
 can reach one.
 
+The first slice, done, is the examples' frame and the first three:
+`tests/examples.test.ts` runs every directory under `examples/` through
+the command (the bug found, the regression test written, the fix
+`BOUNDED`) and checks that each has its site page, which includes the
+example's README and code. `webhook-idempotency` (a table of processed
+events beside the credit, two writes, so a lost answer between them
+credits twice) and `lease-pool` (a SQLite-backed object that leases
+runners and reclaims them from its alarm; a lost answer and the Worker's
+retry grant one request two runners) join `payments-queue`, the queue
+consumer over D1. Writing them showed that the command took a Worker's
+Durable Object and Workflow classes from the wrangler config's `main`
+even when the scenario's `worker.entry` named another module, so a fixed
+variant's object never ran; the entry is now the isolate's main module.
+The second slice is the other three examples, the third `eutaxy draft`,
+the fourth the reference pages, the `UNSUPPORTED` catalogue and the page
+on neighbours.
+
 Gate: every example checks green in CI through the command; `eutaxy
 draft` on each example's Worker and wrangler config produces a skeleton
 that differs from the example's scenario only in the invariants and the

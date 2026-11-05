@@ -50,7 +50,13 @@
       "path": "corpus/prover-contracts"
     },
     {
+      "path": "examples/lease-pool"
+    },
+    {
       "path": "examples/payments-queue"
+    },
+    {
+      "path": "examples/webhook-idempotency"
     },
     {
       "path": "site"

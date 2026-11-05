@@ -5,7 +5,7 @@ Nothing in it looks wrong, and nothing in an ordinary test would fail.
 
 ## Run the check
 
-From this directory:
+From `examples/payments-queue` in the repository:
 
 ```sh
 pnpm install
