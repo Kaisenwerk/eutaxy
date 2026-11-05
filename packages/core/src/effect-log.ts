@@ -11,6 +11,7 @@ import { utf8Encode } from "./utf8.ts";
 /** `snapshot` records platform state (e.g. D1 tables) captured at the end of a run; it is not an effect point. */
 export type EffectKind = "call" | "result" | "fault" | "snapshot";
 
+/** One entry of the effect log: an effect's call, its result, an injected fault, or an end-of-run snapshot. */
 export interface EffectRecord {
   /** Position in the log, dense from 0. */
   readonly seq: number;
@@ -25,6 +26,7 @@ export interface EffectRecord {
   readonly payload: JsonValue;
 }
 
+/** The ordered record of what a run did at its effect boundaries, which invariants are checked against. */
 export interface EffectLog {
   readonly entries: readonly EffectRecord[];
 }

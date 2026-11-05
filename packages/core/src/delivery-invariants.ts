@@ -8,6 +8,10 @@ import type { JsonValue } from "./canonical-json.ts";
 import type { AtLeastOnce, AtMostOncePerKey } from "./invariants.ts";
 import { type EffectSelector, getPath } from "./selectors.ts";
 
+/**
+ * No two selected effects share the value at `key` (a dot path into the effect's payload): nothing
+ * happened twice for one key, a payment recorded twice, a message sent twice.
+ */
 export function atMostOncePerKey(
   name: string,
   effect: EffectSelector,
@@ -16,6 +20,7 @@ export function atMostOncePerKey(
   return { kind: "atMostOncePerKey", name, effect, key };
 }
 
+/** Every value in `expected` appears at least once as `key` in a selected effect: nothing was lost. */
 export function atLeastOnce(
   name: string,
   effect: EffectSelector,

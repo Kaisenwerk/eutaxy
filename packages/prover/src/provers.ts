@@ -13,11 +13,13 @@
 import type { Counterexample, SpecVerdict } from "@eutaxy/core";
 import type { ModuleSpecs, SpecError } from "@eutaxy/spec";
 
+/** A proof engine's name and version, as verdicts record it. */
 export interface EngineId {
   readonly name: string;
   readonly version: string;
 }
 
+/** What an engine said about one property: proven, refuted (with a counterexample when it has one), or unknown and why. */
 export type ProofOutcome =
   | { readonly kind: "PROVEN"; readonly engine: EngineId; readonly assumptions: readonly string[] }
   | {
@@ -32,6 +34,7 @@ export type ProofOutcome =
       readonly reason: string;
     };
 
+/** An engine's outcome for one property of one function. */
 export interface PropertyProof {
   readonly function: string;
   /** The property's export name in the spec file. */
@@ -49,6 +52,7 @@ export interface OpenGoal {
   readonly reason: string;
 }
 
+/** An engine's answer for one module: an outcome per property, the specs that did not read, and the open goals. */
 export interface ModuleProofs {
   readonly results: readonly PropertyProof[];
   /** Specs that did not read: properties asked for and never checked. */
@@ -60,6 +64,7 @@ export interface ModuleProofs {
   readonly goals?: readonly OpenGoal[];
 }
 
+/** What an engine is given: the module's source and specs, the functions to prove, and where they live. */
 export interface ProveInput {
   /** The module's source text. */
   readonly source: string;
@@ -74,6 +79,7 @@ export interface ProveInput {
   readonly timeoutMs?: number;
 }
 
+/** A proof engine: whether it can run here, and proving a module's properties. */
 export interface Prover {
   readonly name: string;
   /** Whether the engine can run here, or why not. */

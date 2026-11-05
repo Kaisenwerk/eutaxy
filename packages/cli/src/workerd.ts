@@ -148,6 +148,10 @@ export async function selectSpecModules(
   return { selected, specErrors };
 }
 
+/**
+ * What the generated check test passes to `checkInWorkerd`: the scenario, the bindings and test helpers,
+ * the modules and SQL files beside the scenario, the callees, and the exploration options.
+ */
 export interface WorkerdCheckInput {
   /** The scenario module's default export. */
   readonly scenario: ScenarioSpec;

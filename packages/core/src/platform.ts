@@ -128,6 +128,11 @@ export interface DeliveryResult {
   readonly followUps: readonly EventRef[];
 }
 
+/**
+ * What a platform package gives the engine to run a scenario: its events, how each is delivered to the
+ * Worker or function, how state is reset before a run and snapshotted after it, and the assumptions a
+ * verdict rests on.
+ */
 export interface Platform {
   readonly name: string;
   /** What a verdict rests on that this platform decides, one line each. */

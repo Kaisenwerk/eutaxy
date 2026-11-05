@@ -5,6 +5,7 @@ import type { Schedule } from "./faults.ts";
 import type { Violation } from "./invariants.ts";
 import type { Bounds } from "./scenario.ts";
 
+/** How far exploration got: runs, effect points, faults injected and time taken, and coverage when exhaustive. */
 export interface BoundsReached {
   readonly runs: number;
   readonly effectPoints: number;
@@ -36,6 +37,7 @@ export interface Shrunk {
   readonly runs: number;
 }
 
+/** An invariant broke: the violation, the shrunk schedule that reproduces it and its trace. */
 export interface Violated extends VerdictBase {
   readonly kind: "VIOLATED";
   readonly violation: Violation;
@@ -47,6 +49,7 @@ export interface Violated extends VerdictBase {
   readonly shrunk: Shrunk;
 }
 
+/** No violation within the stated bounds; not a proof. */
 export interface Bounded extends VerdictBase {
   readonly kind: "BOUNDED";
   readonly bounds: Bounds;
@@ -58,12 +61,14 @@ export type UnsupportedCause =
   | "module_state_leak"
   | "unsupported_bounds";
 
+/** The run did something the simulation cannot control or replay, so no claim is made: the cause and the reason. */
 export interface Unsupported extends VerdictBase {
   readonly kind: "UNSUPPORTED";
   readonly cause: UnsupportedCause;
   readonly reason: string;
 }
 
+/** A scenario's verdict: `VIOLATED`, `BOUNDED` or `UNSUPPORTED`. */
 export type ScenarioVerdict = Violated | Bounded | Unsupported;
 
 /** One line per verdict, for error messages; full rendering lives in `report`. */

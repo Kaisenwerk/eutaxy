@@ -35,6 +35,7 @@ import { installSdkProxy } from "./sdk.ts";
 
 export type { LambdaContext, SqsBatchResponse, SqsEvent, SqsHandler, SqsRecord };
 
+/** What `createAwsPlatform` needs: the handler, local SDK clients by class name, and the function's name and region. */
 export interface AwsPlatformOptions {
   readonly handler: SqsHandler;
   /** Local clients keyed by the class name of the handler's clients, e.g. { DynamoDBClient, DynamoDBDocumentClient }. */
@@ -50,6 +51,11 @@ const assumptions: readonly string[] = [
   "state invariants read a snapshot of every DynamoDB table named in setup, taken after the last event",
 ];
 
+/**
+ * The AWS Lambda platform for `check`: SQS delivery with redelivery up to the queue's maxReceiveCount, every
+ * AWS SDK call one effect redirected to the local client of its class, and DynamoDB tables reset and
+ * snapshotted per run. Function name defaults to `handler`, region to `local`.
+ */
 export function createAwsPlatform(options: AwsPlatformOptions): Platform {
   const region = options.region ?? "local";
   const functionName = options.functionName ?? "handler";

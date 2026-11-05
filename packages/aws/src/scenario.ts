@@ -18,6 +18,7 @@ import {
 } from "@eutaxy/core";
 import type { KeyDef, TableSpec } from "./dynamodb.ts";
 
+/** One message to deliver: its body, and an id (default `msg-<n>`, by position). */
 export interface SqsMessage {
   readonly id?: string;
   readonly body: JsonValue;
@@ -32,6 +33,7 @@ export interface SqsDrive extends PlatformData {
   readonly maxReceiveCount: number;
 }
 
+/** Drive the Lambda with these messages from an SQS queue; `maxReceiveCount` defaults to 3. */
 export function sqs(
   queue: string,
   messages: readonly SqsMessage[],
@@ -45,6 +47,7 @@ export function sqs(
   };
 }
 
+/** A DynamoDB table the scenario uses, by name and key schema: created empty before each run and snapshotted after it. */
 export function dynamoTable(name: string, partitionKey: KeyDef, sortKey?: KeyDef): TableSpec {
   return sortKey
     ? { kind: "dynamodb-table", name, partitionKey, sortKey }
@@ -80,6 +83,7 @@ export function atLeastOncePerMessage(
   return coreAtLeastOncePerMessage(name, drive.messages, effect, key, bodyKey);
 }
 
+/** The input to `defineAwsScenario`: the handler, the SQS drive, the tables, the externals, the invariants and the bounds. */
 export interface AwsScenarioInput {
   readonly name: string;
   /** The handler module (entry) and, for AWS, a SAM or serverless config path if any (informational). */

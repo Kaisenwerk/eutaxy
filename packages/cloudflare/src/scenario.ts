@@ -84,6 +84,11 @@ export interface HttpDrive extends PlatformData {
   readonly deadlineMs?: number;
 }
 
+/**
+ * How the HTTP drive's caller resends a request it got no acceptable answer for: up to `retries` times
+ * (default 3), on a status `retryOn` rejects (default any non-2xx), after `delaysMs` of virtual time, and
+ * not waiting past `deadlineMs`.
+ */
 export interface HttpCallerOptions {
   readonly retries?: number;
   readonly retryOn?: "non-2xx" | "5xx";
@@ -91,6 +96,10 @@ export interface HttpCallerOptions {
   readonly deadlineMs?: number;
 }
 
+/**
+ * Drive the Worker's `fetch()` handler with these requests, each resent as `options` say. A request's
+ * method defaults to POST with a body and GET without; its id to `req-<n>`, by position.
+ */
 export function http(
   requests: readonly HttpRequestInput[],
   options: HttpCallerOptions = {},
@@ -137,11 +146,13 @@ export interface WebSocketDrive extends PlatformData {
   readonly connections: readonly WebSocketConnectionSpec[];
 }
 
+/** One message to send on a connection: its data (a JSON value is sent as its text) and an optional id. */
 export interface WebSocketMessageInput {
   readonly id?: string;
   readonly data: JsonValue;
 }
 
+/** One connection to open: the path of its upgrade request, its headers and the messages to send on it. */
 export interface WebSocketConnectionInput {
   /** Defaults to its position: `conn-1`, `conn-2`, … */
   readonly id?: string;
@@ -151,6 +162,10 @@ export interface WebSocketConnectionInput {
   readonly messages?: readonly WebSocketMessageInput[];
 }
 
+/**
+ * Drive the Worker over these WebSocket connections: each opened through its `fetch()` and handed to a
+ * Durable Object, its messages delivered in order to the object's `webSocketMessage` handler.
+ */
 export function websocket(connections: readonly WebSocketConnectionInput[]): WebSocketDrive {
   return {
     kind: "websocket",
@@ -202,6 +217,10 @@ export interface RpcDrive extends PlatformData {
   readonly deadlineMs?: number;
 }
 
+/**
+ * The RPC drive's entrypoint (a named export; default the default export) and how its caller resends a call
+ * that threw or got no answer: `retries` (default 0), `delaysMs` and `deadlineMs`, as for `http`.
+ */
 export interface RpcCallerOptions {
   readonly entrypoint?: string;
   readonly retries?: number;
@@ -209,6 +228,7 @@ export interface RpcCallerOptions {
   readonly deadlineMs?: number;
 }
 
+/** Drive a `WorkerEntrypoint` of the Worker with these method calls; a call's id defaults to `call-<n>`. */
 export function rpc(calls: readonly RpcCallInput[], options: RpcCallerOptions = {}): RpcDrive {
   return {
     kind: "rpc",
@@ -247,12 +267,17 @@ export interface CronDrive extends PlatformData {
   readonly retries: number;
 }
 
+/** How many ticks of the expression to drive, and how many times a tick whose handler failed is re-run. */
 export interface CronOptions {
   /** How many ticks to drive, from the first match on (default 1). */
   readonly ticks?: number;
   readonly retries?: number;
 }
 
+/**
+ * Drive the Worker's `scheduled()` handler with the ticks of a Cron Trigger expression, in Cloudflare's
+ * dialect: one tick by default, re-run 0 times by default.
+ */
 export function cron(expression: string, options: CronOptions = {}): CronDrive {
   const count = options.ticks ?? 1;
   const times =
@@ -397,6 +422,11 @@ export type DurableObjectSqlSeed = {
 /** One row to insert, or one row snapshotted: column name to value (booleans and objects as SQLite stores them). */
 export type SqlRow = { readonly [column: string]: JsonValue };
 
+/**
+ * A Durable Object namespace the scenario uses: cleared before each run, the named objects seeded with
+ * key-value entries (and with `sql`, a SQLite-backed object's tables and rows), and its storage snapshotted
+ * after the run. `alarmsPerObject` caps an object's alarm firings per run (default 3).
+ */
 export function durableObject(
   binding: string,
   objects: { readonly [name: string]: { readonly [key: string]: JsonValue } } = {},
@@ -421,6 +451,7 @@ export interface R2Setup extends PlatformData {
   readonly objects: Readonly<Record<string, R2Seed>>;
 }
 
+/** An R2 bucket the scenario uses: emptied before each run, then seeded with these objects by key. */
 export function r2Bucket(binding: string, objects: Readonly<Record<string, R2Seed>> = {}): R2Setup {
   return { kind: "r2", binding, objects };
 }
@@ -469,6 +500,10 @@ export interface WorkflowSetup extends PlatformData {
   readonly name?: string;
 }
 
+/**
+ * A Workflow binding and the class its instances run, an export of the Worker module; `name` is the
+ * Workflow's name in the wrangler config, which instances read as `event.workflowName`.
+ */
 export function workflow(
   binding: string,
   className: string,
@@ -510,6 +545,10 @@ export interface ServiceSetup extends PlatformData {
   readonly fetch?: readonly ServiceResponse[];
 }
 
+/**
+ * Script the Worker behind a service binding: its RPC methods answer from `methods` and its `fetch()` from
+ * `fetch`, and the real binding is never called. See `ServiceSetup`.
+ */
 export function service(
   binding: string,
   options: {
@@ -546,6 +585,10 @@ export interface CalleeSetup extends PlatformData {
   readonly entrypoint?: string;
 }
 
+/**
+ * Run the Worker behind a service binding for real, named by its module and its wrangler config, relative
+ * to the scenario; `entrypoint` names the export the binding reaches. See `CalleeSetup`.
+ */
 export function callee(
   binding: string,
   worker: { readonly entry: string; readonly config: string; readonly entrypoint?: string },
@@ -641,6 +684,10 @@ export function durableObjectTable(
   return where ? { target, table: name, where } : { target, table: name };
 }
 
+/**
+ * The input to `defineScenario`: the Worker, the drive, the setup steps, the externals it fetches, the
+ * invariants, the bounds (merged with the defaults) and the core modules whose specs run.
+ */
 export interface CloudflareScenarioInput {
   readonly name: string;
   readonly worker: WorkerRef;
@@ -670,6 +717,7 @@ export interface CloudflareScenarioInput {
   readonly specs?: readonly string[];
 }
 
+/** Drive the Worker's `queue()` handler with these messages from the named queue; an id defaults to `msg-<n>`. */
 export function queue(name: string, messages: readonly QueueMessage[]): QueueDrive {
   return {
     kind: "queue",
@@ -678,6 +726,10 @@ export function queue(name: string, messages: readonly QueueMessage[]): QueueDri
   };
 }
 
+/**
+ * A D1 binding the scenario uses: its tables dropped before each run and the schema file applied, relative
+ * to the scenario. Several steps on one binding apply their files in order, a migration per file.
+ */
 export function d1Schema(binding: string, schemaFile: string): D1Setup {
   return { kind: "d1", binding, schemaFile };
 }

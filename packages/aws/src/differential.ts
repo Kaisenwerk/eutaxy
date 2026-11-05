@@ -35,6 +35,10 @@ export interface Side {
   readonly tables: { readonly [table: string]: readonly JsonValue[] };
 }
 
+/**
+ * What `runAwsDifferential` found: whether the proxied run and the raw run agree, each side's attempts and
+ * tables, the differences when they do not, and any reason the proxied side was UNSUPPORTED.
+ */
 export interface DifferentialResult {
   readonly equal: boolean;
   readonly eutaxy: Side;
@@ -141,6 +145,10 @@ async function rawSide(spec: ScenarioSpec, options: AwsPlatformOptions): Promise
   return { attempts, tables };
 }
 
+/**
+ * Run a scenario through Eutaxy's proxies and again with the handler calling the raw local clients, and
+ * compare the attempts and the final tables: the check that the proxies change nothing the handler sees.
+ */
 export async function runAwsDifferential(
   spec: ScenarioSpec,
   options: AwsPlatformOptions,

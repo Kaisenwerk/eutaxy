@@ -17,6 +17,7 @@ interface SpecVerdictBase {
   readonly assumptions: readonly string[];
 }
 
+/** The property held on every distinct input the simulator passed the function during the scenario's runs. */
 export interface Checked extends SpecVerdictBase {
   readonly kind: "CHECKED";
   /** Distinct inputs the property was evaluated on. */
@@ -48,6 +49,7 @@ export interface Counterexample {
   readonly error?: string;
 }
 
+/** A counterexample breaks the property, found by the simulator's inputs, generated ones, or an engine. */
 export interface Refuted extends SpecVerdictBase {
   readonly kind: "REFUTED";
   /** The rung that found the counterexample: a rung of the simulator, or an engine by name. */
@@ -80,12 +82,14 @@ export interface Conflict extends SpecVerdictBase {
 
 export type SpecUnknownCause = "gave_up" | "unsupported" | "unavailable";
 
+/** Nothing is known about the property: the engine gave up, the construct is not supported, or no engine was available. */
 export interface SpecUnknown extends SpecVerdictBase {
   readonly kind: "UNKNOWN";
   readonly cause: SpecUnknownCause;
   readonly reason: string;
 }
 
+/** What is known about one property of one pure function, from the highest rung that reached it. */
 export type SpecVerdict = Checked | Tested | Proven | Refuted | Conflict | SpecUnknown;
 
 /** One line per spec verdict, for error messages; full rendering lives in `report`. */

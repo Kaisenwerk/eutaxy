@@ -11,6 +11,7 @@
 
 import { canonicalJson, type JsonValue, type Violated } from "@eutaxy/core";
 
+/** What the emitted test imports, the expressions for its platform and scenario, and what it expects. */
 export interface RegressionTestOptions {
   /** Import lines for the scenario, the platform's dependencies, and anything the platform expression needs. */
   readonly imports: readonly string[];
@@ -32,6 +33,10 @@ export interface RegressionTestOptions {
   }[];
 }
 
+/**
+ * A Vitest test file that replays a violation's shrunk schedule: by default it fails while the bug is
+ * there and passes once it is fixed.
+ */
 export function emitRegressionTest(verdict: Violated, options: RegressionTestOptions): string {
   const engineModule = options.engineModule ?? "eutaxy";
   const mode = options.expect ?? "holds";

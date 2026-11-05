@@ -57,6 +57,7 @@ export interface Side {
   };
 }
 
+/** What `runDifferential` found: each side's attempts and end state, and where they differ. */
 export interface DifferentialResult {
   /** True only when both sides agree and the proxied run touched nothing unmodelled. */
   readonly equal: boolean;

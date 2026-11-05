@@ -33,8 +33,13 @@ export interface Total<F extends Fn> {
   readonly fn: F;
 }
 
+/** A spec file's export: a `forall` claim or a `total` claim. */
 export type Spec = Forall<Fn> | Total<Fn>;
 
+/**
+ * Claim that `ensures` holds for every input of `fn` where `when` holds; `sample` narrows only the inputs
+ * the `TESTED` rung draws. See `Forall`.
+ */
 export function forall<F extends Fn>(
   fn: F,
   property: {
@@ -52,6 +57,7 @@ export function forall<F extends Fn>(
   };
 }
 
+/** Claim that `fn` terminates on every input of its parameter types; only an engine can establish it. */
 export function total<F extends Fn>(fn: F): Total<F> {
   return { kind: "total", fn };
 }

@@ -2,6 +2,7 @@
 
 import type { EventRef } from "@eutaxy/core";
 
+/** One SQS message as Lambda's event source hands it to the function, with the attributes AWS sets. */
 export interface SqsRecord {
   readonly messageId: string;
   readonly receiptHandle: string;
@@ -19,10 +20,12 @@ export interface SqsRecord {
   readonly awsRegion: string;
 }
 
+/** The event an SQS-triggered Lambda receives: its records, one per message in the batch. */
 export interface SqsEvent {
   readonly Records: readonly SqsRecord[];
 }
 
+/** The context object Lambda passes beside the event: the request id, the function's identity and its remaining time. */
 export interface LambdaContext {
   readonly awsRequestId: string;
   readonly functionName: string;
@@ -35,10 +38,15 @@ export interface LambdaContext {
   getRemainingTimeInMillis(): number;
 }
 
+/**
+ * What a handler may return to report partial batch failures: the message ids in `batchItemFailures` stay
+ * on the queue and are redelivered, the others are deleted.
+ */
 export interface SqsBatchResponse {
   readonly batchItemFailures?: readonly { readonly itemIdentifier: string }[];
 }
 
+/** An SQS-triggered Lambda handler: async or not, returning nothing or a partial batch response. */
 export type SqsHandler = (
   event: SqsEvent,
   context: LambdaContext,

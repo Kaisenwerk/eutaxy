@@ -52,13 +52,18 @@ export interface WorkerHandler {
 /** A `WorkerEntrypoint` subclass: the Worker's default export when it exposes RPC methods. Its env is its own. */
 export type WorkerEntrypointClass = abstract new (ctx: ExecutionContext, env: never) => object;
 
+/**
+ * What `createCloudflarePlatform` needs: the env and the Worker's default export, the schema per D1
+ * binding, and for the bindings that need them the test helpers, the module's exports, the callees and
+ * the aliases.
+ */
 export interface CloudflarePlatformOptions {
   /** The bindings from `cloudflare:workers`. */
   readonly env: object;
   /**
-   * The Worker's default export: the handler object, or the
-   * `WorkerEntrypoint` class the `rpc` drive calls (its own `fetch()`
-   * method is not driven by `http()` yet).
+   * The Worker's default export: the handler object, or a
+   * `WorkerEntrypoint` class, whose `fetch()`, `queue()` and `scheduled()`
+   * are its handlers and whose other methods the `rpc` drive calls.
    */
   readonly handler: WorkerHandler | WorkerEntrypointClass;
   /** Schema SQL per D1 binding named in the scenario's setup. */
@@ -122,6 +127,11 @@ const assumptions: readonly string[] = [
   "inbound RPC: one invocation per call attempt, the entrypoint constructed anew for each with a fresh ExecutionContext (developers.cloudflare.com/workers/runtime-apis/bindings/service-bindings/rpc/); the return value is the response effect, and an exception reaches the caller as a new error with its name and message (developers.cloudflare.com/workers/runtime-apis/rpc/error-handling/); Cloudflare does not retry a call, so the drive's caller resends a call that threw or got no answer as the http drive's caller does; a result that is not plain data (a stub, a function, a stream) makes the run UNSUPPORTED",
 ];
 
+/**
+ * The Cloudflare platform for `check`, run inside workerd under the Cloudflare Vitest plugin: the scenario's
+ * drive delivered to the Worker's handlers, its bindings proxied so every call is an effect that faults can
+ * hit, and the setup's resources reset before each run and snapshotted after it.
+ */
 export function createCloudflarePlatform(options: CloudflarePlatformOptions): Platform {
   const env = options.env as Record<string, unknown>;
   const aliases = options.aliases ?? {};

@@ -21,6 +21,7 @@ import {
 import { copy } from "./render.ts";
 import { shrinkRefutation } from "./shrink.ts";
 
+/** The `TESTED` rung's seed, and how many distinct generated inputs a property must hold on (default 100). */
 export interface TestedOptions {
   /** The check's seed; each property derives its own stream from it and its name. */
   readonly seed: string;
@@ -36,6 +37,7 @@ export interface TestedInput extends TestedOptions {
   readonly spec: Forall<Fn> | undefined;
 }
 
+/** The `TESTED` rung: evaluate the property on inputs generated from its binders' domains, drawn from the seed. */
 export function testedRung(input: TestedInput): SpecVerdict {
   const { module, fn, property } = input;
   const base = { module, function: fn.name, property: property.name, text: property.text };

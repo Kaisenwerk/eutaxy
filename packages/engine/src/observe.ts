@@ -16,6 +16,7 @@ import { type JsonValue, toJson } from "@eutaxy/core";
 import { patchProperty } from "./patch.ts";
 import { installedRun } from "./run.ts";
 
+/** One call of an observed core function from outside its module: the function, its arguments, whether it threw. */
 export interface ObservedCall {
   readonly function: string;
   /** The arguments as passed; primitives exactly, objects by reference. */
@@ -23,6 +24,7 @@ export interface ObservedCall {
   readonly threw: boolean;
 }
 
+/** The calls an `observeCore` has recorded, the functions it could not observe, and how to undo it. */
 export interface CoreObserver {
   readonly calls: readonly ObservedCall[];
   /** Functions that could not be observed, with why. */
@@ -31,6 +33,7 @@ export interface CoreObserver {
   restore(): void;
 }
 
+/** Observe the named exports of a module's namespace while runs are installed; see the module comment. */
 export function observeCore(namespace: object, functions: readonly string[]): CoreObserver {
   const calls: ObservedCall[] = [];
   // No prototype: a function named __proto__ is an ordinary key.

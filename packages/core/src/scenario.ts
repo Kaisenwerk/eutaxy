@@ -61,6 +61,10 @@ export interface Bounds {
   readonly budgetMs: number;
 }
 
+/**
+ * A scenario as plain data: the Worker, the drive, the setup, the externals, the invariants and the
+ * bounds, which `defineScenario` (or a platform's equivalent) builds and validates.
+ */
 export interface ScenarioSpec {
   readonly version: 1;
   readonly name: string;

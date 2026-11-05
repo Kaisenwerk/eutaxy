@@ -1,6 +1,10 @@
 import type { Violated } from "@eutaxy/core";
 import { emitRegressionTest } from "@eutaxy/report";
 
+/**
+ * What `cloudflareRegressionTest` needs to write the test: import paths of the scenario, the Worker and its
+ * schema files, relative to the emitted file, and what the platform was given when the check ran.
+ */
 export interface CloudflareRegressionOptions {
   /** Import path of the scenario module, relative to the emitted file. */
   readonly scenarioPath: string;

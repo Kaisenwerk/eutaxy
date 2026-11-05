@@ -10,6 +10,7 @@ import { type Fn, type Forall, isSpec, type ModuleSpecs } from "@eutaxy/spec";
 import { type CheckedInput, checkedRung, malformedReason } from "./checked.ts";
 import { type TestedOptions, testedRung } from "./tested.ts";
 
+/** How far `specLadder` climbs: the `TESTED` rung's options (or none), and whether a scenario ran for `CHECKED`. */
 export interface LadderOptions {
   /** Run the `TESTED` rung with these options; `false` stops the ladder at `CHECKED`. */
   readonly tested?: TestedOptions | false;

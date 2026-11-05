@@ -29,6 +29,7 @@ export const readFaults: readonly FaultKind[] = ["crash_before", "crash_after", 
 /** A decision a platform records on the invocation's behalf (an ack, a delete): the invocation may die either side of it; it neither errors nor goes missing. */
 export const decisionFaults: readonly FaultKind[] = ["crash_before", "crash_after"];
 
+/** One injected fault: which effect of which invocation it hit, and what kind of fault it was. */
 export interface FaultDecision {
   /** The invocation the effect belongs to, e.g. "msg-1#2". */
   readonly invocation: string;
@@ -40,6 +41,7 @@ export interface FaultDecision {
   readonly op: string;
 }
 
+/** What decided one run: the seed it drew from, the faults injected, and the turns picked when they were picked. */
 export interface Schedule {
   /** The per-run seed the decisions were drawn from. */
   readonly seed: number;

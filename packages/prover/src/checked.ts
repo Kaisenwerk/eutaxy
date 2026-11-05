@@ -76,6 +76,7 @@ export interface CheckedInput {
   readonly unobservable?: string;
 }
 
+/** The `CHECKED` rung: evaluate the property on every distinct input the simulator passed the function. */
 export function checkedRung(input: CheckedInput): SpecVerdict {
   const { module, fn, property } = input;
   const base = { module, function: fn.name, property: property.name, text: property.text };

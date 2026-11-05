@@ -26,6 +26,7 @@ import { ExhaustiveDriver } from "./exhaustive.ts";
 import { concurrencySupported, Run, type StartedDelivery } from "./run.ts";
 import { shrink } from "./shrink.ts";
 
+/** How `explore` searches: the seed, a cap on runs, the time budget, the share of runs with faults, and exhaustive mode. */
 export interface ExploreOptions {
   readonly seed: number | string;
   /** Hard cap on runs, in addition to the scenario's time budget. */
@@ -236,6 +237,11 @@ export async function replay(
   return (await replayRun(spec, platform, schedule)).log;
 }
 
+/**
+ * Explore a scenario on a platform: run it under schedules drawn from the seed (or every schedule within
+ * the bounds, when exhaustive), shrink the first violation found, and return the verdict. At most 100 runs
+ * unless `maxRuns` says otherwise.
+ */
 export async function explore(
   scenario: ScenarioSpec,
   platform: Platform,

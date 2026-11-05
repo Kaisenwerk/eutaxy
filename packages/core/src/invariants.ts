@@ -56,6 +56,7 @@ export function recomputePerMessageExpected(
   });
 }
 
+/** Anything a scenario says must hold after every run, over the effect log or the end-of-run state. */
 export type Invariant =
   | AtMostOncePerKey
   | AtLeastOnce
@@ -65,6 +66,7 @@ export type Invariant =
   | References
   | Refines;
 
+/** An invariant that did not hold: its name, what went wrong, the keys involved and the effects that show it. */
 export interface Violation {
   readonly invariant: string;
   readonly message: string;
@@ -83,6 +85,7 @@ export function sameViolation(a: Violation, b: Violation): boolean {
   );
 }
 
+/** Check one invariant against a run's effect log; null when it holds. */
 export function checkInvariant(log: EffectLog, inv: Invariant): Violation | null {
   switch (inv.kind) {
     case "refines":
@@ -132,6 +135,7 @@ export function checkInvariant(log: EffectLog, inv: Invariant): Violation | null
   }
 }
 
+/** Check every invariant against a run's effect log and return the violations, in the invariants' order. */
 export function checkInvariants(
   log: EffectLog,
   invariants: readonly Invariant[],
