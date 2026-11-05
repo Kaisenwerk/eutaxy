@@ -82,6 +82,19 @@ describe("a scenario with callees", () => {
     );
   });
 
+  test("the vitest config names the scenario's entry as the main module, so its object classes run", () => {
+    const src = vitestConfigSource(
+      "/p/wrangler.jsonc",
+      "/p/.eutaxy/x.test.ts",
+      "/p/.eutaxy/r.json",
+      { main: "/p/worker.fixed.ts" },
+    );
+    expect(src).toContain(
+      'cloudflareTest({ main: "/p/worker.fixed.ts", wrangler: { configPath: "/p/wrangler.jsonc" } })',
+    );
+    expect(src).not.toContain("neverCalled");
+  });
+
   test("the vitest config names the generated main module and the callees' resources", () => {
     const src = vitestConfigSource(
       "/p/wrangler.jsonc",

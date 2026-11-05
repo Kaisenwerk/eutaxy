@@ -207,25 +207,34 @@ export async function runCheck(o: CheckOptions): Promise<number> {
   const testPath = join(workDir, `${name}.${stamp}.check.test.ts`);
   const configPath = join(workDir, `vitest.config.${stamp}.mts`);
   const mainPath = join(workDir, `main.${stamp}.ts`);
-  // The callees the scenario names: their configs are read here, before Vitest starts, since the
-  // isolate must hold their resources. The scenario module is imported in Node for its steps, only
-  // when its source mentions one.
+  // The scenario module is imported in Node, in a process of its own, for the Worker it names (its entry
+  // is the isolate's main module, so the Durable Object and Workflow classes that run are the entry's, not
+  // those of the wrangler config's `main`) and for its callees, whose configs are read here, before Vitest
+  // starts, since the isolate must hold their resources.
   let callees: CalleeConfig[] = [];
   let loaded: LoadedScenario | undefined;
-  if (mentionsCallee(readFileSync(scenarioPath, "utf8"))) {
-    try {
-      loaded = await loadScenario(scenarioPath);
-      callees = calleeSteps(loaded.setup).map((step) => readCalleeConfig(step, dir));
-    } catch (err) {
+  try {
+    loaded = await loadScenario(scenarioPath);
+  } catch (err) {
+    if (mentionsCallee(readFileSync(scenarioPath, "utf8"))) {
       o.stderr(`could not read the scenario's callees: ${String(err)}\n`);
       return exitCodes.error;
     }
-    for (const c of callees)
-      if (c.notAdded.length > 0)
-        o.stderr(
-          `callee ${describeCallee(c, dir)}: not added to the test's isolate: ${c.notAdded.join(", ")}\n`,
-        );
+    o.stderr(
+      `could not read the scenario in Node, so the isolate's main module is the wrangler config's: ${String(err).split("\n")[0]}\n`,
+    );
   }
+  try {
+    callees = calleeSteps(loaded?.setup ?? []).map((step) => readCalleeConfig(step, dir));
+  } catch (err) {
+    o.stderr(`could not read the scenario's callees: ${String(err)}\n`);
+    return exitCodes.error;
+  }
+  for (const c of callees)
+    if (c.notAdded.length > 0)
+      o.stderr(
+        `callee ${describeCallee(c, dir)}: not added to the test's isolate: ${c.notAdded.join(", ")}\n`,
+      );
   // Shared resources, from the caller's config (readable as JSON or JSONC) and the callees'.
   const callerResources = callees.length > 0 ? readCallerResources(wrangler) : undefined;
   const isolate = isolateOf(callees, callerResources);
@@ -285,7 +294,16 @@ export async function runCheck(o: CheckOptions): Promise<number> {
           miniflare: miniflareOptionsSource(callees, isolate),
         }),
       );
-    } else writeFileSync(configPath, vitestConfigSource(wrangler, testPath, reportPath));
+    } else
+      writeFileSync(
+        configPath,
+        vitestConfigSource(
+          wrangler,
+          testPath,
+          reportPath,
+          loaded ? { main: resolve(dir, loaded.worker.entry) } : undefined,
+        ),
+      );
     const { code, output } = await runVitest(vitestBin(dir), configPath, dir);
     const transport = code === 0 ? readTransport(reportPath) : null;
     if (!transport) {

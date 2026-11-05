@@ -37,7 +37,12 @@ What it does:
    Node side, through your TypeScript compiler.
 2. Writes `.eutaxy/` beside the scenario: a test that performs the check
    inside workerd and a Vitest config with the Cloudflare plugin pointed at
-   the wrangler config. For a scenario with `callee()` steps it also reads
+   the wrangler config, its main module the scenario's `worker.entry` (the
+   scenario is imported in Node for it), so the Durable Object and Workflow
+   classes that run are the ones that module exports, even when it is not
+   the config's `main`, as a fixed variant of a Worker usually is. (The
+   regression test it writes runs under your own Vitest config, whose
+   `main` decides the classes there.) For a scenario with `callee()` steps it also reads
    each callee's wrangler config (JSON or JSONC), writes a main module that
    re-exports your Worker's exports and the callees' Durable Object and
    Workflow classes under qualified aliases, and adds the callees'
