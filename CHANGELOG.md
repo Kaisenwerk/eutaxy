@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.14.0](https://github.com/Kaisenwerk/eutaxy/compare/v0.13.0...v0.14.0) (2026-11-04)
+
+
+### Features
+
+* **cli:** eutaxy check builds the callees' isolate from their wrangler configs ([5c1e20b](https://github.com/Kaisenwerk/eutaxy/commit/5c1e20b888a8f2583a900d8a4b97d426dc3c7df2))
+* **cloudflare:** a service binding's callee runs for real in the caller's simulation ([e261a31](https://github.com/Kaisenwerk/eutaxy/commit/e261a3144502db52537d289093a254a531388698))
+* **cloudflare:** shared resources, nested callees and a callee's Workflows, with the v0.14 gate entry ([72c58a9](https://github.com/Kaisenwerk/eutaxy/commit/72c58a9f6217d0ab3783a75a02bd3d67f6465bb7))
+
+
+### Bug Fixes
+
+* **cloudflare:** the caller binding's props and entrypoint reach the callee ([7925c65](https://github.com/Kaisenwerk/eutaxy/commit/7925c65ef09b51abc44149682da084c443855ad9))
+
+
+### Documentation
+
+* **roadmap:** close v0.14, the system ([30db075](https://github.com/Kaisenwerk/eutaxy/commit/30db07551b873361a2e5e44dc641da40c9fc6a79))
+
 ## [0.13.0](https://github.com/Kaisenwerk/eutaxy/compare/v0.12.0...v0.13.0) (2026-11-03)
 
 
