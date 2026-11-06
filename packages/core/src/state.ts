@@ -78,15 +78,20 @@ export function lastSnapshot(
   log: EffectLog,
   target: string,
 ): { readonly [table: string]: readonly Row[] } | undefined {
+  const e = findSnapshot(log, target);
+  if (!e) return undefined;
+  const tables = getPath(e.payload, "tables");
+  if (tables && typeof tables === "object" && !Array.isArray(tables)) {
+    return tables as { readonly [table: string]: readonly Row[] };
+  }
+  return {};
+}
+
+/** The last snapshot recorded for a target, found from the end of the log. */
+function findSnapshot(log: EffectLog, target: string): EffectRecord | undefined {
   for (let i = log.entries.length - 1; i >= 0; i--) {
     const e = log.entries[i] as EffectRecord;
-    if (e.kind === "snapshot" && e.target === target) {
-      const tables = getPath(e.payload, "tables");
-      if (tables && typeof tables === "object" && !Array.isArray(tables)) {
-        return tables as { readonly [table: string]: readonly Row[] };
-      }
-      return {};
-    }
+    if (e.kind === "snapshot" && e.target === target) return e;
   }
   return undefined;
 }
@@ -123,9 +128,8 @@ export function queryRows(log: EffectLog, query: StateQuery): readonly Row[] | u
 }
 
 function snapshotSeq(log: EffectLog, target: string): number[] {
-  let last: number | undefined;
-  for (const e of log.entries) if (e.kind === "snapshot" && e.target === target) last = e.seq;
-  return last === undefined ? [] : [last];
+  const last = findSnapshot(log, target);
+  return last === undefined ? [] : [last.seq];
 }
 
 export function checkEveryRow(log: EffectLog, inv: EveryRow): Violation | null {

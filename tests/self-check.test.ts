@@ -190,8 +190,8 @@ describe("the self-check", () => {
     {
       bug: "refines carries out the earliest decision and rests on the earliest read",
       file: "refines.ts",
-      from: "if (e.invocation === invocation && pick(e)) found = e;",
-      to: "if (e.invocation === invocation && pick(e)) found ??= e;",
+      from: "for (let i = lastBelow(seq); i >= 0; i--) {",
+      to: "for (let i = 0; i <= lastBelow(seq); i++) {",
       refuted: ["refinesMatchesReference", "refinesOnStateMatchesReference"],
     },
     {
@@ -204,8 +204,8 @@ describe("the self-check", () => {
     {
       bug: "refines ignores the key a write touches",
       file: "refines.ts",
-      from: "(state.key === undefined || keyOf(e, state.key) === key),",
-      to: "true,",
+      from: "(state.key === undefined || keyOf(e, state.key) === key)",
+      to: "true",
       refuted: ["refinesOnStateMatchesReference"],
     },
     {

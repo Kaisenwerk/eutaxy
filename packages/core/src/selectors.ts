@@ -14,11 +14,18 @@ export interface EffectSelector {
   readonly atLeast?: { readonly [path: string]: number };
 }
 
+/** A dot path split once, so a selector applied to many records does not split it per record. */
+type PathParts = readonly string[];
+const partsOf = (path: string): PathParts => (path === "" ? [] : path.split("."));
+
 /** Read a dot path such as "args.params.0" out of JSON data; undefined when absent. */
 export function getPath(value: JsonValue, path: string): JsonValue | undefined {
+  return readParts(value, partsOf(path));
+}
+
+function readParts(value: JsonValue, parts: PathParts): JsonValue | undefined {
   let cur: JsonValue | undefined = value;
-  if (path === "") return cur;
-  for (const part of path.split(".")) {
+  for (const part of parts) {
     if (cur === null || typeof cur !== "object") return undefined;
     if (Array.isArray(cur)) {
       const i = Number(part);
@@ -50,26 +57,32 @@ export function jsonEqual(a: JsonValue | undefined, b: JsonValue): boolean {
   );
 }
 
-export function matches(record: EffectRecord, sel: EffectSelector): boolean {
-  if (record.target !== sel.target) return false;
-  if (sel.op !== undefined && record.op !== sel.op) return false;
-  if (sel.kind !== undefined && record.kind !== sel.kind) return false;
-  if (sel.where) {
-    for (const [path, want] of Object.entries(sel.where)) {
-      if (!jsonEqual(getPath(record.payload, path), want)) return false;
-    }
-  }
-  if (sel.atLeast) {
-    for (const [path, min] of Object.entries(sel.atLeast)) {
-      const v = getPath(record.payload, path);
+/** A selector prepared once (its paths split, its conditions listed) for the records it is tried on. */
+export type EffectPredicate = (record: EffectRecord) => boolean;
+
+export function compileSelector(sel: EffectSelector): EffectPredicate {
+  const where = Object.entries(sel.where ?? {}).map(([p, want]) => [partsOf(p), want] as const);
+  const atLeast = Object.entries(sel.atLeast ?? {}).map(([p, min]) => [partsOf(p), min] as const);
+  return (record) => {
+    if (record.target !== sel.target) return false;
+    if (sel.op !== undefined && record.op !== sel.op) return false;
+    if (sel.kind !== undefined && record.kind !== sel.kind) return false;
+    for (const [parts, want] of where)
+      if (!jsonEqual(readParts(record.payload, parts), want)) return false;
+    for (const [parts, min] of atLeast) {
+      const v = readParts(record.payload, parts);
       if (typeof v !== "number" || v < min) return false;
     }
-  }
-  return true;
+    return true;
+  };
+}
+
+export function matches(record: EffectRecord, sel: EffectSelector): boolean {
+  return compileSelector(sel)(record);
 }
 
 export function selectEffects(log: EffectLog, sel: EffectSelector): readonly EffectRecord[] {
-  return log.entries.filter((e) => matches(e, sel));
+  return log.entries.filter(compileSelector(sel));
 }
 
 /** Canonical form of a key, so equal JSON values compare equal whatever their key order. */

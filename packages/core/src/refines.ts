@@ -4,11 +4,11 @@ import { canonicalJson, type JsonValue } from "./canonical-json.ts";
 import type { EffectLog, EffectRecord } from "./effect-log.ts";
 import type { Violation } from "./invariants.ts";
 import {
+  compileSelector,
   type EffectSelector,
   getPath,
   jsonEqual,
   keyOf,
-  matches,
   selectEffects,
 } from "./selectors.ts";
 
@@ -45,14 +45,30 @@ export function decisionTarget(fn: string): string {
 
 export function checkRefines(log: EffectLog, inv: Refines): Violation | null {
   const target = decisionTarget(inv.decision);
-  const before = (seq: number, invocation: string, pick: (e: EffectRecord) => boolean) => {
-    let found: EffectRecord | undefined;
-    for (const e of log.entries) {
-      if (e.seq >= seq) break;
-      if (e.invocation === invocation && pick(e)) found = e;
-    }
-    return found;
+  const entries = log.entries;
+  // A run's log is dense (entry i has seq i), so a record's neighbours are found by index; a log that
+  // is not (a slice) is scanned for the index instead. Either way the walk stays close to the effect.
+  const lastBelow = (seq: number): number => {
+    if (entries[seq - 1]?.seq === seq - 1) return seq - 1;
+    let i = entries.length - 1;
+    while (i >= 0 && (entries[i] as EffectRecord).seq >= seq) i--;
+    return i;
   };
+  const firstAbove = (seq: number): number => {
+    if (entries[seq + 1]?.seq === seq + 1) return seq + 1;
+    const i = entries.findIndex((e) => e.seq > seq);
+    return i === -1 ? entries.length : i;
+  };
+  /** The last record before `seq` in `invocation` that `pick` accepts. */
+  const before = (seq: number, invocation: string, pick: (e: EffectRecord) => boolean) => {
+    for (let i = lastBelow(seq); i >= 0; i--) {
+      const e = entries[i] as EffectRecord;
+      if (e.invocation === invocation && pick(e)) return e;
+    }
+    return undefined;
+  };
+  const isRead = inv.state ? compileSelector(inv.state.read) : null;
+  const isWrite = inv.state ? compileSelector(inv.state.write) : null;
   for (const effect of selectEffects(log, inv.effect)) {
     const what = `${effect.target} ${effect.op} (seq ${effect.seq}) in ${effect.invocation}`;
     // A call that threw decided nothing.
@@ -84,8 +100,8 @@ export function checkRefines(log: EffectLog, inv: Refines): Violation | null {
       }
     }
     const state = inv.state;
-    if (!state) continue;
-    const read = before(decision.seq, effect.invocation, (e) => matches(e, state.read));
+    if (!state || !isRead || !isWrite) continue;
+    const read = before(decision.seq, effect.invocation, isRead);
     if (!read) {
       return {
         invariant: inv.name,
@@ -95,14 +111,19 @@ export function checkRefines(log: EffectLog, inv: Refines): Violation | null {
       };
     }
     const key = state.key === undefined ? undefined : keyOf(read, state.key);
-    const write = log.entries.find(
-      (e) =>
-        e.seq > read.seq &&
-        e.seq < effect.seq &&
+    let write: EffectRecord | undefined;
+    for (let i = firstAbove(read.seq); i < entries.length; i++) {
+      const e = entries[i] as EffectRecord;
+      if (e.seq >= effect.seq) break;
+      if (
         e.invocation !== effect.invocation &&
-        matches(e, state.write) &&
-        (state.key === undefined || keyOf(e, state.key) === key),
-    );
+        isWrite(e) &&
+        (state.key === undefined || keyOf(e, state.key) === key)
+      ) {
+        write = e;
+        break;
+      }
+    }
     if (write) {
       return {
         invariant: inv.name,

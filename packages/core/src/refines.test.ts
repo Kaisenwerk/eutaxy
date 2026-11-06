@@ -50,6 +50,24 @@ const refines: Refines = {
 };
 
 describe("refines", () => {
+  test("a log that is not dense (a slice of a run's) is checked the same", () => {
+    const full = log([
+      ["read", "z", 0],
+      ["read", "a", 0],
+      ["decide", "a", 0, true],
+      ["read", "b", 0],
+      ["write", "a", 400],
+      ["decide", "b", 0, true],
+      ["write", "b", 400],
+    ]);
+    const sliced: EffectLog = { entries: full.entries.slice(1) };
+    for (const l of [full, sliced]) {
+      const v = checkInvariant(l, refines);
+      expect(v?.keys).toEqual(["stale_read", '"o-1"']);
+      expect(v?.evidence).toEqual([3, 5, 4, 6]);
+    }
+  });
+
   test("holds when each write follows a decision made on current state", () => {
     expect(
       checkInvariant(
