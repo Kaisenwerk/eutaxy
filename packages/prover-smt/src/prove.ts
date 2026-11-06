@@ -137,7 +137,7 @@ export function prepare(input: ProveInput): Prepared {
       for (const property of fn.properties) {
         if (property.kind !== "forall") continue;
         try {
-          scripts.set(key(fn.name, property.name), propertyScript(property, module));
+          scripts.set(key(fn.name, property.name), propertyScript(property, module, pre));
         } catch (err) {
           if (!(err instanceof OutsideSubset)) throw err;
           skipped.set(key(fn.name, property.name), err.message);

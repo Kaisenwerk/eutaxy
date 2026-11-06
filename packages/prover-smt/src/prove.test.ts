@@ -2,6 +2,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { readSpecs } from "@eutaxy/prover/reader";
 import { afterAll, describe, expect, test } from "vitest";
+import { propertyScript } from "./emit.ts";
 import { engineAssumptions, prepare, proveModule } from "./prove.ts";
 import { findZ3 } from "./z3.ts";
 
@@ -58,6 +59,19 @@ describe("prepare", () => {
     const p = prepare({ source, specs: read(source, spec) });
     expect(p.outside.get("f")).toContain("arrays are not in this engine's subset");
     expect([...p.scripts.keys()].map((k) => k.split("\u0000")[1])).toEqual(["q"]);
+  });
+
+  test("each script starts with the module's prelude, emitted once, byte for byte as on its own", () => {
+    const specs = read(refund, refundSpecs);
+    const p = prepare({ source: refund, specs });
+    expect(p.scripts.size).toBeGreaterThan(1);
+    for (const fn of specs.functions)
+      for (const property of fn.properties) {
+        const script = p.scripts.get(`${fn.name}\u0000${property.name}`);
+        if (!script) continue;
+        expect(script.script.startsWith(`${p.prelude}\n`)).toBe(true);
+        expect(script).toEqual(propertyScript(property, p.module));
+      }
   });
 
   test("a property the emitter cannot state is skipped with why, located in the spec file", () => {

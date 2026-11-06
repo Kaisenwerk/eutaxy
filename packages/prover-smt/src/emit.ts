@@ -769,8 +769,13 @@ export interface PropertyScript {
  * One property's script: the binders as constants, what their types say
  * beyond their sorts, the precondition asserted, the claim's negation
  * asserted. `unsat` proves the claim; `sat` comes with the binders' values.
+ * `definitions` is the module's `prelude`, when the caller already has it.
  */
-export function propertyScript(property: Property, module: SubsetModule): PropertyScript {
+export function propertyScript(
+  property: Property,
+  module: SubsetModule,
+  definitions: string = prelude(module),
+): PropertyScript {
   if (property.kind !== "forall" || !property.ensures) fail("not a forall property");
   const e = env(module);
   const types = property.binders.map((b) => binderType(b.name, b.type, module));
@@ -780,7 +785,7 @@ export function propertyScript(property: Property, module: SubsetModule): Proper
     type: types[i] as SubsetType,
   }));
   const lines = [
-    prelude(module),
+    definitions,
     ...binders.map((b) => `(declare-const ${b.symbol} ${sort(b.type, module)})`),
     // What a binder's subset type says that its sort does not: which member of a union, which tags.
     ...binders.flatMap((b) => {
