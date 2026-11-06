@@ -13,15 +13,14 @@
  */
 
 import {
-  appendEffect,
   type Bounds,
   decisionTarget,
   type EffectLog,
   type EffectOptions,
   type EffectPoint,
+  type EffectRecord,
   type EventRef,
   type ExternalDecl,
-  emptyLog,
   type FaultDecision,
   type FaultKind,
   type Invocation,
@@ -148,7 +147,14 @@ function waitingUnseen(invocation: string): string {
 const bookkeepingId = "platform";
 
 export class Run implements RunHooks {
-  private logState: EffectLog = emptyLog;
+  /** The records, appended in place. */
+  private readonly entries: EffectRecord[] = [];
+  /**
+   * The log last handed out, a snapshot of the records then: what a run returned never changes
+   * under its reader, however late an abandoned effect's I/O records its result. Rebuilt on the
+   * next read after a record, so a run reads it once at its end and a differential once per event.
+   */
+  private logView: EffectLog | null = null;
   private readonly faults: FaultDecision[] = [];
   private effectIndex = 0;
   private eligibleSeen = 0;
@@ -187,7 +193,8 @@ export class Run implements RunHooks {
   }
 
   get log(): EffectLog {
-    return this.logState;
+    this.logView ??= { entries: [...this.entries] };
+    return this.logView;
   }
 
   /** The schedule as actually executed: the faults taken and, when they do not follow the seed, the turns. */
@@ -363,9 +370,15 @@ export class Run implements RunHooks {
     return i === 0 ? null : (point.allowed[i - 1] ?? null);
   }
 
+  /** Append one record, with the next sequence number: O(1), so a long run's log stays cheap. */
+  private append(effect: Omit<EffectRecord, "seq">): void {
+    this.entries.push({ ...effect, seq: this.entries.length });
+    this.logView = null;
+  }
+
   private record(point: EffectPoint, kind: "call" | "result" | "fault", payload: JsonValue): void {
     if (kind === "result") this.turns.performed(point.target);
-    this.logState = appendEffect(this.logState, {
+    this.append({
       kind,
       invocation: point.invocation,
       target: point.target,
@@ -762,7 +775,7 @@ export class Run implements RunHooks {
 
   /** A call of a pure core function, recorded as a decision of the invocation running now (see `observeCore`). */
   decision(fn: string, payload: JsonValue): void {
-    this.logState = appendEffect(this.logState, {
+    this.append({
       kind: "result",
       invocation: this.running(),
       target: decisionTarget(fn),
@@ -772,7 +785,7 @@ export class Run implements RunHooks {
   }
 
   snapshot(invocation: string, target: string, payload: JsonValue): void {
-    this.logState = appendEffect(this.logState, {
+    this.append({
       kind: "snapshot",
       invocation,
       target,
