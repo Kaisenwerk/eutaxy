@@ -87,7 +87,9 @@ export class VirtualClock {
   }
 
   setInterval(callback: (...args: unknown[]) => void, delay = 0, ...args: unknown[]): number {
-    return this.schedule(callback, delay, args, Math.max(1, Math.floor(delay)));
+    // Hosts run an interval with no usable delay (NaN, 0, negative) every millisecond.
+    const every = Number.isFinite(delay) && delay >= 1 ? Math.floor(delay) : 1;
+    return this.schedule(callback, delay, args, every);
   }
 
   clear(id: number): void {

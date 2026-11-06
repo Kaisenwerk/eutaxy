@@ -59,6 +59,21 @@ describe("VirtualClock", () => {
   });
 });
 
+describe("interval delays", () => {
+  test("an interval with no usable delay fires every millisecond, as hosts run it", () => {
+    for (const delay of [Number.NaN, 0, -5, 0.5]) {
+      const c = new VirtualClock();
+      let n = 0;
+      c.setInterval(() => n++, delay);
+      expect(c.fireNext()).toBe(true);
+      expect(c.fireNext()).toBe(true);
+      expect(n).toBe(2);
+      expect(c.now()).toBe(virtualEpoch + 1);
+      expect(c.pendingTimers()).toBe(1);
+    }
+  });
+});
+
 describe("VirtualRandom", () => {
   test("is deterministic per seed and produces v4 UUIDs", () => {
     const a = new VirtualRandom("s");
