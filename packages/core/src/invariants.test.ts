@@ -57,6 +57,13 @@ describe("getPath", () => {
     expect(getPath(v, "args.nope.x")).toBeUndefined();
     expect(getPath(v, "args.params.-1")).toBeUndefined();
   });
+
+  test("an array is read by a plain index only, so a typo matches nothing", () => {
+    const v = { args: { params: ["o-1", 100] } };
+    for (const typo of ["args.params.", "args.params. 1", "args.params.01", "args.params.1e0"])
+      expect(getPath(v, typo)).toBeUndefined();
+    expect(getPath(v, "args.params.1")).toBe(100);
+  });
 });
 
 describe("atMostOncePerKey", () => {

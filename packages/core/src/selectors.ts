@@ -17,6 +17,7 @@ export interface EffectSelector {
 /** A dot path split once, so a selector applied to many records does not split it per record. */
 type PathParts = readonly string[];
 const partsOf = (path: string): PathParts => (path === "" ? [] : path.split("."));
+const indexPattern = /^(0|[1-9]\d*)$/;
 
 /** Read a dot path such as "args.params.0" out of JSON data; undefined when absent. */
 export function getPath(value: JsonValue, path: string): JsonValue | undefined {
@@ -28,9 +29,9 @@ function readParts(value: JsonValue, parts: PathParts): JsonValue | undefined {
   for (const part of parts) {
     if (cur === null || typeof cur !== "object") return undefined;
     if (Array.isArray(cur)) {
-      const i = Number(part);
-      if (!Number.isInteger(i) || i < 0) return undefined;
-      cur = cur[i];
+      // Only a plain index reads an array: "", " 1" or "1e0" would also convert to a number.
+      if (!indexPattern.test(part)) return undefined;
+      cur = cur[Number(part)];
     } else {
       cur = (cur as { readonly [k: string]: JsonValue })[part];
     }
