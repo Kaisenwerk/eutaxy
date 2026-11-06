@@ -243,8 +243,8 @@ Eutaxy refuses to pass a run it cannot control:
 - An invocation waiting on something Eutaxy cannot see, or an effect whose
   real I/O outlasts the budget.
 - Durable Objects: an object reached only through another object's binding,
-  `newUniqueId`, `jurisdiction()` namespaces, a namespace without a
-  `durableObject` setup, a result that is not plain data (an RPC
+  `jurisdiction()` namespaces (and `newUniqueId` with a jurisdiction), a
+  namespace without a `durableObject` setup, a result that is not plain data (an RPC
   capability), `setAlarm` inside `transactionSync()`.
 - R2: multipart uploads, conditions on the upload time, a bucket without an
   `r2Bucket` setup.

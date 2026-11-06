@@ -111,9 +111,10 @@ plain data, and call the object again for more.
 `stub.method().field` without an `await` in between. Await the call, then
 read the field.
 
-**`<binding>.newUniqueId() is random and differs on replay; use idFromName`**
-A unique id cannot repeat on replay. Name the object (`idFromName`,
-`getByName`) with an id the request carries.
+**`<binding>.newUniqueId({ jurisdiction }) ids are not proxied or reset; use newUniqueId() without one`**
+A unique id restricted to a jurisdiction lives in a jurisdiction namespace,
+which the setup does not reset. Plain `newUniqueId()` is modelled: the id
+is drawn from the run's seed, so it repeats on replay.
 
 **`<binding>.jurisdiction() namespaces are not proxied or reset; use the namespace itself`**
 A jurisdiction-restricted namespace is a second namespace the setup does

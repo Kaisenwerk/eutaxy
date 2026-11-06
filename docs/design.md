@@ -730,8 +730,13 @@ shares the reading of the limit and none of the proxy code.
   turns (the input gate holds them, so this is the runtime's behaviour);
   the object's own binding calls are not recorded, and an object reached
   only through another object's binding makes the run `UNSUPPORTED`, as do
-  `newUniqueId` (random), `jurisdiction()` namespaces and a namespace the
-  scenario does not reset (no `durableObject` setup). An object no call
+  `jurisdiction()` namespaces (and a unique id asked for one) and a
+  namespace the scenario does not reset (no `durableObject` setup).
+  `newUniqueId()` is drawn from the run's random stream, as a named id
+  whose name is the draw, so it repeats on replay, the reset finds its
+  object, and the draw counts as a read of randomness (which id an
+  invocation gets depends on the order of turns); the Worker sees that
+  name on `id.name`, where the runtime has none. An object no call
   reached is snapshotted from its seed without being constructed. Reset
   constructs each object outside the simulation, with the network blocked:
   a constructor that makes a request fails the reset. A stub property can

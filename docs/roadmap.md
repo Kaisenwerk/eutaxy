@@ -126,14 +126,12 @@ v0.16's and wait for it unless a target needs one sooner):
   this roadmap are included in it verbatim, so they stay the one record of
   what is decided.
 - The `UNSUPPORTED` reasons that close with little model work (the site's
-  catalogue of reasons lists them all): `newUniqueId()` drawn from the
-  run's seed, so it repeats on replay, in place of being refused; an R2
-  object's upload time on the virtual clock, so `onlyIf` conditions on it
-  are modelled; alarm calls inside `transactionSync()`, applied at its
-  commit; the AWS SDK's callback form of `send`, as the promise form; and
-  Workflow instance management, `terminate()`, `pause()`, `resume()`,
-  `restart()`, `createBatch()` and `deleteBatch()`, as the engine
-  documents them.
+  catalogue of reasons lists them all): an R2 object's upload time on the
+  virtual clock, so `onlyIf` conditions on it are modelled; alarm calls
+  inside `transactionSync()`, applied at its commit; the AWS SDK's
+  callback form of `send`, as the promise form; and Workflow instance
+  management, `terminate()`, `pause()`, `resume()`, `restart()`,
+  `createBatch()` and `deleteBatch()`, as the engine documents them.
 - Left over from earlier phases: concurrent delivery on the AWS platform
   (it still delivers one event at a time); latency on scripted externals;
   Workflow rollback handlers. Dynamic partial-order reduction and one

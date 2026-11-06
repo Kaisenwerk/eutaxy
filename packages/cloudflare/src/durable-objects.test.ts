@@ -374,6 +374,66 @@ describe("Durable Object stub calls", () => {
     expect(run.unsupportedReasons.join()).toContain("jurisdiction");
   });
 
+  test("newUniqueId() draws the id from the run's seed, so it repeats on replay and the object is named", async () => {
+    const { namespace, helpers, storages } = fakeNamespace();
+    let realDraws = 0;
+    namespace.newUniqueId = () => {
+      realDraws++;
+      return { toString: () => "id-random", equals: () => false };
+    };
+    const viaUniqueId: WorkerHandler = {
+      async fetch(request, env) {
+        const ns = (
+          env as {
+            COUNTER: {
+              newUniqueId(options?: { jurisdiction: string }): { toString(): string };
+              get(id: unknown): Counter;
+            };
+          }
+        ).COUNTER;
+        const id = ns.newUniqueId(
+          new URL(request.url).pathname === "/eu" ? { jurisdiction: "eu" } : undefined,
+        );
+        const value = await ns.get(id).bump(2);
+        return Response.json({ id: id.toString(), value });
+      },
+    };
+    const platform = createCloudflarePlatform({
+      env: { COUNTER: namespace },
+      handler: viaUniqueId,
+      schemas: {},
+      durableObjects: helpers,
+    });
+    const once = async (seed: number, path = "/bump") => {
+      const s = spec(path);
+      const run = new Run({ chooser: replayChooser({ seed, faults: [] }), bounds: s.bounds });
+      const log = await runOnce(s, platform, run);
+      const body = response(log).result.body as { id: string; value: number };
+      return { run, log, body, lines: lines(log) };
+    };
+    const first = await once(1);
+    expect(first.run.unsupportedReasons).toEqual([]);
+    expect(first.body).toEqual({
+      id: expect.stringMatching(/^id-eutaxy:unique:[0-9a-f-]{36}$/),
+      value: 2,
+    });
+    expect(realDraws).toBe(0);
+    // The log names the object by the drawn name, and the snapshot has its storage.
+    expect(first.lines[0]).toBe("req-1#1 call DO:COUNTER bump");
+    const payload = first.log.entries[0]?.payload as { args?: { object?: string } } | undefined;
+    expect(payload?.args?.object).toBe(first.body.id.slice("id-".length));
+    expect(storages.get(first.body.id)?.data.get("n")).toBe(2);
+    // Same seed: the same id and a byte-identical log. Another seed: another id.
+    const again = await once(1);
+    expect(again.body).toEqual(first.body);
+    expect(JSON.stringify(again.log.entries)).toBe(JSON.stringify(first.log.entries));
+    expect((await once(2)).body.id).not.toBe(first.body.id);
+    // A jurisdiction-restricted unique id is a jurisdiction namespace's: not modelled.
+    const eu = await once(1, "/eu");
+    expect(eu.run.unsupportedReasons.join()).toContain("newUniqueId({ jurisdiction })");
+    expect(realDraws).toBe(1);
+  });
+
   test("an object reached only through another object makes the run UNSUPPORTED", async () => {
     const { run } = await runWith(null, { path: "/relay" });
     expect(run.unsupportedReasons.join()).toContain("COUNTER id-d was reached without a call");

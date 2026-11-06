@@ -420,10 +420,17 @@ export function proxyNamespace(
           return (hex: string) => target.idFromString(hex);
         case "newUniqueId":
           return (options?: DurableObjectNamespaceNewUniqueIdOptions) => {
-            ctx.hooks.unsupported(
-              `${binding}.newUniqueId() is random and differs on replay; use idFromName`,
-            );
-            return target.newUniqueId(options);
+            if (options?.jurisdiction !== undefined) {
+              ctx.hooks.unsupported(
+                `${binding}.newUniqueId({ jurisdiction }) ids are not proxied or reset; use newUniqueId() without one`,
+              );
+              return target.newUniqueId(options);
+            }
+            // Natively the id is random. Drawn from the run's random stream it repeats on replay, and the
+            // draw counts as a read of randomness, as it must: which id an invocation gets depends on
+            // the order of turns. The id is a named one (its name is the draw), so the real namespace
+            // accepts it and the reset finds its object; a Worker reading `id.name` sees that name.
+            return idFromName(`eutaxy:unique:${crypto.randomUUID()}`);
           };
         case "get":
           return (id: DurableObjectId, options?: DurableObjectNamespaceGetDurableObjectOptions) =>
