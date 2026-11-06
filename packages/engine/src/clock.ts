@@ -417,15 +417,25 @@ export async function settleOn<T>(promise: Promise<T>, ctx: SettleContext): Prom
       error = e;
     },
   );
+  // After a timer fires, its callback's work is microtasks and more timers: the cheap turn of the
+  // event loop is enough to see it, where a real zero timer would cost a millisecond per virtual
+  // timer. While real I/O is in flight, and once before calling the wait stuck, the real tick stays.
+  let afterTimer = false;
   for (;;) {
-    await Promise.race([tracked, realTick()]);
+    await Promise.race([tracked, afterTimer ? eventLoopTurn() : realTick()]);
+    const cheap = afterTimer;
+    afterTimer = false;
     if (done) {
       if (failed) throw error;
       return value as T;
     }
     if (ctx.crashed()) return new Promise<T>(() => {});
     if (ctx.inFlight() > 0) continue;
-    if (ctx.clock.fireNext()) continue;
+    if (ctx.clock.fireNext()) {
+      afterTimer = true;
+      continue;
+    }
+    if (cheap) continue;
     ctx.stuck();
     return new Promise<T>(() => {});
   }

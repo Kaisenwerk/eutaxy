@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import {
+  cheapEventLoopTurn,
   patchGlobals,
   realDeadline,
   realTick,
@@ -236,6 +237,26 @@ describe("settleOn", () => {
     expect(clock.now()).toBe(virtualEpoch + 5000);
     expect(stuck).toEqual([]);
   });
+
+  test.skipIf(cheapEventLoopTurn === null)(
+    "after a timer fires the next turn is the cheap one, so sequential sleeps are not paced by real timers",
+    async () => {
+      const clock = new VirtualClock();
+      const { ctx: c, stuck } = ctx(clock);
+      const sleeps = 300;
+      const slept = (async () => {
+        for (let i = 0; i < sleeps; i++)
+          await new Promise<void>((resolve) => clock.setTimeout(() => resolve(), 10));
+        return "woke";
+      })();
+      const started = Date.now();
+      await expect(settleOn(slept, c)).resolves.toBe("woke");
+      // A real zero timer is at least a millisecond; one per sleep would take the whole count.
+      expect(Date.now() - started).toBeLessThan(sleeps / 2);
+      expect(clock.now()).toBe(virtualEpoch + sleeps * 10);
+      expect(stuck).toEqual([]);
+    },
+  );
 
   test("rejects with the promise's error and reports a stuck wait", async () => {
     const clock = new VirtualClock();
