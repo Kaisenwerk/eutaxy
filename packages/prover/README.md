@@ -83,6 +83,11 @@ that takes fewer types sees it. `readArrowBody` reads a spec file's arrow
 `renameVars` renames its parameters to the binders', `typeOf` types an
 expression. `closeCompiler` stops the compiler process.
 
+`inPool` runs independent jobs a few at a time and returns their results
+in item order, so an engine's solver processes, or the report's module
+processes, run side by side without the answer depending on which
+finished first.
+
 **The toolchain cache** (`@eutaxy/prover/toolchain`, a subpath that reads
 the file system, so workerd never loads it): what `eutaxy prover install`
 and the engines share. `Toolchain` (an engine's name, version, executable

@@ -24,7 +24,8 @@ are run on it, and only a claim that fails is `REFUTED`, shrunk as the
 TESTED rung shrinks, while a model the function does not confirm is
 `UNKNOWN` (`unsupported`) with the input; the resource limit reached is
 `gave_up`; a function or property outside the subset `unsupported`; no
-pinned solver `unavailable`; `total` is left to Lean); `prepare` (read and
+pinned solver `unavailable`; `total` is left to Lean; one Z3 process per
+property, a few at a time, the results in the properties' order); `prepare` (read and
 emit without running Z3); `prelude`, `propertyScript`, `term`, `value`,
 `equal` and `ident` (the SMT-LIB text: `f_` functions, `R_` datatypes,
 `mk_` constructors, `fld_` selectors, `v_` variables); `parseSExprs`,

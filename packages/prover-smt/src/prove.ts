@@ -12,11 +12,13 @@
  */
 
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { availableParallelism } from "node:os";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
   conforms,
   evaluate,
+  inPool,
   type ModuleProofs,
   type ProofOutcome,
   type PropertyProof,
@@ -157,6 +159,9 @@ export function prepare(input: ProveInput): Prepared {
  * Node does not, is completed in a sibling copy that is imported and then
  * removed, so the copy's own relative imports still resolve.
  */
+/** Names each sibling copy apart from another made in the same millisecond. */
+let copies = 0;
+
 async function importSpecFile(specPath: string): Promise<Record<string, unknown>> {
   try {
     return (await import(pathToFileURL(specPath).href)) as Record<string, unknown>;
@@ -171,7 +176,7 @@ async function importSpecFile(specPath: string): Promise<Record<string, unknown>
         existsSync(join(dir, `${rel}.ts`)) ? `${pre}${rel}.ts${post}` : whole,
     );
     if (rewritten === source) throw err;
-    const copy = join(dir, `.eutaxy-replay-${process.pid}-${Date.now()}.props.ts`);
+    const copy = join(dir, `.eutaxy-replay-${process.pid}-${Date.now()}-${copies++}.props.ts`);
     writeFileSync(copy, rewritten);
     try {
       return (await import(pathToFileURL(copy).href)) as Record<string, unknown>;
@@ -181,8 +186,29 @@ async function importSpecFile(specPath: string): Promise<Record<string, unknown>
   }
 }
 
+/**
+ * The spec file, imported once per proof of a module: every counterexample
+ * that module's solves turn up is replayed through the same import (the
+ * solves run side by side, and a sibling copy each would be one import
+ * removing another's file mid-import).
+ */
+type SpecLoader = (specPath: string) => Promise<Record<string, unknown>>;
+
+function specLoader(): SpecLoader {
+  const loaded = new Map<string, Promise<Record<string, unknown>>>();
+  return (specPath) => {
+    let ns = loaded.get(specPath);
+    if (ns === undefined) {
+      ns = importSpecFile(specPath);
+      loaded.set(specPath, ns);
+    }
+    return ns;
+  };
+}
+
 /** The spec file's export for a property, loaded for replay, or why it could not be. */
 async function loadSpec(
+  load: SpecLoader,
   specPath: string | undefined,
   property: Property,
   fn: string,
@@ -191,7 +217,7 @@ async function loadSpec(
     return "the engine was not given the spec file's path to replay the counterexample";
   let ns: Record<string, unknown>;
   try {
-    ns = await importSpecFile(specPath);
+    ns = await load(specPath);
   } catch (err) {
     return `the spec file could not be loaded to replay the counterexample: ${String(err)}`;
   }
@@ -266,39 +292,40 @@ export async function proveModule(input: ProveInput): Promise<SmtModuleProofs> {
         ),
       );
   }
-  for (const fn of inSubset) {
-    for (const property of fn.properties) {
-      if (property.kind === "total") {
-        results.push({
+  // One Z3 process per property, several at once (no more than the machine's cores, so each run keeps
+  // about a core): each outcome rests on Z3's resource limit, with the wall-clock timeout a backstop far
+  // above what a property takes, and the results keep the properties' order. (Not one process with
+  // push/pop: incremental mode can answer differently.)
+  const load = specLoader();
+  const jobs = inSubset.flatMap((fn) => fn.properties.map((property) => ({ fn, property })));
+  const proofs = await inPool(
+    jobs,
+    Math.min(8, availableParallelism()),
+    async ({ fn, property }): Promise<PropertyProof | undefined> => {
+      if (property.kind === "total")
+        return {
           function: fn.name,
           property: property.name,
           outcome: unknown(
             "unsupported",
             "total is not decided by this engine (Lean proves it by acceptance)",
           ),
-        });
-        continue;
-      }
+        };
       const k = key(fn.name, property.name);
       const why = skipped.get(k);
-      if (why !== undefined) {
-        results.push({
-          function: fn.name,
-          property: property.name,
-          outcome: unknown("unsupported", why),
-        });
-        continue;
-      }
+      if (why !== undefined)
+        return { function: fn.name, property: property.name, outcome: unknown("unsupported", why) };
       const script = scripts.get(k);
-      if (!script) continue;
+      if (!script) return undefined;
       const solved = await solve(solver, script.script, options);
-      results.push({
+      return {
         function: fn.name,
         property: property.name,
-        outcome: await outcomeOf(solved, script, module, property, fn.name, input),
-      });
-    }
-  }
+        outcome: await outcomeOf(solved, script, module, property, fn.name, input, load),
+      };
+    },
+  );
+  for (const proof of proofs) if (proof) results.push(proof);
   return { results, smt, specErrors };
 }
 
@@ -309,6 +336,7 @@ async function outcomeOf(
   property: Property,
   fn: string,
   input: ProveInput,
+  load: SpecLoader,
 ): Promise<ProofOutcome> {
   if (solved.run.timedOut)
     return unknown("gave_up", `Z3 did not finish within ${input.timeoutMs ?? 120_000} ms`);
@@ -348,7 +376,7 @@ async function outcomeOf(
       "unsupported",
       `Z3's model lies outside the parameter types (${rendered}): the engine's model of the types is wider than the types`,
     );
-  const spec = await loadSpec(input.specPath, property, fn);
+  const spec = await loadSpec(load, input.specPath, property, fn);
   if (typeof spec === "string") return unknown("unsupported", `${spec} (the model: ${rendered})`);
   const evaluation = evaluate(spec, values);
   if ("malformed" in evaluation)

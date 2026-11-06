@@ -180,6 +180,47 @@ describe("review findings, with the pinned Z3", () => {
   );
 
   test.skipIf("unavailable" in z3 && !required)(
+    "properties solved side by side come back in the spec's order, each refutation replayed through one import",
+    async () => {
+      // Five refutations at once, through a spec file that needs the sibling copy to load (the bare
+      // import): one copy per replay would race, and one removing its file could fail another's import.
+      const source =
+        "export function id(x: number): number { return x; }\nexport function neg(x: number): number { return -x; }\nexport function keep(b: boolean): boolean { return b; }";
+      writeFileSync(join(dir, "many.ts"), source);
+      const specPath = join(dir, "many.props.ts");
+      writeFileSync(
+        specPath,
+        [
+          'import { forall } from "@eutaxy/spec";',
+          'import { id, keep, neg } from "./many";',
+          "export const idReflexive = forall(id, { ensures: (x) => id(x) === x });",
+          "export const keepHolds = forall(keep, { ensures: (b) => keep(b) === b });",
+          "export const negReflexive = forall(neg, { ensures: (x) => neg(neg(x)) === x });",
+          "export const idPositive = forall(id, { ensures: (x) => id(x) > 0 });",
+          "export const negNegative = forall(neg, { ensures: (x) => neg(x) < 0 });",
+          "export const keepTrue = forall(keep, { ensures: (b) => keep(b) });",
+        ].join("\n"),
+      );
+      const specs = readSpecs({
+        module: source,
+        spec: readFileSync(specPath, "utf8"),
+        modulePath: "/virtual/many.ts",
+      });
+      expect(specs.errors).toEqual([]);
+      const r = await proveModule({ source, specs, specPath });
+      expect(r.results.map((x) => [x.property, x.outcome.kind])).toEqual([
+        ["idReflexive", "REFUTED"],
+        ["idPositive", "REFUTED"],
+        ["keepHolds", "PROVEN"],
+        ["keepTrue", "REFUTED"],
+        ["negReflexive", "REFUTED"],
+        ["negNegative", "REFUTED"],
+      ]);
+    },
+    120_000,
+  );
+
+  test.skipIf("unavailable" in z3 && !required)(
     "the pinned solver is found behind another version on the PATH",
     async () => {
       const fake = join(dir, "z3-old");

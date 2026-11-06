@@ -26,6 +26,7 @@ export {
   shrinkCandidates,
 } from "./generate.ts";
 export { checkSpecModule, type LadderOptions, specLadder } from "./ladder.ts";
+export { inPool } from "./pool.ts";
 export {
   aggregate,
   type EngineId,
