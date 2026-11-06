@@ -1,5 +1,39 @@
 # Changelog
 
+## [0.15.0](https://github.com/Kaisenwerk/eutaxy/compare/v0.14.0...v0.15.0) (2026-11-05)
+
+
+### Features
+
+* **cli:** eutaxy draft writes a scenario skeleton from a wrangler config ([97c11bb](https://github.com/Kaisenwerk/eutaxy/commit/97c11bba458e1c15ea741cee3dc0d08b36dd401e))
+* **examples:** a webhook with an idempotency key and a lease pool object with an alarm ([3d26531](https://github.com/Kaisenwerk/eutaxy/commit/3d265314df5f56bf5eb9732cead46e61a40116ec))
+* **examples:** an Agent with a schedule, two Workers over a service binding, a Workflow waiting for an event ([c86fed9](https://github.com/Kaisenwerk/eutaxy/commit/c86fed92406b5cdf883626880982080c54476e33))
+
+
+### Bug Fixes
+
+* **cli:** a scripted service binding may name a Worker the isolate does not hold ([bdbbbfb](https://github.com/Kaisenwerk/eutaxy/commit/bdbbbfbe647521f191301fc034867cd5bef4a75c))
+* **cli:** eutaxy check reads the wrangler config the scenario names ([4159e78](https://github.com/Kaisenwerk/eutaxy/commit/4159e7832fc34b0e9fdbc3633ea9a9e9ce00c2fd))
+* **cli:** eutaxy draft orders migrations as wrangler does and leaves a pattern to the author ([cd9015b](https://github.com/Kaisenwerk/eutaxy/commit/cd9015b556f7745b84584b1b7753a52c7d32beb3))
+* **cli:** several d1Schema steps on one binding apply every file in order ([d09099e](https://github.com/Kaisenwerk/eutaxy/commit/d09099ed050fdc2d53500ce28054e946a0535e5c))
+* **cli:** the scenario's Worker entry is the isolate's main module ([3ab67e9](https://github.com/Kaisenwerk/eutaxy/commit/3ab67e9e37c5b16a51b36ea29230ae21cde1d00c))
+* **cloudflare:** a block comment in a D1 schema separates the tokens around it ([4af5c77](https://github.com/Kaisenwerk/eutaxy/commit/4af5c77a4dce6ebcc1e40046d0e2b3da1312cbb1))
+* **cloudflare:** a crash inside waitUntil work is the delivery's status ([23c9eec](https://github.com/Kaisenwerk/eutaxy/commit/23c9eecc5c3f29b6fc01c86016a40d61b7323520))
+* **cloudflare:** a step started alongside a hibernating wait is reported, not frozen ([f35d29d](https://github.com/Kaisenwerk/eutaxy/commit/f35d29d339c511bb0479c01e45003d08aff91594))
+* **cloudflare:** a WorkerEntrypoint default export's handlers drive the Worker ([9f63719](https://github.com/Kaisenwerk/eutaxy/commit/9f637196a58cda03cc3c1cb0678b738a446c9e17))
+* **cloudflare:** a Workflow's wait hibernates the instance where no catch sees it ([8e119e2](https://github.com/Kaisenwerk/eutaxy/commit/8e119e2a1c9937c0ad9a4adfb2d6314a310645b4))
+* **cloudflare:** the D1 reset drops tables that reference each other ([2c6a1b5](https://github.com/Kaisenwerk/eutaxy/commit/2c6a1b5ca4afaf374f864c137c6954599380a170))
+* **cloudflare:** the D1 reset drops triggers first, and runs once per database ([7b76fe6](https://github.com/Kaisenwerk/eutaxy/commit/7b76fe603e5d13a9f9f5973ccd771d6a6d3c6a3d))
+* **prover:** an indented [@ts-ignore](https://github.com/ts-ignore) on a block comment's last line is a directive ([598c352](https://github.com/Kaisenwerk/eutaxy/commit/598c352df1cf76a5ddb7b71d78c42882aff5e44d))
+* **prover:** take a union's tag from the union, not re-derived from its records ([71f6dce](https://github.com/Kaisenwerk/eutaxy/commit/71f6dce8998663654893268c9b76df8e4c585ecf))
+* **site:** a callback type's arrow does not end a reference signature ([29a3441](https://github.com/Kaisenwerk/eutaxy/commit/29a3441d3e8b2aa8352c1ec5ed374892c09a4d51))
+* **site:** the Last updated date in the page's language ([84b33a1](https://github.com/Kaisenwerk/eutaxy/commit/84b33a1061d57d71331bf3d26aa6caf189b16a59))
+
+
+### Documentation
+
+* **roadmap:** close v0.15, worked examples and the first scenario in minutes ([54e2d1a](https://github.com/Kaisenwerk/eutaxy/commit/54e2d1ac176ce4bd983df30f3ac4bea7b86502aa))
+
 ## [0.14.0](https://github.com/Kaisenwerk/eutaxy/compare/v0.13.0...v0.14.0) (2026-11-04)
 
 
