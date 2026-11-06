@@ -31,3 +31,39 @@ export async function inPool<T, R>(
   await Promise.all(Array.from({ length: workers }, worker));
   return results;
 }
+
+/**
+ * `inPool`, and no item starts `size` or more places past the earliest one
+ * not yet finished: when an early job is slow, the jobs behind it wait
+ * rather than run ahead, so whatever the finished ones hold for their turn
+ * (the report's held output) is never more than `size - 1` items' worth.
+ */
+export async function inWindow<T, R>(
+  items: readonly T[],
+  size: number,
+  work: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const n = Math.max(1, Math.floor(size));
+  const finished = items.map(() => false);
+  let earliest = 0;
+  let failed = false;
+  const waiting = new Map<number, () => void>();
+  return inPool(items, n, async (item, i) => {
+    if (i >= earliest + n) await new Promise<void>((go) => waiting.set(i, go));
+    if (failed) throw new Error("an earlier job failed");
+    try {
+      return await work(item, i);
+    } catch (err) {
+      failed = true;
+      throw err;
+    } finally {
+      finished[i] = true;
+      while (finished[earliest]) earliest++;
+      for (const [j, go] of waiting)
+        if (j < earliest + n) {
+          waiting.delete(j);
+          go();
+        }
+    }
+  });
+}

@@ -16,13 +16,15 @@
 import { fork } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
+import { availableParallelism } from "node:os";
 import { basename, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { canonicalJson, type JsonValue, type SpecVerdict } from "@eutaxy/core";
-import { checkSpecModule, type OpenGoal, type Prover } from "@eutaxy/prover";
+import { checkSpecModule, inWindow, type OpenGoal, type Prover } from "@eutaxy/prover";
 import { goalFileFor, leanProver, renderGoals } from "@eutaxy/prover-lean";
 import { renderSpecReport, renderSpecReportJson } from "@eutaxy/report";
 import { enginesNamed, exitCodes, proveSpecs } from "./check.ts";
+import { HeldOutput } from "./held-output.ts";
 import { resolveAsTypeScript } from "./resolve.ts";
 import { findSpecModules, type SpecModule } from "./specs.ts";
 
@@ -182,6 +184,43 @@ export function testModule(
   });
 }
 
+/**
+ * Every module's verdicts, a few modules' processes at a time. The verdicts
+ * come back in module order, and what each module writes reaches `stderr`
+ * in module order too: a module's output is held until every module before
+ * it has finished (in memory up to a limit, then in a file), so the report
+ * reads as if they ran one after another. No module starts eight or more
+ * places past the earliest unfinished one, so at most seven modules' output
+ * is held at once.
+ */
+export async function testModules(
+  modules: readonly SpecModule[],
+  seed: string,
+  budgetMs: number,
+  stderr: (text: string) => void,
+): Promise<SpecVerdict[][]> {
+  const held = modules.map(() => new HeldOutput());
+  const finished = modules.map(() => false);
+  // The module whose output goes straight through; every later one's is held.
+  let current = 0;
+  try {
+    return await inWindow(modules, Math.min(8, availableParallelism()), async (m, i) => {
+      const verdicts = await testModule(m, seed, budgetMs, (text) => {
+        if (i === current) stderr(text);
+        else held[i]?.push(text);
+      });
+      finished[i] = true;
+      while (finished[current]) {
+        current++;
+        held[current]?.drain(stderr);
+      }
+      return verdicts;
+    });
+  } finally {
+    for (const h of held) h.discard();
+  }
+}
+
 /** One open goal as the report lists it: where its goal file is, and the goal itself. */
 export interface WrittenGoal extends OpenGoal {
   readonly module: string;
@@ -255,12 +294,9 @@ export async function runReport(o: ReportOptions): Promise<number> {
     for (const e of errors) o.stderr(`${e}\n`);
     return exitCodes.error;
   }
-  let specs: readonly SpecVerdict[] = [];
-  for (const m of modules)
-    specs = [
-      ...specs,
-      ...(await testModule(m, o.seed ?? "report", o.moduleBudgetMs ?? 60_000, o.stderr)),
-    ];
+  let specs: readonly SpecVerdict[] = (
+    await testModules(modules, o.seed ?? "report", o.moduleBudgetMs ?? 60_000, o.stderr)
+  ).flat();
   const goals: WrittenGoal[] = [];
   if (engines.length > 0)
     specs = await proveSpecs(

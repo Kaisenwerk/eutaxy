@@ -207,6 +207,33 @@ describe("eutaxy report", () => {
     expect((JSON.parse(a.stdout) as Json).specs[0]?.kind).toBe("REFUTED");
   });
 
+  test("modules run side by side, yet their output reaches stderr in module order", async () => {
+    const dir = join(scratch, "ordered");
+    // The first module is slow to load and the second is not, so the second finishes first.
+    for (const [name, load] of [
+      ["a-slow", 'await new Promise((r) => setTimeout(r, 500));\nconsole.log("from a-slow");\n'],
+      ["b-fast", 'console.log("from b-fast");\n'],
+    ] as const) {
+      mkdirSync(join(dir, name), { recursive: true });
+      writeFileSync(
+        join(dir, name, "domain.ts"),
+        `${load}export function f(x: boolean): boolean {\n  return x;\n}\n`,
+      );
+      writeFileSync(
+        join(dir, name, "domain.props.ts"),
+        'import { forall } from "eutaxy/spec";\nimport { f } from "./domain.ts";\nexport const same = forall(f, { ensures: (x) => f(x) === x });\n',
+      );
+    }
+    const r = await report(dir);
+    expect(r.code, r.stderr).toBe(0);
+    expect(r.stderr.indexOf("from a-slow")).toBeGreaterThanOrEqual(0);
+    expect(r.stderr.indexOf("from a-slow")).toBeLessThan(r.stderr.indexOf("from b-fast"));
+    expect((JSON.parse(r.stdout) as Json).specs.map((s) => s.module)).toEqual([
+      "./a-slow/domain.ts",
+      "./b-fast/domain.ts",
+    ]);
+  });
+
   test("errors exit 3: no spec files, a spec file without its module, an unknown engine", async () => {
     const empty = join(scratch, "empty");
     mkdirSync(empty);

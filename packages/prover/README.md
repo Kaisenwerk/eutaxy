@@ -86,7 +86,9 @@ expression. `closeCompiler` stops the compiler process.
 `inPool` runs independent jobs a few at a time and returns their results
 in item order, so an engine's solver processes, or the report's module
 processes, run side by side without the answer depending on which
-finished first.
+finished first; `inWindow` also starts no item `size` or more places
+past the earliest unfinished one, so what finished jobs hold for their
+turn stays bounded.
 
 **The toolchain cache** (`@eutaxy/prover/toolchain`, a subpath that reads
 the file system, so workerd never loads it): what `eutaxy prover install`

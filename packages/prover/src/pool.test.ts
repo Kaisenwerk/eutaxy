@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { inPool } from "./pool.ts";
+import { inPool, inWindow } from "./pool.ts";
 
 /** A promise settled by hand, so a test decides the order jobs finish in. */
 function deferred(): { promise: Promise<void>; resolve: () => void } {
@@ -55,5 +55,40 @@ describe("inPool", () => {
       }),
     ).rejects.toThrow("two");
     expect(started).toEqual([1, 2]);
+  });
+});
+
+describe("inWindow", () => {
+  test("no item starts size or more places past the earliest unfinished one", async () => {
+    // Item 0 is slow; the others finish at once. With a window of 3, items 3 and later wait for item 0.
+    const slow = deferred();
+    const started: number[] = [];
+    const run = inWindow([0, 1, 2, 3, 4, 5], 3, async (i) => {
+      started.push(i);
+      if (i === 0) await slow.promise;
+      return i * 10;
+    });
+    for (let k = 0; k < 10; k++) await Promise.resolve();
+    expect(started).toEqual([0, 1, 2]);
+    slow.resolve();
+    expect(await run).toEqual([0, 10, 20, 30, 40, 50]);
+    expect(started).toEqual([0, 1, 2, 3, 4, 5]);
+  });
+
+  test("a job that throws rejects it, and a waiting job does not run", async () => {
+    const gate = deferred();
+    const ran: number[] = [];
+    const run = inWindow([0, 1, 2], 2, async (i) => {
+      ran.push(i);
+      if (i === 0) {
+        await gate.promise;
+        throw new Error("zero");
+      }
+    });
+    for (let k = 0; k < 10; k++) await Promise.resolve();
+    gate.resolve();
+    await expect(run).rejects.toThrow("zero");
+    for (let k = 0; k < 10; k++) await Promise.resolve();
+    expect(ran).toEqual([0, 1]);
   });
 });
