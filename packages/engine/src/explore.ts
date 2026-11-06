@@ -20,6 +20,7 @@ import {
   type ScenarioVerdict,
   type Schedule,
   seedPrng,
+  type UnsupportedCause,
 } from "@eutaxy/core";
 import { replayChooser, seededChooser } from "./chooser.ts";
 import { ExhaustiveDriver } from "./exhaustive.ts";
@@ -92,11 +93,15 @@ function nextEvent(pending: readonly EventRef[]): number {
   return best;
 }
 
+/** Whether exhaustive exploration reduces by partial order (it does unless told not to). */
+function reductionOf(options: ExploreOptions): boolean {
+  return typeof options.exhaustive === "object" ? (options.exhaustive.reduction ?? true) : true;
+}
+
 /** What a verdict rests on about how schedules were chosen, when exploration was exhaustive. */
 function explorationAssumption(options: ExploreOptions): readonly string[] {
   if (!options.exhaustive) return [];
-  const reduction =
-    typeof options.exhaustive === "object" ? (options.exhaustive.reduction ?? true) : true;
+  const reduction = reductionOf(options);
   return [
     "exhaustive: every placement of faults within maxFaultsPerRun and every order of turns, each run once, until complete or the budget ends (reached.exhaustive says which)",
     ...(reduction
@@ -266,26 +271,31 @@ export async function explore(
   const reached = { runs: 0, effectPoints: 0, faultsInjected: 0 };
   const done = (): BoundsReached => ({ ...reached, elapsedMs: now() - start });
   const base = { scenario: spec.name, seed: options.seed, assumptions };
+  const exhaustive = options.exhaustive
+    ? new ExhaustiveDriver(reductionOf(options), spec.bounds.maxFaultsPerRun)
+    : null;
+  const doneNow = (): BoundsReached => ({
+    ...done(),
+    ...(exhaustive ? { exhaustive: exhaustive.reached } : {}),
+  });
+  const unsupported = (cause: UnsupportedCause, reason: string): ScenarioVerdict => ({
+    ...base,
+    kind: "UNSUPPORTED",
+    cause,
+    reason,
+    reached: doneNow(),
+  });
 
-  if (spec.bounds.maxConcurrentInvocations > 1 && !concurrencySupported) {
-    return {
-      ...base,
-      kind: "UNSUPPORTED",
-      cause: "unsupported_bounds",
-      reason:
-        "maxConcurrentInvocations above 1 needs AsyncLocalStorage (Node, or workerd with nodejs_compat or nodejs_als)",
-      reached: done(),
-    };
-  }
-  if (spec.bounds.maxConcurrentInvocations > 1 && !platform.concurrent) {
-    return {
-      ...base,
-      kind: "UNSUPPORTED",
-      cause: "unsupported_bounds",
-      reason: `maxConcurrentInvocations above 1 is not supported on the ${platform.name} platform yet`,
-      reached: done(),
-    };
-  }
+  if (spec.bounds.maxConcurrentInvocations > 1 && !concurrencySupported)
+    return unsupported(
+      "unsupported_bounds",
+      "maxConcurrentInvocations above 1 needs AsyncLocalStorage (Node, or workerd with nodejs_compat or nodejs_als)",
+    );
+  if (spec.bounds.maxConcurrentInvocations > 1 && !platform.concurrent)
+    return unsupported(
+      "unsupported_bounds",
+      `maxConcurrentInvocations above 1 is not supported on the ${platform.name} platform yet`,
+    );
 
   const leakCheckRuns = options.leakCheckRuns ?? 2;
   /** The first runs' schedules and digests, replayed in reverse order before BOUNDED. */
@@ -295,16 +305,6 @@ export async function explore(
   /** Eligible points of a run without faults, and the most any run has had: seeded fault positions. */
   let baseline = 0;
   let longest = 0;
-  const exhaustive = options.exhaustive
-    ? new ExhaustiveDriver(
-        typeof options.exhaustive === "object" ? (options.exhaustive.reduction ?? true) : true,
-        spec.bounds.maxFaultsPerRun,
-      )
-    : null;
-  const doneNow = (): BoundsReached => ({
-    ...done(),
-    ...(exhaustive ? { exhaustive: exhaustive.reached } : {}),
-  });
   while (
     (exhaustive?.hasMore ?? true) &&
     reached.runs < maxRuns &&
@@ -338,15 +338,11 @@ export async function explore(
     if (run.faultsInjected === 0) baseline = Math.max(baseline, run.eligiblePoints);
     longest = Math.max(longest, run.eligiblePoints);
     if (exhaustive) {
-      if (exhaustive.mismatch) {
-        return {
-          ...base,
-          kind: "UNSUPPORTED",
-          cause: "not_replayable",
-          reason: `exhaustive exploration needs deterministic runs: ${exhaustive.mismatch}`,
-          reached: doneNow(),
-        };
-      }
+      if (exhaustive.mismatch)
+        return unsupported(
+          "not_replayable",
+          `exhaustive exploration needs deterministic runs: ${exhaustive.mismatch}`,
+        );
       if (!exhaustive.ran(() => run.turnsMayNotCommute)) continue;
     }
     reached.effectPoints += run.effectPoints;
@@ -354,15 +350,8 @@ export async function explore(
     if (witnesses.length < leakCheckRuns)
       witnesses.push({ schedule: run.schedule, digest: digestLog(log) });
 
-    if (run.unsupportedReasons.length > 0) {
-      return {
-        ...base,
-        kind: "UNSUPPORTED",
-        cause: "unsupported_api",
-        reason: run.unsupportedReasons.join("; "),
-        reached: doneNow(),
-      };
-    }
+    if (run.unsupportedReasons.length > 0)
+      return unsupported("unsupported_api", run.unsupportedReasons.join("; "));
 
     const violations = checkInvariants(log, spec.invariants);
     const violation = violations[0];
@@ -371,15 +360,11 @@ export async function explore(
       const replayedRun = await replayRun(spec, platform, schedule);
       const replayed = replayedRun.log;
       reached.runs++;
-      if (replayedRun.unsupportedReasons.length > 0 || digestLog(replayed) !== digestLog(log)) {
-        return {
-          ...base,
-          kind: "UNSUPPORTED",
-          cause: "not_replayable",
-          reason: `the violating run of seed ${schedule.seed} did not reproduce on replay`,
-          reached: doneNow(),
-        };
-      }
+      if (replayedRun.unsupportedReasons.length > 0 || digestLog(replayed) !== digestLog(log))
+        return unsupported(
+          "not_replayable",
+          `the violating run of seed ${schedule.seed} did not reproduce on replay`,
+        );
       // Shrink within the scenario's budget (a second budget's worth at most), then report.
       const shrunk = await shrink(spec, platform, schedule, violation, replayed, {
         maxRuns: options.maxShrinkRuns ?? 200,
@@ -408,15 +393,11 @@ export async function explore(
   for (const witness of [...witnesses].reverse()) {
     const again = await replayRun(spec, platform, witness.schedule);
     reached.runs++;
-    if (again.unsupportedReasons.length > 0 || digestLog(again.log) !== witness.digest) {
-      return {
-        ...base,
-        kind: "UNSUPPORTED",
-        cause: "module_state_leak",
-        reason: `run seed ${witness.schedule.seed} produced a different log when replayed after other runs: state is leaking between runs (module-level variables, or a binding Eutaxy does not reset)`,
-        reached: doneNow(),
-      };
-    }
+    if (again.unsupportedReasons.length > 0 || digestLog(again.log) !== witness.digest)
+      return unsupported(
+        "module_state_leak",
+        `run seed ${witness.schedule.seed} produced a different log when replayed after other runs: state is leaking between runs (module-level variables, or a binding Eutaxy does not reset)`,
+      );
   }
   return { ...base, kind: "BOUNDED", bounds: spec.bounds, reached: doneNow() };
 }

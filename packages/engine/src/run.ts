@@ -179,7 +179,7 @@ export class Run implements RunHooks {
   /** Whether several invocations may be in flight (`maxConcurrentInvocations` above 1). */
   readonly concurrent: boolean;
 
-  readonly options: RunOptions;
+  private readonly options: RunOptions;
 
   constructor(options: RunOptions) {
     this.options = options;
@@ -288,11 +288,6 @@ export class Run implements RunHooks {
   /** Virtual milliseconds since the epoch, or the real clock when the globals are not installed. */
   now(): number {
     return this.patched ? this.patched.clock.now() : Date.now();
-  }
-
-  /** Timers scheduled and not yet fired or cancelled (0 when the globals are not installed). */
-  pendingTimers(): number {
-    return this.patched?.clock.pendingTimers() ?? 0;
   }
 
   startInvocation(id: string, options: { readonly bookkeeping?: boolean } = {}): Invocation {
@@ -423,16 +418,16 @@ export class Run implements RunHooks {
         // Code another invocation's effect hosts (a called Worker's): a turn of its own, during which the
         // host waits on it; while it performs, the host is in flight again. Nothing cuts this code off
         // from async context, so a promise settled from outside wakes it.
-        this.frames.adjust(host, () => {
-          host.children++;
-          host.waitingChildren++;
-        });
-        await new Promise<void>((go) => this.turns.park(inv, point.target, go, host));
-        try {
-          return await this.performEffect(point, perform, summarize, options, inv, undefined, host);
-        } finally {
-          this.frames.adjust(host, () => host.children--);
-        }
+        return this.hostedTurn(
+          point,
+          perform,
+          summarize,
+          options,
+          inv,
+          undefined,
+          host,
+          (park) => new Promise<boolean>((go) => park(() => go(true))),
+        );
       }
       await new Promise<void>((go) => this.turns.park(inv, point.target, go));
       if (inv.isCrashed()) return hang();
@@ -440,31 +435,70 @@ export class Run implements RunHooks {
       // Hosted code calling out (an object's fetch during a call) is a turn too: the object's
       // input gate is open meanwhile, so another call into it may run first. While all such
       // effects of the host are parked the host is waiting, not performing I/O.
-      const host = enclosing;
-      let released = false;
-      this.frames.adjust(host, () => {
-        host.children++;
-        host.waitingChildren++;
-      });
-      this.turns.park(inv, point.target, () => (released = true), host);
-      // Wait by polling a flag with real zero timers made here, inside the hosted code: no
-      // promise is settled from outside it (workerd refuses that for a Durable Object), and no
-      // event has to enter it (its input gate may be closed, as in blockConcurrencyWhile).
-      while (!released && !inv.isCrashed()) await realTick();
-      if (!released) {
-        this.frames.adjust(host, () => {
-          host.children--;
-          host.waitingChildren--;
-        });
-        return hang();
-      }
-      try {
-        return await this.performEffect(point, perform, summarize, options, inv, enclosing, host);
-      } finally {
-        this.frames.adjust(host, () => host.children--);
-      }
+      return this.hostedTurn(
+        point,
+        perform,
+        summarize,
+        options,
+        inv,
+        enclosing,
+        enclosing,
+        async (park) => {
+          // Wait by polling a flag with real zero timers made here, inside the hosted code: no
+          // promise is settled from outside it (workerd refuses that for a Durable Object), and no
+          // event has to enter it (its input gate may be closed, as in blockConcurrencyWhile).
+          let released = false;
+          park(() => (released = true));
+          while (!released && !inv.isCrashed()) await realTick();
+          return released;
+        },
+      );
     }
     return this.performEffect(point, perform, summarize, options, inv, enclosing);
+  }
+
+  /**
+   * An effect that is a turn under `host` (the effect hosting the invocation, or the hosted code's
+   * own enclosing effect): the host waits on it until `wait` gives it the turn, and is in flight
+   * again while it performs. `wait` parks the effect through `park` and answers whether the turn
+   * came; when it did not (the invocation crashed meanwhile) the effect hangs.
+   */
+  private async hostedTurn<T>(
+    point: EffectPoint,
+    perform: () => Promise<T>,
+    summarize: (value: T) => JsonValue,
+    options: EffectOptions,
+    inv: InvocationState,
+    enclosing: Frame | undefined,
+    host: Frame,
+    wait: (park: (go: () => void) => void) => Promise<boolean>,
+  ): Promise<T> {
+    this.childWaits(host);
+    if (!(await wait((go) => this.turns.park(inv, point.target, go, host)))) {
+      this.childLeaves(host, true);
+      return hang();
+    }
+    try {
+      return await this.performEffect(point, perform, summarize, options, inv, enclosing, host);
+    } finally {
+      this.childLeaves(host, false);
+    }
+  }
+
+  /** A child of `host` started and waits for its turn (the scheduler clears the wait when it comes). */
+  private childWaits(host: Frame): void {
+    this.frames.adjust(host, () => {
+      host.children++;
+      host.waitingChildren++;
+    });
+  }
+
+  /** A child of `host` ended; `stillWaiting` when its turn never came. */
+  private childLeaves(host: Frame, stillWaiting: boolean): void {
+    this.frames.adjust(host, () => {
+      host.children--;
+      if (stillWaiting) host.waitingChildren--;
+    });
   }
 
   /** The effect once it has its turn: the fault, the perform under its deadline, the record. */
@@ -484,15 +518,9 @@ export class Run implements RunHooks {
       return hang();
     };
     const fault = this.open(point, inv);
-    if (fault === "crash_before" || fault === "cut_off") {
-      this.record(point, "fault", { args: point.args, fault });
-      inv.crash();
-      return dead();
-    }
-    if (fault === "error") {
-      this.record(point, "fault", { args: point.args, fault });
-      throw new InjectedEffectError(point, fault);
-    }
+    const before = this.faultBefore(point, inv, fault);
+    if (before === "crashed") return dead();
+    if (before) throw before;
     let settled:
       | { readonly ok: true; readonly value: T }
       | { readonly ok: false; readonly error: unknown }
@@ -547,31 +575,59 @@ export class Run implements RunHooks {
     this.record(point, "result", { args: point.args, result: summarize(value) });
     // The effect committed while the invocation was dying: nothing after it runs.
     if (inv.isCrashed()) return hang();
-    if (fault === "crash_after") {
-      this.record(point, "fault", { args: point.args, fault });
+    const after = this.faultAfter(point, inv, fault);
+    if (after === "crashed") return dead();
+    if (after) throw after;
+    return value;
+  }
+
+  /** A fault decided before the effect performs: the crash it is, the error to throw, or nothing. */
+  private faultBefore(
+    point: EffectPoint,
+    inv: InvocationState,
+    fault: FaultKind | null,
+  ): "crashed" | InjectedEffectError | null {
+    if (fault === "crash_before" || fault === "cut_off") {
+      this.recordFault(point, fault);
       inv.crash();
-      return dead();
+      return "crashed";
+    }
+    if (fault === "error") {
+      this.recordFault(point, fault);
+      return new InjectedEffectError(point, fault);
+    }
+    return null;
+  }
+
+  /** A fault decided after the effect committed: the crash it is, the error to throw, or nothing. */
+  private faultAfter(
+    point: EffectPoint,
+    inv: InvocationState,
+    fault: FaultKind | null,
+  ): "crashed" | InjectedEffectError | null {
+    if (fault === "crash_after") {
+      this.recordFault(point, fault);
+      inv.crash();
+      return "crashed";
     }
     if (fault === "ambiguous") {
-      this.record(point, "fault", { args: point.args, fault });
-      throw new InjectedEffectError(point, fault);
+      this.recordFault(point, fault);
+      return new InjectedEffectError(point, fault);
     }
-    return value;
+    return null;
+  }
+
+  private recordFault(point: EffectPoint, fault: FaultKind): void {
+    this.record(point, "fault", { args: point.args, fault });
   }
 
   effectSync<T>(point: EffectPoint, perform: () => T, summarize: (value: T) => JsonValue): T {
     const inv = this.invocation(point.invocation);
     if (inv.isCrashed()) throw new CrashSignal(inv.id);
     const fault = this.open(point, inv);
-    if (fault === "crash_before" || fault === "cut_off") {
-      this.record(point, "fault", { args: point.args, fault });
-      inv.crash();
-      throw new CrashSignal(inv.id);
-    }
-    if (fault === "error") {
-      this.record(point, "fault", { args: point.args, fault });
-      throw new InjectedEffectError(point, fault);
-    }
+    const before = this.faultBefore(point, inv, fault);
+    if (before === "crashed") throw new CrashSignal(inv.id);
+    if (before) throw before;
     let value: T;
     try {
       value = perform();
@@ -580,15 +636,9 @@ export class Run implements RunHooks {
       throw err;
     }
     this.record(point, "result", { args: point.args, result: summarize(value) });
-    if (fault === "crash_after") {
-      this.record(point, "fault", { args: point.args, fault });
-      inv.crash();
-      throw new CrashSignal(inv.id);
-    }
-    if (fault === "ambiguous") {
-      this.record(point, "fault", { args: point.args, fault });
-      throw new InjectedEffectError(point, fault);
-    }
+    const after = this.faultAfter(point, inv, fault);
+    if (after === "crashed") throw new CrashSignal(inv.id);
+    if (after) throw after;
     return value;
   }
 
@@ -603,10 +653,7 @@ export class Run implements RunHooks {
     const patched = this.patched;
     // A hosted invocation is known by its cell, never by `current`: the caller's own code may still
     // run beside it (two calls awaited together) and must stay the caller's.
-    if (!this.hosts.has(invocation)) {
-      if (patched) patched.clock.owner = invocation;
-      this.current = invocation;
-    }
+    if (!this.hosts.has(invocation)) this.runAs(invocation);
     if (!patched) {
       // Globals not installed (direct use outside runOnce): just wait, abandoning on crash.
       return Promise.race([promise, inv.crashed.then(() => hang<T>())]);
@@ -647,17 +694,11 @@ export class Run implements RunHooks {
       const inv = this.track(id);
       if (this.concurrent) this.turns.started(id);
       this.hosts.set(id, frame);
-      this.frames.adjust(frame, () => {
-        frame.children++;
-        frame.waitingChildren++;
-      });
+      this.childWaits(frame);
       try {
         return await work(inv);
       } finally {
-        this.frames.adjust(frame, () => {
-          frame.children--;
-          frame.waitingChildren--;
-        });
+        this.childLeaves(frame, true);
         this.hosts.delete(id);
       }
     };

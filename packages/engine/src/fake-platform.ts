@@ -15,7 +15,6 @@ import {
   type ScenarioSpec,
 } from "@eutaxy/core";
 import { hostInvocation, runInvocation } from "./deliver.ts";
-import { CrashSignal } from "./run.ts";
 
 export interface FakeMessage {
   readonly id: string;
@@ -201,16 +200,7 @@ export function createFakePlatform(
             () => null,
           ),
       };
-      const outcome = Promise.resolve()
-        .then(() => handler(message, env))
-        .then(
-          () => "completed" as const,
-          (err) => (err instanceof CrashSignal ? ("crashed" as const) : ("errored" as const)),
-        );
-      const status = await Promise.race([
-        hooks.settle(outcome, invocation),
-        inv.crashed.then(() => "crashed" as const),
-      ]);
+      const { status } = await runInvocation(hooks, inv, () => handler(message, env));
       const followUps: EventRef[] = [];
       if (
         !acked &&
