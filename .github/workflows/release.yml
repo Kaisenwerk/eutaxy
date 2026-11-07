@@ -68,10 +68,10 @@ jobs:
         env:
           EUTAXY_REQUIRE_LEAN: "1"
           EUTAXY_REQUIRE_Z3: "1"
-      - run: pnpm build
       - name: Use the repository README for the npm page
         run: node scripts/npm-readme.ts "${{ needs.release-please.outputs.tag_name }}" packages/eutaxy/README.md
       - name: Pack with publishConfig applied
+        # The package's prepack builds it (pnpm build), so the bundle is built once, here.
         run: |
           mkdir -p release
           pnpm --filter eutaxy pack --pack-destination "$(pwd)/release"

@@ -1,14 +1,15 @@
 /**
- * The published package: build it, pack it the way `pnpm publish` would, and
- * check the tarball is self-contained (no internal packages, dist entries,
- * a bin with a shebang) and that a publish dry run is accepted.
+ * The published package: pack it the way `pnpm publish` would (its prepack
+ * builds it, once for the whole file), and check the bundle and the tarball
+ * are self-contained (no internal packages, dist entries, a bin with a
+ * shebang) and that a publish dry run is accepted.
  */
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, test } from "vitest";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const facade = join(root, "packages", "eutaxy");
@@ -42,8 +43,19 @@ function externalImports(entry: string): string[] {
 }
 
 describe("published package", () => {
+  // One build for the file: the pack's prepack. dist/ is removed first, so the bundle the tests read is
+  // the one the pack built, and a pack that stopped building would fail here.
+  const out = mkdtempSync(join(tmpdir(), "eutaxy-pack-"));
+  let tarball = "";
+  beforeAll(() => {
+    rmSync(dist, { recursive: true, force: true });
+    run("pnpm", ["pack", "--pack-destination", out], facade);
+    tarball = readdirSync(out).find((n) => n.endsWith(".tgz")) as string;
+    run("tar", ["-xzf", join(out, tarball), "-C", out], root);
+  }, 180_000);
+  afterAll(() => rmSync(out, { recursive: true, force: true }));
+
   test("builds a self-contained bundle with declarations and a runnable bin", () => {
-    run("pnpm", ["build"], root);
     for (const f of [
       "index.mjs",
       "cloudflare.mjs",
@@ -86,55 +98,52 @@ describe("published package", () => {
   }, 180_000);
 
   test("packs with publishConfig applied: dist entries, bin, no internal dependencies", () => {
-    const out = mkdtempSync(join(tmpdir(), "eutaxy-pack-"));
-    try {
-      run("pnpm", ["pack", "--pack-destination", out], facade);
-      const tarball = readdirSync(out).find((n) => n.endsWith(".tgz")) as string;
-      expect(tarball).toMatch(/^eutaxy-\d/);
-      run("tar", ["-xzf", join(out, tarball), "-C", out], root);
-      const pkg = JSON.parse(readFileSync(join(out, "package", "package.json"), "utf8")) as Record<
-        string,
-        unknown
-      >;
-      expect(pkg["bin"]).toEqual({ eutaxy: "./dist/bin.mjs" });
-      expect(pkg["keywords"]).toEqual(expect.arrayContaining(["cloudflare-workers"]));
-      expect(pkg["exports"]).toEqual({
-        ".": { types: "./dist/index.d.mts", default: "./dist/index.mjs" },
-        "./cloudflare": { types: "./dist/cloudflare.d.mts", default: "./dist/cloudflare.mjs" },
-        "./spec": { types: "./dist/spec.d.mts", default: "./dist/spec.mjs" },
-        "./aws": { types: "./dist/aws.d.mts", default: "./dist/aws.mjs" },
-      });
-      // Internal packages are bundled: nothing a consumer installs may reference them.
-      expect(pkg["dependencies"]).toBeUndefined();
-      expect(pkg["optionalDependencies"]).toBeUndefined();
-      for (const field of ["dependencies", "peerDependencies", "optionalDependencies"]) {
-        const names = Object.keys((pkg[field] as object | undefined) ?? {});
-        expect(
-          names.filter((n) => n.startsWith("@eutaxy/")),
-          field,
-        ).toEqual([]);
-      }
-      expect(Object.keys(pkg["peerDependencies"] as object).sort()).toEqual([
-        "@aws-sdk/client-dynamodb",
-        "@aws-sdk/util-dynamodb",
-        "@cloudflare/vitest-plugin",
-        "@cloudflare/workers-types",
-        "@smithy/smithy-client",
-        "typescript",
-        "vitest",
-      ]);
-      const files = run("tar", ["-tzf", join(out, tarball)], root).split("\n");
-      expect(files).toContain("package/dist/index.mjs");
-      expect(files).toContain("package/dist/bin.mjs");
-      expect(files).toContain("package/README.md");
-      expect(files.some((f) => f.includes("/src/"))).toBe(false);
-    } finally {
-      rmSync(out, { recursive: true, force: true });
+    expect(tarball).toMatch(/^eutaxy-\d/);
+    const pkg = JSON.parse(readFileSync(join(out, "package", "package.json"), "utf8")) as Record<
+      string,
+      unknown
+    >;
+    expect(pkg["bin"]).toEqual({ eutaxy: "./dist/bin.mjs" });
+    expect(pkg["keywords"]).toEqual(expect.arrayContaining(["cloudflare-workers"]));
+    expect(pkg["exports"]).toEqual({
+      ".": { types: "./dist/index.d.mts", default: "./dist/index.mjs" },
+      "./cloudflare": { types: "./dist/cloudflare.d.mts", default: "./dist/cloudflare.mjs" },
+      "./spec": { types: "./dist/spec.d.mts", default: "./dist/spec.mjs" },
+      "./aws": { types: "./dist/aws.d.mts", default: "./dist/aws.mjs" },
+    });
+    // Internal packages are bundled: nothing a consumer installs may reference them.
+    expect(pkg["dependencies"]).toBeUndefined();
+    expect(pkg["optionalDependencies"]).toBeUndefined();
+    for (const field of ["dependencies", "peerDependencies", "optionalDependencies"]) {
+      const names = Object.keys((pkg[field] as object | undefined) ?? {});
+      expect(
+        names.filter((n) => n.startsWith("@eutaxy/")),
+        field,
+      ).toEqual([]);
     }
-  }, 180_000);
+    expect(Object.keys(pkg["peerDependencies"] as object).sort()).toEqual([
+      "@aws-sdk/client-dynamodb",
+      "@aws-sdk/util-dynamodb",
+      "@cloudflare/vitest-plugin",
+      "@cloudflare/workers-types",
+      "@smithy/smithy-client",
+      "typescript",
+      "vitest",
+    ]);
+    const files = run("tar", ["-tzf", join(out, tarball)], root).split("\n");
+    expect(files).toContain("package/dist/index.mjs");
+    expect(files).toContain("package/dist/bin.mjs");
+    expect(files).toContain("package/README.md");
+    expect(files.some((f) => f.includes("/src/"))).toBe(false);
+  });
 
   test("a publish dry run is accepted", () => {
-    const output = run("pnpm", ["publish", "--dry-run", "--no-git-checks"], facade);
+    // The bundle is built above; the dry run need not build it again.
+    const output = run(
+      "pnpm",
+      ["publish", "--dry-run", "--no-git-checks", "--ignore-scripts"],
+      facade,
+    );
     expect(output).toMatch(/eutaxy@\d/);
   }, 180_000);
 });
