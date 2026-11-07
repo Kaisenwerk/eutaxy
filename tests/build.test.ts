@@ -4,7 +4,7 @@
  * are self-contained (no internal packages, dist entries, a bin with a
  * shebang) and that a publish dry run is accepted.
  */
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -95,6 +95,28 @@ describe("published package", () => {
     }
     const report = JSON.parse(out) as { specs: { kind: string }[] };
     expect(report.specs.filter((s) => s.kind === "TESTED")).toHaveLength(5);
+    // check loads the scenario module in a process started on the bundled chunk that holds the loader;
+    // if that chunk did not answer, the command would note it on stderr and carry on with the wrangler
+    // config's main module, so a check from dist must run the scenario without the note.
+    const checked = spawnSync(
+      process.execPath,
+      [
+        join(dist, "bin.mjs"),
+        "check",
+        "corpus/differential/d1-ledger/scenario.sim.ts",
+        "--max-runs",
+        "1",
+        "--budget-ms",
+        "30000",
+        "--json",
+      ],
+      { cwd: root, encoding: "utf8", env: { ...process.env, CI: "1" } },
+    );
+    expect(checked.stderr).not.toContain("could not read the scenario");
+    expect(checked.status, checked.stderr).toBe(0);
+    expect((JSON.parse(checked.stdout) as { verdict: { kind: string } }).verdict.kind).toBe(
+      "BOUNDED",
+    );
   }, 180_000);
 
   test("packs with publishConfig applied: dist entries, bin, no internal dependencies", () => {
