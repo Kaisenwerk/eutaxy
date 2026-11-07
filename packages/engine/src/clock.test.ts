@@ -264,10 +264,14 @@ describe("settleOn", () => {
           await new Promise<void>((resolve) => clock.setTimeout(() => resolve(), 10));
         return "woke";
       })();
+      // The same count of real zero timers, measured here under the same load: a sleep paced by one
+      // each would take at least that long, and the cheap turn a small fraction of it.
+      const ticked = Date.now();
+      for (let i = 0; i < sleeps; i++) await realTick();
+      const realTicks = Date.now() - ticked;
       const started = Date.now();
       await expect(settleOn(slept, c)).resolves.toBe("woke");
-      // A real zero timer is at least a millisecond; one per sleep would take the whole count.
-      expect(Date.now() - started).toBeLessThan(sleeps / 2);
+      expect(Date.now() - started).toBeLessThan(realTicks / 2);
       expect(clock.now()).toBe(virtualEpoch + sleeps * 10);
       expect(stuck).toEqual([]);
     },
