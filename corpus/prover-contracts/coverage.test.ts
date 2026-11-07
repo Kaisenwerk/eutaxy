@@ -24,7 +24,8 @@ describe("the contract corpus covers its vocabulary", () => {
     const loose = readdirSync(root, { withFileTypes: true })
       .filter((d) => d.isDirectory() && !(kinds as readonly string[]).includes(d.name))
       .map((d) => d.name)
-      .filter((name) => !["dist", "node_modules"].includes(name));
+      // A dot directory is a test file's scratch (.probe-*), there while that file runs alongside.
+      .filter((name) => !["dist", "node_modules"].includes(name) && !name.startsWith("."));
     expect(loose).toEqual([]);
     expect(entries.length).toBeGreaterThan(0);
   });
