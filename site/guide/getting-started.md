@@ -31,7 +31,8 @@ pnpm add -D eutaxy vitest @cloudflare/vitest-plugin typescript@7.1.0-beta
 ```
 
 `eutaxy` has no runtime dependencies. Vitest and the Cloudflare Vitest
-plugin are peer dependencies: Eutaxy runs your Worker through them, so
+plugin are peer dependencies, in the majors Eutaxy's own tests run on
+(Vitest 5, the plugin 1.x): Eutaxy runs your Worker through them, so
 your TypeScript loader, workerd and bindings come from your own setup.
 
 ## The Worker
