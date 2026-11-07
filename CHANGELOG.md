@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.15.1](https://github.com/Kaisenwerk/eutaxy/compare/v0.15.0...v0.15.1) (2026-11-07)
+
+
+### Features
+
+* **cloudflare:** newUniqueId() draws the id from the run's seed ([ef36008](https://github.com/Kaisenwerk/eutaxy/commit/ef36008799fd216a539e38cee89644d158395635))
+
+
+### Bug Fixes
+
+* **cli:** check refuses flags and arguments it does not take ([03a3ede](https://github.com/Kaisenwerk/eutaxy/commit/03a3ededca59ab22661931bec0ab9bdfb6aa459e))
+* **cloudflare:** a fetch handler that resolves to no Response is a 500 ([de27149](https://github.com/Kaisenwerk/eutaxy/commit/de271496086302f19038b09d995cd35f2f400a4c))
+* **core:** a selector reads an array by a plain index only ([e118a4b](https://github.com/Kaisenwerk/eutaxy/commit/e118a4b96eae18b34b1414f36be0dcf85cc6bc98))
+* **engine:** a replay verdict names what differed, and a replay's own reason ([ae7c1eb](https://github.com/Kaisenwerk/eutaxy/commit/ae7c1eb5a9e2714f326336d108bf25418302468f))
+* **engine:** an interval with no usable delay fires every millisecond ([c6337ad](https://github.com/Kaisenwerk/eutaxy/commit/c6337adcd5497ab6d5c19318315477238e2c0062))
+* **eutaxy:** peer ranges name the majors the tests run on ([f413fb2](https://github.com/Kaisenwerk/eutaxy/commit/f413fb2ee82ec9c726f3688a68bb2efd709900ef))
+
+
+### Performance Improvements
+
+* **cli:** eutaxy report runs a few modules' processes at a time ([80096a4](https://github.com/Kaisenwerk/eutaxy/commit/80096a4b68b66dc1a1d3a053da362eb8db6ab089))
+* **core:** refines walks the log near the effect, selectors are compiled once ([a83a21f](https://github.com/Kaisenwerk/eutaxy/commit/a83a21fba687b094429f88ebdc5d6c46bdbecd97))
+* **engine:** append to a run's log in place ([6da773a](https://github.com/Kaisenwerk/eutaxy/commit/6da773a7f1f8d75e6135f64b62e29727cfcb091d))
+* **engine:** settleOn takes the cheap event-loop turn after a timer fires ([85c4dc0](https://github.com/Kaisenwerk/eutaxy/commit/85c4dc07d6d6c3c208fef71b15af1ec368329587))
+* **prover-smt:** emit a module's prelude once, not once per property ([aa32779](https://github.com/Kaisenwerk/eutaxy/commit/aa3277931b5003ac578a29b626cac49f912474a1))
+* **prover-smt:** solve a module's properties side by side ([48a45cf](https://github.com/Kaisenwerk/eutaxy/commit/48a45cfc76130cd0788549cda7ef4846b78e3875))
+
 ## [0.15.0](https://github.com/Kaisenwerk/eutaxy/compare/v0.14.0...v0.15.0) (2026-11-05)
 
 
