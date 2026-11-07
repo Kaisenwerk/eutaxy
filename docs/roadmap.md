@@ -194,9 +194,8 @@ v0.16's to weigh.
 ### v0.16 — Runs that scale
 
 The time a check and a report take, as scenarios and spec modules grow:
-`report`'s modules and the engines' modules in parallel, toolchain lookups
-once per process, one Z3 prelude per module, the proof cache keyed by
-source, spec and engine version; and the engine items a growing scenario
+the engines' modules in parallel, the proof cache keyed by source, spec
+and engine version; and the engine items a growing scenario
 meets: one random stream per invocation, so a shrunk violation gets past
 the random ids an earlier event drew, and dynamic partial-order reduction
 where the sleep-set reduction loses too often. The gate states a ceiling
