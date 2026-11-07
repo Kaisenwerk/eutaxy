@@ -295,6 +295,54 @@ describe("module-state leak detection", () => {
     if (verdict.kind !== "UNSUPPORTED") return;
     expect(verdict.cause).toBe("module_state_leak");
     expect(verdict.reached.runs).toBeGreaterThan(3);
+    // The reason names the first record the replay recorded differently.
+    expect(verdict.reason).toMatch(/at seq \d+ the run recorded call D1:DB run/);
+    expect(verdict.reason).toContain("-late");
+  });
+
+  test("a replay that reaches something unsupported reports that, not a leak", async () => {
+    let callsEver = 0;
+    const lateFetch = createFakePlatform(async (message, env) => {
+      const body = message.body as { orderId: string };
+      callsEver++;
+      // Only the leak check's replays, after the explored runs, reach the undeclared host.
+      if (callsEver > 6) await fetch("https://late.test/hook");
+      await env.insert(body.orderId);
+      message.ack();
+    });
+    const verdict = await explore({ ...spec, invariants: [once] }, lateFetch, {
+      seed: "leak",
+      maxRuns: 3,
+      faultProbability: 0,
+      now: fixedClock(),
+    });
+    expect(verdict.kind).toBe("UNSUPPORTED");
+    if (verdict.kind !== "UNSUPPORTED") return;
+    expect(verdict.cause).toBe("unsupported_api");
+    expect(verdict.reason).toContain("late.test");
+  });
+
+  test("a violating run that does not reproduce on replay says where the replay differed", async () => {
+    let callsEver = 0;
+    const drifting = createFakePlatform(async (message, env) => {
+      const body = message.body as { orderId: string };
+      callsEver++;
+      await env.insert(body.orderId);
+      await env.insert(body.orderId); // the violation, found in the first run
+      if (callsEver > 2) await env.insert(`${body.orderId}-again`); // only on the replay
+      message.ack();
+    });
+    const verdict = await explore({ ...spec, invariants: [once] }, drifting, {
+      seed: "drift",
+      maxRuns: 3,
+      faultProbability: 0,
+      now: fixedClock(),
+    });
+    expect(verdict.kind).toBe("UNSUPPORTED");
+    if (verdict.kind !== "UNSUPPORTED") return;
+    expect(verdict.cause).toBe("not_replayable");
+    expect(verdict.reason).toMatch(/did not reproduce on replay: at seq \d+ the run recorded/);
+    expect(verdict.reason).toContain("-again");
   });
 
   test("the pass can be disabled and costs nothing then", async () => {

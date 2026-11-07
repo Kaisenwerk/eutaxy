@@ -36,20 +36,23 @@ The platform (AWS today) runs one invocation at a time. Set
 `maxConcurrentInvocations: 1`.
 
 **`exhaustive exploration needs deterministic runs: <what differed>`** and
-**`the violating run of seed <seed> did not reproduce on replay`**
+**`the violating run of seed <seed> did not reproduce on replay: <what differed>`**
 The same schedule gave two different runs. Something the Worker does is
 not under Eutaxy's control: real I/O outside the declared externals, a
 clock or random source read through an API Eutaxy does not patch, or work
 that finishes in real time. The reason names what differed; route that
 input through a binding or an external. If it is Eutaxy's own, report it.
 
-**`run seed <seed> produced a different log when replayed after other runs: state is leaking between runs (module-level variables, or a binding Eutaxy does not reset)`**
+**`run seed <seed> produced a different log when replayed after other runs: state is leaking between runs (module-level variables, or a binding Eutaxy does not reset); <what differed>`**
 Before it reports `BOUNDED`, a check replays its first runs in reverse
 order. A module-level variable (a cache, a counter, a client holding
 state) or a binding without a setup step carried something from one run
 into the next. Keep such state in a binding the scenario sets up, reset it
 in the handler, or create it per request. A Durable Object's in-memory
-fields are reset with the object; a module's are not.
+fields are reset with the object; a module's are not. Both reasons end
+with the first record the replay recorded differently (or the two logs'
+lengths), and a replay that itself reached something unsupported reports
+that reason instead.
 
 ## Setup and bindings
 
