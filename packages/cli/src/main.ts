@@ -181,6 +181,28 @@ export async function main(argv: readonly string[], io: Io): Promise<number> {
     io.stderr(`check needs a scenario file\n\n${usage}`);
     return exitCodes.error;
   }
+  if (positionals.length > 2) {
+    io.stderr(`check takes one scenario file\n\n${usage}`);
+    return exitCodes.error;
+  }
+  const checkFlags = [
+    "wrangler",
+    "seed",
+    "max-runs",
+    "budget-ms",
+    "exhaustive",
+    "prover",
+    "json",
+    "out",
+    "no-regression",
+    "expect-violation",
+    "keep",
+  ];
+  const unknownFlag = Object.keys(flags).find((k) => !checkFlags.includes(k));
+  if (unknownFlag !== undefined) {
+    io.stderr(`check does not take --${unknownFlag}\n`);
+    return exitCodes.error;
+  }
   const maxRunsText = str("max-runs");
   const maxRuns = maxRunsText === undefined ? undefined : Number(maxRunsText);
   if (maxRuns !== undefined && !(Number.isInteger(maxRuns) && maxRuns > 0)) {

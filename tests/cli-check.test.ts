@@ -246,6 +246,19 @@ describe("eutaxy check", () => {
     const bare = eutaxy(["check", "corpus/differential/d1-ledger/scenario.sim.ts", "--seed"]);
     expect(bare.status).toBe(3);
     expect(bare.stderr).toContain("--seed needs a value");
+    // Another command's flag is refused, not ignored.
+    const other = eutaxy([
+      "check",
+      "corpus/differential/d1-ledger/scenario.sim.ts",
+      "--worker",
+      "worker.ts",
+      "--goals",
+    ]);
+    expect(other.status).toBe(3);
+    expect(other.stderr).toBe("check does not take --worker\n");
+    const two = eutaxy(["check", "a.sim.ts", "b.sim.ts"]);
+    expect(two.status).toBe(3);
+    expect(two.stderr).toContain("check takes one scenario file");
     expect(eutaxy(["nope"]).status).toBe(3);
     expect(eutaxy(["help"]).stdout).toContain("Usage:");
   });
