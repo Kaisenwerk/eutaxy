@@ -90,6 +90,8 @@ built, and each phase's gate keeps running in CI on every change.
   per example and per entry point.
 
 Notes on releases along the way:
+- `0.15.1` closes 0.15 with the fixes and the faster test suite made after
+  `0.15.0`; the work after it opens v0.16, so the next minor is `0.16.0`.
 - `0.9.0` needs TypeScript 7.1 in the project (`typescript@7.1.0-beta`
   until the release on 2026-11-24, then the release): the spec reader runs
   the project's compiler. The reader follows the compiler's own releases
@@ -104,11 +106,11 @@ Notes on releases along the way:
   public: a user's own test needs it to give `refines` its decisions, and
   generated regression tests import it.
 
-## Patch work after v0.15
+## Patch work
 
-Until the next phase opens, work ships as `0.15.x`: the following, each
-when a target needs it (the performance items and the proof cache are
-v0.16's and wait for it unless a target needs one sooner):
+Work that changes no phase's gate ships as a patch release of the current
+minor, each item when a target needs it (the performance items and the
+proof cache are v0.17's and wait for it unless a target needs one sooner):
 - A configurable number of `TESTED` draws on the command line (the API
   takes `inputs`).
 - The command loads the spec reader and the engines only where specs are
@@ -135,17 +137,18 @@ v0.16's and wait for it unless a target needs one sooner):
 - Left over from earlier phases: concurrent delivery on the AWS platform
   (it still delivers one event at a time); latency on scripted externals;
   Workflow rollback handlers. Dynamic partial-order reduction and one
-  random stream per invocation are v0.16's.
+  random stream per invocation are v0.17's.
 
 ## After v0.15
 
-Each phase's text is made exact, gate included, when it starts.
+Each phase's text is made exact, gate included, when it starts. v0.16
+comes first because an adopter's flow waits on it; v0.17 starts on a
+measurement; v0.18 needs both before it.
 
-### Next: what an adopter's flows across Workers need
+### v0.16 — Work that goes on after the answer
 
-Two model features a real multi-Worker system reached first, ahead of
-v0.16 unless that system's needs change, since a flow it checks waits on
-them:
+Two model features a real multi-Worker system reached first, since a flow
+it checks waits on them:
 - **Work an object starts and does not await.** A Durable Object (an
   Agent in particular) that answers a call and goes on with work it did
   not await, through `ctx.waitUntil`, a fiber or a promise left running:
@@ -159,6 +162,20 @@ them:
   between the late attempt and the retry, or the code that recovers from
   it, is never explored. The model measures step timeouts and lets the
   timed-out attempt run on as a concurrent turn.
+
+The phase opens by paying for the duplication these features would
+otherwise add to: the Cloudflare delivery paths carry one contract
+written several times, the differential runner's raw side is written
+once per platform, and the wrangler config is read in three places that
+already disagree (a class renamed in a later migration is drafted as
+non-SQLite while `check` treats it as SQLite: a bug, fixed first with a
+test). Each becomes one copy before the new turns are added, with the
+byte-identical traces as the oracle that nothing else changed. Gate: an
+object's unawaited work and a timed-out step attempt each run as turns of
+their own; a planted bug in each is caught (a lost update in work started
+after the answer, a late attempt racing its recovery), each has a
+differential entry where the local runtime implements it, and every
+example and the v0.14 gate stay green.
 
 ### Candidates: the larger gaps in the model
 
@@ -189,26 +206,33 @@ Some reasons stay by design: the replay and leak checks (`not_replayable`,
 cannot see (a promise nothing settles, real I/O past the budget, a raw TCP
 socket) is reported rather than guessed. The leak check could fire less
 often with fresh module state per run, at a cost in speed that is
-v0.16's to weigh.
+v0.17's to weigh.
 
-### v0.16 — Runs that scale
+### v0.17 — Runs that scale
 
 The time a check and a report take, as scenarios and spec modules grow:
 the engines' modules in parallel, the proof cache keyed by source, spec
 and engine version; and the engine items a growing scenario
 meets: one random stream per invocation, so a shrunk violation gets past
 the random ids an earlier event drew, and dynamic partial-order reduction
-where the sleep-set reduction loses too often. The gate states a ceiling
+where the sleep-set reduction loses too often. It starts on a measurement,
+not on inspection: a check or report time, on the corpora or on an
+adopter's suite, that its gate must bring down, recorded with the phase.
+The performance items taken on inspection during 0.15.x showed no gain
+when measured, so none is taken that way again. The gate states a ceiling
 on the corpora's check and report time on the CI runner and holds it.
 
-### v0.17 — The model proven
+### v0.18 — The model proven
 
 The first step of the long-term direction: the platform model of queues,
 Durable Objects, D1 and alarms in Lean, validated against the executable
 model as the engine's translation is validated today, so a scenario
 invariant on the shell can be `PROVEN` against the model, not only
-`BOUNDED` by exploration. It waits for v0.15 and v0.16 because it needs
-the semantics stable and the runs fast enough to validate against.
+`BOUNDED` by exploration. It waits for v0.16 and v0.17 because it needs
+the semantics stable and the runs fast enough to validate against, and it
+opens by giving the two prover engines the one spine they were written
+beside, with the subset reader split along its seams and its circular
+import gone, so the model's translation has one place to live.
 
 ## Toward 1.0
 
