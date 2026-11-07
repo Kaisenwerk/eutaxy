@@ -59,9 +59,19 @@ export async function deliverRequest(
     attempts: event.attempt,
   });
 
-  const handled = await runInvocation(hooks, inv, () =>
-    handler.call(worker.handler, requestFor(req), worker.env, executionContext(background)),
-  );
+  const handled = await runInvocation(hooks, inv, async () => {
+    const value: unknown = await handler.call(
+      worker.handler,
+      requestFor(req),
+      worker.env,
+      executionContext(background),
+    );
+    // The Workers runtime fails a request whose handler resolves to anything but a Response, as it
+    // fails one whose handler throws: the same uncaught error, answered with a 500 below.
+    if (!(value instanceof Response))
+      throw new TypeError("the fetch handler returned something that is not a Response");
+    return value;
+  });
   const response = handled.status === "completed" ? handled.value : undefined;
   let status: DeliveryResult["status"] = handled.status;
 

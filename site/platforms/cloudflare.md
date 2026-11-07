@@ -17,7 +17,7 @@ the verdict's assumptions cite.
 | ----------------- | ----------------- | --------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
 | D1                | `d1Schema`        | `run`, `first`, `all`, `raw`, `batch`, `exec` | Miniflare's SQLite. `batch()` is all-or-nothing; separate statements can be cut between                          |
 | Queues (consumer) | the `queue` drive | `ack`, `retry`, background work               | At-least-once delivery; first ack or retry per message wins; redelivered up to `max_retries`, then dead-lettered |
-| Inbound HTTP      | the `http` drive  | the response                                  | One invocation per attempt; an uncaught exception is a 500; the declared caller decides resends                  |
+| Inbound HTTP      | the `http` drive  | the response                                  | One invocation per attempt; an uncaught exception, or a result that is not a `Response`, is a 500; the declared caller decides resends                  |
 | Inbound RPC       | the `rpc` drive   | the response                                  | One invocation per call attempt, the entrypoint constructed per call; an exception is the error the caller sees  |
 | Cron Triggers     | the `cron` drive  | `no_retry`, background work                   | One invocation per tick attempt at the tick's virtual time; the declared re-runs of a failed tick, none after `noRetry()` |
 | Outbound `fetch`  | `external`        | each request                                  | Answered from the declared externals; never reaches the network                                                  |

@@ -346,6 +346,23 @@ describe("inbound requests", () => {
     expect(log.entries[3]?.payload).toMatchObject({ result: { status: 200, ok: true } });
   });
 
+  test("a handler that resolves to no Response is a 500 the caller resends, as the runtime fails the request", async () => {
+    let calls = 0;
+    const noResponse = async () => {
+      calls++;
+      return calls === 1 ? undefined : new Response("done", { status: 200 });
+    };
+    const log = await logOf(httpSpec(), noResponse as unknown as Fetch);
+    expect(ops(log)).toEqual([
+      "req-1#1 call response",
+      "req-1#1 result response",
+      "req-1#2 call response",
+      "req-1#2 result response",
+    ]);
+    expect(log.entries[1]?.payload).toMatchObject({ result: { status: 500, ok: false } });
+    expect(log.entries[3]?.payload).toMatchObject({ result: { status: 200, ok: true } });
+  });
+
   test("with retryOn non-2xx a 4xx is resent until retries run out, then the caller gives up", async () => {
     const drive = http([{ path: "/hooks/pay", body: { eventId: "evt-1" } }], {
       retries: 1,

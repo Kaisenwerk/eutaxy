@@ -362,7 +362,8 @@ fault, a crash before it, is the response the caller never received. The
 caller's retry policy, not Cloudflare's, decides redelivery: a webhook
 provider resends until it gets a 2xx (`retryOn: "non-2xx"`, the default)
 or only on failures and 5xx (`"5xx"`), up to `retries` times; a browser-like
-caller has `retries: 0`. An uncaught exception is a 500 response.
+caller has `retries: 0`. An uncaught exception, or a handler that resolves
+to anything but a `Response`, is a 500 response.
 `httpResponse(path, { ok })` selects responses for invariants such as "one
 2xx per request", and `atLeastOncePerMessage` accepts every drive.
 
@@ -615,7 +616,8 @@ shares the reading of the limit and none of the proxy code.
   `ackAll()`/`retryAll()`; a crash mid-batch redelivers every unacked
   message; `max_retries` and dead-letter queues.
 - Inbound requests: one invocation per attempt; an uncaught exception in
-  `fetch()` is answered with a 500 (Workers runtime); resends follow the
+  `fetch()`, or a result that is not a `Response`, is answered with a 500
+  (Workers runtime); resends follow the
   drive's declared caller policy, since Cloudflare itself never retries an
   inbound request. The policy has a count (`retries`), what counts as
   failed (`retryOn`), the virtual delay before each resend (`delaysMs`) and
