@@ -15,7 +15,7 @@ packages/*/src/**/*.d.ts.map
 # Test fixtures written at run time
 .layering-fixture-*/
 .probe-*/
-# Left by tests/cli.test.ts if a run is interrupted
+# Left by tests/cli-check.test.ts if a run is interrupted
 examples/*/cli-test-*/
 
 # Working files of `eutaxy check`

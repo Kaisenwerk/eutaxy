@@ -174,7 +174,10 @@ for (const entry of entries) {
   const spec = readFileSync(join(dir, "domain.props.ts"), "utf8");
   const specPath = join(dir, "domain.props.ts");
 
-  describe(`${entry}: ${manifest.description}`, () => {
+  // Entries run side by side: each Lean and Z3 run is its own process in its own scratch directory, and
+  // every outcome rests on the engines' resource limits (their 120 s wall-clock timeouts are backstops
+  // far above what any entry takes).
+  describe.concurrent(`${entry}: ${manifest.description}`, () => {
     test("the spec file reads", () => {
       // A spec file that does not read is a broken entry, never a quiet unsupported.
       expect(readSpecs({ module: source, spec, modulePath }).errors).toEqual([]);

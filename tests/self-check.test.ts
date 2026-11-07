@@ -9,33 +9,19 @@
  */
 import { execFileSync } from "node:child_process";
 import { cpSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import { describe, expect, test } from "vitest";
-
-const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const bin = join(root, "packages", "eutaxy", "bin", "eutaxy.mjs");
+import { eutaxyAsync, root } from "./eutaxy-command.ts";
 
 interface Report {
   specs: { function: string; property: string; kind: string }[];
 }
 
-function report(dir: string, args: readonly string[] = []): { status: number; report: Report } {
-  let stdout: string;
-  let stderr = "";
-  let status = 0;
-  try {
-    stdout = execFileSync(process.execPath, [bin, "report", dir, "--json", ...args], {
-      cwd: root,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-  } catch (err) {
-    const e = err as { status?: number; stdout?: string; stderr?: string };
-    status = e.status ?? 1;
-    stdout = e.stdout ?? "";
-    stderr = e.stderr ?? "";
-  }
+async function report(
+  dir: string,
+  args: readonly string[] = [],
+): Promise<{ status: number; report: Report }> {
+  const { status, stdout, stderr } = await eutaxyAsync(["report", dir, "--json", ...args]);
   try {
     return { status, report: JSON.parse(stdout) as Report };
   } catch {
@@ -43,11 +29,17 @@ function report(dir: string, args: readonly string[] = []): { status: number; re
   }
 }
 
+/** Numbers each planted bug's copy of the core, since they are made side by side. */
+let copies = 0;
+
 const atLeastChecked = new Set(["CHECKED", "TESTED", "PROVEN"]);
 
-describe("the self-check", () => {
-  test("every invariant checker agrees with its reference: CHECKED or better", () => {
-    const r = report("packages/core/src");
+// Every report runs in its own process on its own copy, so the tests run side by side.
+describe.concurrent("the self-check", () => {
+  test("every invariant checker agrees with its reference: CHECKED or better", async ({
+    expect,
+  }) => {
+    const r = await report("packages/core/src");
     expect(r.status).toBe(0);
     const checkers = r.report.specs.filter((s) => s.property.endsWith("MatchesReference"));
     expect(checkers.map((s) => s.function).sort()).toEqual([
@@ -64,7 +56,9 @@ describe("the self-check", () => {
     for (const s of checkers) expect(atLeastChecked.has(s.kind), s.property).toBe(true);
   }, 120_000);
 
-  test("the enumeration model's claims are PROVEN by the Lean engine, with supplied proofs", () => {
+  test("the enumeration model's claims are PROVEN by the Lean engine, with supplied proofs", async ({
+    expect,
+  }) => {
     // Required where the pinned Lean is installed (CI sets EUTAXY_REQUIRE_LEAN); skipped elsewhere.
     const probe = execFileSync(
       process.execPath,
@@ -78,7 +72,7 @@ describe("the self-check", () => {
     const hasLean = probe.trim() === "yes";
     if (!hasLean && process.env["EUTAXY_REQUIRE_LEAN"] !== "1") return;
     expect(hasLean, "the pinned Lean toolchain is required here").toBe(true);
-    const r = report("packages/core/src", ["--prover", "lean"]);
+    const r = await report("packages/core/src", ["--prover", "lean"]);
     expect(r.status).toBe(0);
     const model = r.report.specs.filter((s) => s.function === "schedules");
     const kinds = Object.fromEntries(model.map((s) => [s.property, s.kind]));
@@ -91,7 +85,7 @@ describe("the self-check", () => {
     });
   }, 300_000);
 
-  // Under packages/core so the copy resolves @eutaxy/spec; .probe-* is gitignored.
+  // Under packages/core so the copy resolves @eutaxy/spec; .probe-* is gitignored. Each bug its own copy.
   // Each bug is one line, found by its text (after `after`, when the line occurs more than once).
   test.each([
     {
@@ -224,7 +218,7 @@ describe("the self-check", () => {
     },
   ])(
     "a planted bug is refuted: $bug",
-    ({
+    async ({
       file,
       after,
       from,
@@ -237,7 +231,7 @@ describe("the self-check", () => {
       to: string;
       refuted: string[];
     }) => {
-      const probe = join(root, "packages/core", `.probe-self-check-${process.pid}`);
+      const probe = join(root, "packages/core", `.probe-self-check-${process.pid}-${copies++}`);
       cpSync(join(root, "packages/core/src"), probe, { recursive: true });
       try {
         const path = join(probe, file);
@@ -245,7 +239,7 @@ describe("the self-check", () => {
         const at = source.indexOf(from, after === undefined ? 0 : source.indexOf(after));
         expect(at, "the planted bug's line").toBeGreaterThanOrEqual(0);
         writeFileSync(path, source.slice(0, at) + to + source.slice(at + from.length));
-        const r = report(probe);
+        const r = await report(probe);
         expect(r.status).toBe(1);
         const kinds = Object.fromEntries(r.report.specs.map((s) => [s.property, s.kind]));
         for (const p of refuted) expect(kinds[p], p).toBe("REFUTED");
