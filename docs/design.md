@@ -728,7 +728,48 @@ shares the reading of the limit and none of the proxy code.
   would resume in the object's I/O context. While an object holds its
   input gate with `blockConcurrencyWhile` nothing else can enter it, and
   even its timers wait at the gate, so its effects run at once then
-  (`EffectOptions.mayPark`). Current limits: storage operations are not
+  (`EffectOptions.mayPark`). Work an object starts and does not await (a
+  promise left running, as an agent runs a job after accepting it; a timer
+  it set; `ctx.waitUntil`, which in an object only keeps it from being
+  evicted) goes on after its answer, as the runtime keeps the object alive
+  while anything of its is pending (Cloudflare, Lifecycle of a Durable
+  Object; Durable Object State, `waitUntil`): the model runs it as an
+  invocation of the object's own, `DO:<binding>/<object>/after`, whose
+  effects are turns of their own and take faults by their position in it,
+  until nothing of it can move, as an object with nothing pending goes
+  idle (work woken later revives it), or a crash resets the object, which
+  ends it with the instance; the object's next instance's work is a new
+  invocation (`/after#2`). Work that never settles (a heartbeat: an
+  interval, a timer that re-arms itself), which the runtime would run until
+  the object is evicted, is waited for up to 100 timer firings per run
+  (`afterWorkTimerLimit`); past that the run is `UNSUPPORTED` and names the
+  object. In a sequential run that work runs to rest
+  before the next event, one of the orders the runtime allows; a
+  concurrent run explores the others, the second call entering the object
+  while the first's work awaits its model among them. The runtime carries
+  no async context into an object's code, so the platform enters it
+  itself: before a call it wraps the method about to run (on the class,
+  looked up per instance), and it runs an alarm or WebSocket handler the
+  same way (`RunHooks.hostedCode`, `EffectOptions.host`). The code so
+  entered carries the effect it is the call of (the object's input gate
+  delivers calls in arrival order, so the oldest of the object's effects
+  whose call has not started is it), which makes an effect the object
+  makes during a call that call's, two calls inside the object at once
+  told apart, and the work after an answer that of the call that left it.
+  Work after an answer that holds the input gate with
+  `blockConcurrencyWhile` runs its effects at once, as a call's does.
+  Timers the object's code sets are the object's,
+  not the caller's, and in workerd are run by a poller armed inside the
+  object, as are its waits for a turn after its answer: a real timer the
+  object's code armed after its request completed would keep the object
+  referenced. Current limits: an object that awaits one of its own timers
+  before answering a call is not supported yet (the call's effect is in
+  flight, so no timer fires, and the call runs into the effect budget:
+  `UNSUPPORTED`); an effect the object issued before its answer is the
+  call's, so a crash of the caller after the answer ends it with the call,
+  where the runtime would let the object finish it; real work other than
+  effects and timers that the object starts and does not await (a Web
+  Crypto digest) is not waited for after the answer; storage operations are not
   turns (the input gate holds them, so this is the runtime's behaviour);
   the object's own binding calls are not recorded, and an object reached
   only through another object's binding makes the run `UNSUPPORTED`, as do
@@ -1609,7 +1650,10 @@ word comes from anchors it does not control.
 - **Differential corpus** (`corpus/differential`): fault-free scenarios run
   twice inside workerd, once through Eutaxy's proxies and once with the
   handler called directly on the raw bindings; the per-attempt decisions
-  and the final D1 tables and R2 objects must agree. Any divergence is a bug in Eutaxy's
+  and the final D1 tables, R2 objects and Durable Object storage must agree
+  (the raw side reads every seeded object, since no proxy saw which were
+  reached, and counts a stub call as I/O in flight, as the call crosses
+  workerd unseen). Any divergence is a bug in Eutaxy's
   proxies or platform model. The raw side shares Eutaxy's reading of the
   queue semantics but none of the proxy code. The proxied side, the raw
   side's loop (the same virtual globals and scripted externals, the same

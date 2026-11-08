@@ -1,0 +1,7 @@
+{
+  "name": "differential-object-work-after-answer",
+  "main": "worker.ts",
+  "compatibility_date": "2026-10-01",
+  "durable_objects": { "bindings": [{ "name": "RUNNER", "class_name": "Runner" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Runner"] }]
+}

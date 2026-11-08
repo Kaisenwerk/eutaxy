@@ -1,0 +1,8 @@
+{
+  "expect": {
+    "verdict": "VIOLATED",
+    "invariant": "each-job-reaches-a-new-total"
+  },
+  "fault": "none: two jobs started at once on one object; the second job's read of the total runs while the first awaits the model, in work neither answer waited for",
+  "description": "An object answers a call and runs the job after the answer, as an agent does. The job reads a running total, awaits an external model, and writes the total plus its steps. Two jobs started together both read the total before either writes it, and one job's steps are lost."
+}

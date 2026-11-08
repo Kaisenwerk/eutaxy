@@ -271,6 +271,15 @@ An effect's real I/O (a D1 statement, an R2 call) took longer than the
 scenario's time budget. Raise `budgetMs` (or `--budget-ms`) if the
 machine is slow; if it never completes, the code is waiting on itself.
 
+**`DO:<binding>/<object>/after: the object's work after its answer fired its timers <n> times and does not settle (an interval or a timer that re-arms itself); the model waits for such work only up to 100 firings per run`**
+Work a Durable Object goes on with after answering runs as the object's
+own invocation until nothing of it can move. A heartbeat never settles:
+an interval, or a timeout that sets itself again. The runtime would run
+it until the object is evicted, which a run cannot wait for, so the run
+stops waiting after 100 firings and the object's work ends. Give the
+heartbeat an end the scenario reaches, or move it to an alarm, which the
+model fires a bounded number of times (`alarmsPerObject`).
+
 **`invocation <id> is waiting on something Eutaxy cannot see (no effect in flight, no timer due)`**
 The handler is awaiting a promise nothing will settle: a real timer or
 I/O the simulation does not drive, or an event that never comes. Find

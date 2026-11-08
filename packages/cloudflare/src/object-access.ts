@@ -1,13 +1,64 @@
 /**
  * Code run inside a Durable Object as one of its own events does (an alarm,
  * a WebSocket message), and the crash semantics that go with it: the effect
- * hosts the object's effects, an abandoned effect resets the object, an
- * effect inside blockConcurrencyWhile may not wait for a turn, and a crash
- * drops the instance, whose in-memory state goes with it.
+ * hosts the object's effects, work the object goes on with after it is the
+ * object's own turns, an abandoned effect resets the object, an effect
+ * inside blockConcurrencyWhile may not wait for a turn, and a crash drops
+ * the instance, whose in-memory state goes with it.
  */
 
 import type { EffectPoint, Invocation, JsonValue, RunHooks } from "@eutaxy/core";
 import { type Outcome, runInvocation } from "@eutaxy/engine";
+
+/** The host an object's code runs as (`EffectOptions.host`): its namespace's target and its name. */
+export function hostOf(target: string, object: string): string {
+  return `${target}/${object}`;
+}
+
+/** Where a class's `method` is defined along `instance`'s prototype chain. */
+function owner(instance: object, method: string): object | undefined {
+  for (let o: object | null = instance; o !== null; o = Object.getPrototypeOf(o))
+    if (Object.hasOwn(o, method)) return o;
+  return undefined;
+}
+
+/** The host each instance's code runs as, set each time a call enters it. */
+const hostOfInstance = new WeakMap<object, { hooks: RunHooks; host: string }>();
+const hostingWrappers = new WeakSet<object>();
+
+/**
+ * Have the object's `method` run as the host's code (`RunHooks.hostedCode`)
+ * when the runtime calls it next: the runtime carries no async context into
+ * an object's code, so the method is wrapped where its class defines it, and
+ * the wrapper looks the instance's host up; code the method spawns and does
+ * not await carries the object's identity too.
+ */
+export function hostMethod(hooks: RunHooks, host: string, instance: unknown, method: string): void {
+  if (instance === null || typeof instance !== "object") return;
+  hostOfInstance.set(instance, { hooks, host });
+  const where = owner(instance, method);
+  if (!where) return;
+  const descriptor = Object.getOwnPropertyDescriptor(where, method);
+  if (!descriptor?.configurable) return;
+  const hosted = (original: (...a: unknown[]) => unknown) =>
+    function (this: unknown, ...args: unknown[]): unknown {
+      const of = this !== null && typeof this === "object" ? hostOfInstance.get(this) : undefined;
+      const call = () => original.apply(this, args);
+      return of ? of.hooks.hostedCode(of.host, call, method) : call();
+    };
+  // A method, or an RPC property's getter: either runs the object's code when the call arrives.
+  if (typeof descriptor.value === "function" && descriptor.writable) {
+    if (hostingWrappers.has(descriptor.value)) return;
+    const wrapper = hosted(descriptor.value as (...a: unknown[]) => unknown);
+    hostingWrappers.add(wrapper);
+    Object.defineProperty(where, method, { ...descriptor, value: wrapper });
+  } else if (typeof descriptor.get === "function") {
+    if (hostingWrappers.has(descriptor.get)) return;
+    const wrapper = hosted(descriptor.get as (...a: unknown[]) => unknown);
+    hostingWrappers.add(wrapper);
+    Object.defineProperty(where, method, { ...descriptor, get: wrapper });
+  }
+}
 
 /** What a delivery into an object needs of its namespace: to run code inside one, and the crash semantics. */
 export interface ObjectAccess {
@@ -34,16 +85,21 @@ export async function hostedInObject<T>(
   objects: ObjectAccess,
   binding: string,
   id: string,
+  object: string,
   point: EffectPoint,
   perform: () => Promise<T>,
   summarize: (value: T) => JsonValue,
 ): Promise<Outcome<T>["status"]> {
   const { status } = await runInvocation(hooks, inv, () =>
     hooks.effect({ ...point, hostsEffects: true }, perform, summarize, {
+      host: hostOf(`DO:${binding}`, object),
       onAbandon: () => objects.abort(binding, id),
       mayPark: () => objects.mayPark(binding, id),
     }),
   );
-  if (status === "crashed") await objects.evict(binding, id);
+  if (status === "crashed") {
+    await objects.evict(binding, id);
+    hooks.hostReset(hostOf(`DO:${binding}`, object));
+  }
   return status;
 }

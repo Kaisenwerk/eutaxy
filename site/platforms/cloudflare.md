@@ -135,6 +135,18 @@ snapshotted after it. In a concurrent run, an object's own outbound I/O
 during a call is a turn, so another call may enter the object meanwhile, as
 its open input gate allows; storage operations are not turns.
 
+**Work after the answer.** Work an object starts and does not await (a
+promise left running, as an agent runs a job after accepting it; a timer it
+set; `ctx.waitUntil`) goes on after its answer, as the runtime keeps the
+object alive while anything of its is pending. It runs as an invocation of
+the object's own, `DO:<binding>/<object>/after`, whose effects are turns of
+their own and take faults by their position in it, until nothing of it can
+move or a crash resets the object, which ends it with the instance (the
+next instance's work is `/after#2`). A sequential run lets it run to rest
+before the next event; a concurrent run explores the other orders, a second
+call entering the object while the first's work awaits its model among
+them, which is where a lost update in such work hides.
+
 **SQLite storage.** For a SQLite-backed class (`new_sqlite_classes` in the
 wrangler migrations, the backend Cloudflare recommends and the Agents SDK
 requires), the setup seeds SQL storage too: `durableObject("INVENTORY", {},

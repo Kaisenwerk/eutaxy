@@ -43,7 +43,7 @@ import {
 import { note, realTick, runInvocation } from "@eutaxy/engine";
 import { drainBackground, executionContext, type RunningWorker } from "./background.ts";
 import { requestOrigin } from "./http.ts";
-import { hostedInObject, type ObjectAccess } from "./object-access.ts";
+import { hostedInObject, hostOf, type ObjectAccess } from "./object-access.ts";
 import type { WebSocketConnectionSpec, WebSocketDrive, WebSocketEventData } from "./scenario.ts";
 
 /** The object a connection reached, as the stub proxy saw its 101: the invocation whose stub call it was, and the client end. */
@@ -572,6 +572,7 @@ async function deliverMessage(
     deps.objects,
     binding,
     id,
+    object,
     { invocation, target, op: "send", args, allowed: readFaults },
     async () => {
       await deps.objects.run(binding, id, object, async (instance, live) => {
@@ -598,10 +599,12 @@ async function deliverMessage(
           return;
         }
         const end = conn.server ?? server;
-        await (handler as (ws: WebSocket, m: string) => Promise<unknown>).call(
-          instance,
-          end,
-          frameText(data.data),
+        await hooks.hostedCode(hostOf(`DO:${binding}`, object), () =>
+          (handler as (ws: WebSocket, m: string) => Promise<unknown>).call(
+            instance,
+            end,
+            frameText(data.data),
+          ),
         );
         // The handler may have rewritten the attachment: keep what identifies the end current.
         conn.identity = identityOf(end, live);

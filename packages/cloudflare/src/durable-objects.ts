@@ -16,6 +16,7 @@
 import { canonicalJson, type JsonValue, toJson, writeFaults } from "@eutaxy/core";
 import { withoutNetwork } from "@eutaxy/engine";
 import { AlarmBook, alarmControl, takenOver, takeOverAlarms } from "./alarms.ts";
+import { hostMethod, hostOf } from "./object-access.ts";
 import type { ProxyContext } from "./proxy-context.ts";
 import type { DurableObjectSqlSeed } from "./scenario.ts";
 
@@ -265,8 +266,8 @@ export function proxyNamespace(
   const nameOf = (id: DurableObjectId) => names.get(id.toString()) ?? id.toString();
 
   function stubFor(stub: DurableObjectStub, id: string, object: string): DurableObjectStub {
-    /** Make sure the call may reach the object, and take over its alarms first. */
-    async function reach(real: DurableObjectStub): Promise<void> {
+    /** Make sure the call may reach the object, take over its alarms first, and host the method about to run. */
+    async function reach(real: DurableObjectStub, method?: string): Promise<void> {
       if (!helpers) {
         ctx.hooks.unsupported(
           `Durable Object binding ${binding} needs the Cloudflare test helpers (pass durableObjects to createCloudflarePlatform)`,
@@ -276,7 +277,9 @@ export function proxyNamespace(
           `Durable Object binding ${binding} has no durableObject setup, so its objects are not reset between runs; add durableObject(${JSON.stringify(binding)}) to the scenario's setup`,
         );
       } else {
-        await enterObject(real, binding, ctx, helpers, state, id, object, async () => undefined);
+        await enterObject(real, binding, ctx, helpers, state, id, object, async (instance) => {
+          if (method !== undefined) hostMethod(ctx.hooks, hostOf(target, object), instance, method);
+        });
       }
     }
 
@@ -330,6 +333,9 @@ export function proxyNamespace(
         perform,
         summarize,
         {
+          // The object's code is the host's: inside the call its effects are the call's; after the
+          // answer, work it goes on with is the object's own turns.
+          host: hostOf(target, object),
           // A crash inside the object's own work leaves its request pending: reset the object.
           onAbandon: () => state.abort(id),
           // Inside blockConcurrencyWhile nothing else enters the object: its effects run at once.
@@ -348,7 +354,7 @@ export function proxyNamespace(
         const call = (...args: unknown[]) =>
           pipelineGuard(
             onObject(prop, { object, args: args.map(argument) }, async () => {
-              await reach(real);
+              await reach(real, prop);
               // Reflect.apply, not method.apply: an RPC stub's methods are proxies, `.apply` would be a call.
               const method = (real as unknown as Record<string, (...a: unknown[]) => unknown>)[
                 prop
@@ -375,7 +381,7 @@ export function proxyNamespace(
           );
         const read = () =>
           onObject(prop, { object, property: true }, async () => {
-            await reach(real);
+            await reach(real, prop);
             return plain(await (real as unknown as Record<string, unknown>)[prop]);
           });
         const awaitable = (
@@ -615,10 +621,23 @@ export async function snapshotNamespace(
   seededSql: SeededSql,
   onIndirect: (object: string) => void,
   onUnsupported: (reason: string) => void,
+  /** Read every seeded object's storage, touched or not, as the raw side of a differential does: no proxy saw its calls. */
+  all = false,
 ): Promise<{ readonly [object: string]: readonly JsonValue[] }> {
   // Reading an object that is no longer running reconstructs it, outside the simulation.
   const { value, requested } = await withoutNetwork(() =>
-    readTables(real, helpers, names, touched, objects, sql, seededSql, onIndirect, onUnsupported),
+    readTables(
+      real,
+      helpers,
+      names,
+      touched,
+      objects,
+      sql,
+      seededSql,
+      onIndirect,
+      onUnsupported,
+      all,
+    ),
   );
   if (requested)
     onUnsupported("a Durable Object made a request while its storage was being snapshotted");
@@ -635,6 +654,7 @@ async function readTables(
   seededSql: SeededSql,
   onIndirect: (object: string) => void,
   onUnsupported: (reason: string) => void,
+  all: boolean,
 ): Promise<{ readonly [object: string]: readonly JsonValue[] }> {
   const out: Record<string, JsonValue[]> = {};
   // Defined, not assigned: an object may be named "__proto__". Names may not hold "/", so a table's
@@ -651,7 +671,10 @@ async function readTables(
   const seeded = seededNames(objects, sql);
   for (const id of await objectIds(real, helpers, names, seeded)) {
     const name = names.get(id.toString()) ?? id.toString();
-    if (!touched.has(id.toString())) {
+    // The raw side of a differential reads every object, a call's own unseeded one included; the
+    // stale empties earlier runs left read the same on both sides.
+    const read = all || touched.has(id.toString());
+    if (!read) {
       // Eviction only succeeds on a running object, and reset left every object evicted.
       const running = await typed(helpers)
         .evictDurableObject(real.get(id))
@@ -665,10 +688,10 @@ async function readTables(
     }
     let entries: [string, unknown][];
     const tables: [string, JsonValue[]][] = [];
-    if (touched.has(id.toString())) {
+    if (read) {
       const read = await typed(helpers).runInDurableObject(real.get(id), (_instance, state) => {
         // Storage Eutaxy never took over belongs to an instance built after the run's calls.
-        if (!takenOver.has(state.storage))
+        if (!all && !takenOver.has(state.storage))
           onUnsupported(
             `Durable Object ${name} was reset during the run and reconstructed for the snapshot; its constructor ran outside the simulation`,
           );

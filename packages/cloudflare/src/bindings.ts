@@ -171,6 +171,8 @@ export interface DurableObjectDeps {
   readonly helpers: DurableObjectTestHelpers | undefined;
   /** The env value under a binding name: alarm events name their binding, not an object. */
   readonly real: (name: string) => unknown;
+  /** Snapshot every seeded object from its storage: the raw side of a differential, where no proxy saw the calls. */
+  readonly snapshotAll?: boolean;
 }
 
 /**
@@ -260,6 +262,7 @@ export function durableObjectBinding(
             `Durable Object ${binding} ${object} was reached without a call Eutaxy saw (through another object's binding); calls between objects are not proxied yet`,
           ),
         unsupported,
+        deps.snapshotAll === true,
       );
     },
     source: alarmSource,

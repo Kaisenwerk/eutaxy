@@ -23,7 +23,7 @@ import {
   readFaults,
   redelivery,
 } from "@eutaxy/core";
-import { hostedInObject, type ObjectAccess } from "./object-access.ts";
+import { hostedInObject, hostOf, type ObjectAccess } from "./object-access.ts";
 
 /** `EventRef.source` of an alarm event. */
 export const alarmSource = "durable_object_alarm";
@@ -282,7 +282,7 @@ export async function runAlarm(
       );
       return;
     }
-    await handler.call(instance, info);
+    await hooks.hostedCode(hostOf(`DO:${d.binding}`, object), () => handler.call(instance, info));
   });
 }
 
@@ -321,6 +321,7 @@ export async function deliverAlarm(
     d.objects,
     d.binding,
     a.id,
+    a.object,
     {
       invocation,
       target: `DO:${d.binding}`,

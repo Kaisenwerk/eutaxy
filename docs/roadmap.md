@@ -152,10 +152,10 @@ it checks waits on them:
 - **Work an object starts and does not await.** A Durable Object (an
   Agent in particular) that answers a call and goes on with work it did
   not await, through `ctx.waitUntil`, a fiber or a promise left running:
-  today that work outlives the call's effect and the run is
-  `UNSUPPORTED`. The model runs it as the object's own turns after the
-  answer, with its effects and faults, until it settles or the object is
-  evicted.
+  the model runs it as the object's own turns after the answer, an
+  invocation `DO:<binding>/<object>/after` with its effects and faults,
+  until it settles or a crash resets the object (`docs/design.md`,
+  Durable Objects).
 - **A step attempt that outlives its timeout.** Workflows retries a step
   whose attempt passed its `timeout` while that attempt may still be
   running; today an attempt runs to its end before the retry, so a race

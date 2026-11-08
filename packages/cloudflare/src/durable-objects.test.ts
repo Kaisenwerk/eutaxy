@@ -9,7 +9,14 @@ import { Run, replayChooser, runOnce } from "@eutaxy/engine";
 import { describe, expect, test } from "vitest";
 import { Backing, FakeStorage } from "./fake-durable-objects.ts";
 import { createCloudflarePlatform, type WorkerHandler } from "./platform.ts";
-import { defineScenario, durableObject, durableObjectRows, everyRow, http } from "./scenario.ts";
+import {
+  defineScenario,
+  durableObject,
+  durableObjectRows,
+  everyRow,
+  external,
+  http,
+} from "./scenario.ts";
 
 /** Drops a live instance of the current fake namespace, as a runtime reset does. */
 let dropInstance: ((hex: string) => void) | null = null;
@@ -60,6 +67,15 @@ class Counter {
     await this.ctx.storage.setAlarm(Date.now() + 1000);
     return "set";
   }
+  /** Answers at once and goes on with work it does not await: a timer, a request, a write. */
+  async later() {
+    void (async () => {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      await fetch("https://api.test/later");
+      await this.ctx.storage.put("later", true);
+    })();
+    return "soon";
+  }
   /** Writes a row into a SQL table the seed created, as a SQLite-backed object does. */
   async tally(by: number) {
     this.ctx.storage.sql.exec(`INSERT INTO "tallies" ("n", "note") VALUES (?, ?)`, by, "tallied");
@@ -98,6 +114,7 @@ function fakeNamespace() {
         id,
         bump: (by: number) => instanceOf(hex).bump(by),
         tally: (by: number) => instanceOf(hex).tally(by),
+        later: () => instanceOf(hex).later(),
         remind: () => instanceOf(hex).remind(),
         relay: () => instanceOf(hex).relay(),
         open: () => instanceOf(hex).open(),
@@ -152,21 +169,23 @@ const handler: WorkerHandler = {
       const value =
         path === "/tally"
           ? await stub.tally(3)
-          : path === "/remind"
-            ? await stub.remind()
-            : path === "/relay"
-              ? await stub.relay()
-              : path === "/crash-self"
-                ? await stub.crashSelf()
-                : path === "/pipelined-property"
-                  ? await (stub as unknown as { total: { value: Promise<number> } }).total.value
-                  : path === "/pipelined"
-                    ? await (stub.bump(2) as unknown as { value: Promise<number> }).value
-                    : path === "/open"
-                      ? ((await stub.open()) as unknown as string)
-                      : path === "/total"
-                        ? await (stub as unknown as { total: Promise<number> }).total
-                        : await stub.bump(2);
+          : path === "/later"
+            ? await stub.later()
+            : path === "/remind"
+              ? await stub.remind()
+              : path === "/relay"
+                ? await stub.relay()
+                : path === "/crash-self"
+                  ? await stub.crashSelf()
+                  : path === "/pipelined-property"
+                    ? await (stub as unknown as { total: { value: Promise<number> } }).total.value
+                    : path === "/pipelined"
+                      ? await (stub.bump(2) as unknown as { value: Promise<number> }).value
+                      : path === "/open"
+                        ? ((await stub.open()) as unknown as string)
+                        : path === "/total"
+                          ? await (stub as unknown as { total: Promise<number> }).total
+                          : await stub.bump(2);
       return Response.json({ value });
     } catch {
       return new Response("object unavailable", { status: 503 });
@@ -723,5 +742,57 @@ describe("Durable Object setup validation", () => {
         ],
       }),
     ).not.toThrow();
+  });
+});
+
+describe("work an object does not await", () => {
+  async function runLater(faults: Schedule["faults"]) {
+    const { namespace, helpers, storages } = fakeNamespace();
+    const platform = createCloudflarePlatform({
+      env: { COUNTER: namespace },
+      handler,
+      schemas: {},
+      durableObjects: helpers,
+    });
+    const s: ScenarioSpec = { ...spec("/later"), externals: [external("api", "api.test")] };
+    const run = new Run({ chooser: replayChooser({ seed: 1, faults }), bounds: s.bounds });
+    const log = await runOnce(s, platform, run);
+    return { log, run, storages };
+  }
+
+  test("runs after the answer as the object's own invocation, timers included, and the run waits for it", async () => {
+    const { log, run, storages } = await runLater([]);
+    expect(run.unsupportedReasons).toEqual([]);
+    expect(response(log).result.body).toEqual({ value: "soon" });
+    expect(lines(log)).toEqual([
+      "req-1#1 call DO:COUNTER later",
+      "req-1#1 result DO:COUNTER later",
+      "req-1#1 call Http:/later response",
+      "req-1#1 result Http:/later response",
+      "DO:COUNTER/c/after call Fetch:api GET",
+      "DO:COUNTER/c/after result Fetch:api GET",
+      "platform snapshot DO:COUNTER snapshot",
+    ]);
+    expect(storages.get("id-c")?.data.get("later")).toBe(true);
+  });
+
+  test("a crash in that work resets the object and ends the work; the answer the caller got stands", async () => {
+    const { log, run, storages } = await runLater([
+      {
+        invocation: "DO:COUNTER/c/after",
+        ordinal: 0,
+        fault: "crash_before",
+        target: "Fetch:api",
+        op: "GET",
+      },
+    ]);
+    expect(run.unsupportedReasons).toEqual([]);
+    expect(response(log).result.body).toEqual({ value: "soon" });
+    expect(lines(log).slice(4)).toEqual([
+      "DO:COUNTER/c/after call Fetch:api GET",
+      "DO:COUNTER/c/after fault Fetch:api GET",
+      "platform snapshot DO:COUNTER snapshot",
+    ]);
+    expect(storages.get("id-c")?.data.get("later")).toBeUndefined();
   });
 });

@@ -2,7 +2,7 @@
  * Differential check: the same fault-free scenario run once through Eutaxy's
  * proxies and once against the raw bindings, with the queue model (or the
  * HTTP caller's retry policy) applied on the raw side itself. Any difference in the per-attempt decisions or in
- * the final D1 and R2 state is a bug in the proxies or the platform model, not in
+ * the final D1, R2 and Durable Object state is a bug in the proxies or the platform model, not in
  * the Worker. The raw side shares Eutaxy's *reading* of Cloudflare's queue
  * semantics (core's redelivery rule among it) and the engine's raw loop; what
  * it does not share is any proxy code.
@@ -13,6 +13,7 @@ import {
   getPath,
   invocationOf,
   type JsonValue,
+  type RunHooks,
   type ScenarioSpec,
   toJson,
 } from "@eutaxy/core";
@@ -26,8 +27,15 @@ import {
   type VirtualClock,
 } from "@eutaxy/engine";
 import { executionContext } from "./background.ts";
-import { type Binding, d1Binding, ownedSetups, r2Binding } from "./bindings.ts";
+import {
+  type Binding,
+  d1Binding,
+  durableObjectBinding,
+  ownedSetups,
+  r2Binding,
+} from "./bindings.ts";
 import { isD1 } from "./d1.ts";
+import { type DurableObjectTestHelpers, isDurableObjectNamespace } from "./durable-objects.ts";
 import { requestFor } from "./http.ts";
 import {
   type CloudflarePlatformOptions,
@@ -176,11 +184,81 @@ function countingR2(real: R2Bucket, io: { n: number }, clock: VirtualClock): R2B
 
 /**
  * The bindings whose state the two sides compare: those a store holds and
- * the real binding resets and reads back (D1, R2). Durable Objects and
- * Workflows have no raw side.
+ * the real binding resets and reads back (D1, R2, and Durable Objects when
+ * the test helpers are given: the raw side reads every seeded object's
+ * storage, since no proxy saw which were reached). Workflows have no raw
+ * side.
  */
 function storedBindings(options: CloudflarePlatformOptions): readonly Binding[] {
-  return [d1Binding(options.schemas), r2Binding()];
+  const helpers = options.durableObjects;
+  const env = options.env as Record<string, unknown>;
+  return [
+    d1Binding(options.schemas),
+    r2Binding(),
+    ...(helpers
+      ? [
+          durableObjectBinding({
+            // Reset and snapshot never reach the proxy context; the raw side has no run to give it.
+            ctx: { hooks: undefined as unknown as RunHooks, currentInvocation: () => "raw" },
+            helpers: helpers as DurableObjectTestHelpers,
+            real: (name) => env[name],
+            snapshotAll: true,
+          }),
+        ]
+      : []),
+  ];
+}
+
+/**
+ * A Durable Object namespace whose stub calls count as I/O in flight: the
+ * call crosses workerd, which the settle loop cannot otherwise see, and
+ * advances the clock as the proxied call does. It records nothing.
+ */
+function countingNamespace(
+  real: DurableObjectNamespace,
+  io: { n: number },
+  clock: VirtualClock,
+): DurableObjectNamespace {
+  const track = async <T>(p: Promise<T>): Promise<T> => {
+    io.n++;
+    try {
+      return await p;
+    } finally {
+      io.n--;
+      clock.advance(effectLatencyMs);
+    }
+  };
+  const countingStub = (stub: DurableObjectStub): DurableObjectStub =>
+    new Proxy(stub, {
+      get(t, prop, r) {
+        const v = Reflect.get(t, prop, r) as unknown;
+        if (prop === "then" || prop === "id" || prop === "name" || typeof prop !== "string")
+          return v;
+        if (typeof v !== "function") return v;
+        // An RPC member is callable (a method) and awaitable (a property): both cross workerd, so both
+        // count. Reflect.apply, not method.apply: the member is a proxy, `.apply` would be a call.
+        return new Proxy(v as (...x: unknown[]) => unknown, {
+          apply: (member, _self, a: unknown[]) =>
+            track(Promise.resolve(Reflect.apply(member, t, a))),
+          get(member, key, receiver) {
+            if (key === "then") {
+              const read = track(Promise.resolve(member as unknown as Promise<unknown>));
+              return read.then.bind(read);
+            }
+            return Reflect.get(member, key, receiver);
+          },
+        });
+      },
+    });
+  return new Proxy(real, {
+    get(t, prop, r) {
+      const v = Reflect.get(t, prop, r) as unknown;
+      if (prop === "get")
+        return (...a: Parameters<DurableObjectNamespace["get"]>) => countingStub(t.get(...a));
+      if (prop === "getByName") return (name: string) => countingStub(t.getByName(name));
+      return typeof v === "function" ? (v as (...x: unknown[]) => unknown).bind(t) : v;
+    },
+  });
 }
 
 async function snapshotAll(
@@ -249,16 +327,22 @@ function flatten(state: Side["state"]): { readonly [name: string]: readonly Json
 
 /** The real bindings with each call counted as I/O in flight and the clock advanced as the proxies do. */
 function countingEnv(env: Record<string, unknown>, ctx: RawContext): Record<string, unknown> {
-  const counting = new Map<string, D1Database | R2Bucket>();
+  const counting = new Map<string, D1Database | R2Bucket | DurableObjectNamespace>();
   return new Proxy(env, {
     get(target, prop, receiver) {
       const value = Reflect.get(target, prop, receiver) as unknown;
-      if (typeof prop !== "string" || !(isD1(value) || isR2(value))) return value;
+      if (
+        typeof prop !== "string" ||
+        !(isD1(value) || isR2(value) || isDurableObjectNamespace(value))
+      )
+        return value;
       let c = counting.get(prop);
       if (!c) {
         c = isD1(value)
           ? countingD1(value, ctx.io, ctx.clock)
-          : countingR2(value, ctx.io, ctx.clock);
+          : isR2(value)
+            ? countingR2(value, ctx.io, ctx.clock)
+            : countingNamespace(value, ctx.io, ctx.clock);
         counting.set(prop, c);
       }
       return c;
