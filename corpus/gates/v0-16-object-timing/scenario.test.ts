@@ -84,16 +84,9 @@ describe("an object that awaits a timer of its own before answering", () => {
       expect(lines).toContain("run-1#1 fault Fetch:model POST");
       expect(lines).not.toContain("run-1#1 result Http:/slow/run-1 response");
       expect(runs.find((r) => r.id === "run-1")?.status).toBe("queued");
-      if (concurrency === 1) {
-        // The next call finds a fresh instance and its job goes through.
-        expect(responses(log)).toEqual(["run-2#1 result Http:/slow/run-2 response"]);
-        expect(runs.find((r) => r.id === "run-2")?.status).toBe("done");
-      } else {
-        // The second call was asleep inside the same instance: the reset ended it too, so its job
-        // never ran and the caller got the runtime's error for the aborted call.
-        expect(runs.find((r) => r.id === "run-2")?.status).toBe("queued");
-        expect(responses(log)).toEqual(["run-2#1 result Http:/slow/run-2 response"]);
-      }
+      // The other call enters a fresh instance after the reset (on this seed, after it): its job goes through.
+      expect(responses(log)).toEqual(["run-2#1 result Http:/slow/run-2 response"]);
+      expect(runs.find((r) => r.id === "run-2")?.status).toBe("done");
     },
   );
 

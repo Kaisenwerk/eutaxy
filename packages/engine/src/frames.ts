@@ -41,6 +41,8 @@ export class Frame {
   performing = 0;
   /** A host's effect whose call the host's code has started (`Frames.claimHost`). */
   claimed = false;
+  /** The host's code this effect is the call of has started running (`Run.hostedCode`); until then the call is in transit. */
+  entered = false;
   /** The host's code this effect is the call of has returned (`Frames.answered`): its answer is in transit. */
   answered = false;
   /** Of those, the ones parked, or running but only waiting on parked effects of their own. */
@@ -144,12 +146,15 @@ export class Frames {
 
   /**
    * The hosts of the effects in flight, when every one of them is a hosting
-   * effect whose hosted code is idle: still running (its answer not yet on
-   * its way), with no effect of it performing or waiting for a turn, nothing
-   * hosted inside it and no real work tracked. Such code can only be
-   * awaiting a timer of its own (an object sleeping before it answers),
+   * effect whose hosted code is idle: running (entered, its answer not yet
+   * on its way), with no effect of it performing or waiting for a turn,
+   * nothing hosted inside it and no real work tracked. Such code can only
+   * be awaiting a timer of its own (an object sleeping before it answers),
    * which the run may fire for it. Null while anything else is in flight,
-   * or nothing is.
+   * or nothing is: a call still crossing into its object is on its way, and
+   * waiting for it keeps the order in which calls enter the object the
+   * schedule's, not real time's (two timers due together fire by the order
+   * they were set).
    */
   idleHosts(): Set<string> | null {
     let counted = 0;
@@ -157,7 +162,13 @@ export class Frames {
     for (const frame of this.stack) {
       if (frame.isWaiting()) continue;
       counted++;
-      if (frame.host === undefined || frame.answered || frame.performing > 0 || frame.children > 0)
+      if (
+        frame.host === undefined ||
+        !frame.entered ||
+        frame.answered ||
+        frame.performing > 0 ||
+        frame.children > 0
+      )
         return null;
       hosts.add(frame.host);
     }

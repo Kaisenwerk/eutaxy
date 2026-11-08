@@ -416,6 +416,8 @@ export class Run implements RunHooks {
     const current = this.frames.current();
     const frame =
       current?.host === host && current.active ? current : this.frames.claimHost(host, op);
+    // The call has crossed into the object: its code runs from here.
+    if (frame) frame.entered = true;
     // An object's code is handler code: its timers are virtual, inside a call's I/O or not.
     const run = (): T => (this.patched ? this.patched.handlerCode(code) : code());
     const result = hostScope ? hostScope.run({ host, frame }, run) : run();

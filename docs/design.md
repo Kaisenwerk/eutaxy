@@ -765,8 +765,9 @@ shares the reading of the limit and none of the proxy code.
   object's code armed after its request completed would keep the object
   referenced. An object that awaits a timer of its own before it answers
   is woken by it: while everything in flight is a call whose object's code
-  is still running and idle (it has not returned; no effect of it
-  performing or waiting, nothing hosted in it, no real work tracked) and
+  is running and idle (it has entered the object and not returned; no
+  effect of it performing or waiting, nothing hosted in it, no real work
+  tracked) and
   one such object has a timer pending, the run fires those objects'
   timers, after a tick for work it cannot see (a call crossing into the
   object, storage I/O); the caller's own timers stay the caller's and do

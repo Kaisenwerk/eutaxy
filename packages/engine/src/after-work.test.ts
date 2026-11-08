@@ -902,6 +902,56 @@ describe("an object's timers and effects around its answer", () => {
     }
   });
 
+  test("a call still crossing into its object is not idle: the other object's timer waits for it to enter", async () => {
+    // Two calls into two objects: X sleeps; Y's call takes several real ticks to reach its method, as an
+    // RPC does. Y's code must have entered before X's timer fires, so the order calls enter their
+    // objects is the schedule's, not real time's.
+    const order: string[] = [];
+    const platform: Platform = {
+      name: "objects",
+      assumptions: [],
+      concurrent: true,
+      reset: async () => {},
+      initialEvents: () => [
+        { id: "x", attempt: 1, data: null },
+        { id: "y", attempt: 1, data: null },
+      ],
+      restrictEvents: (s) => s,
+      async deliver(event, hooks) {
+        const inv = hooks.startInvocation(`${event.id}#${event.attempt}`);
+        const host = `DO:${event.id.toUpperCase()}/${event.id}`;
+        const outcome = await runInvocation(hooks, inv, () =>
+          hooks.effect(
+            {
+              invocation: inv.id,
+              target: `DO:${event.id.toUpperCase()}`,
+              op: "call",
+              args: null,
+              allowed: [],
+              hostsEffects: true,
+            },
+            async () => {
+              if (event.id === "y") for (let i = 0; i < 3; i++) await realTick();
+              return hooks.hostedCode(host, async () => {
+                order.push(`${event.id} entered`);
+                if (event.id === "x") await sleep(10);
+                order.push(`${event.id} done`);
+                return event.id;
+              });
+            },
+            none,
+            { host },
+          ),
+        );
+        return { status: outcome.status, followUps: [] };
+      },
+    };
+    const run = new Run({ chooser: replayChooser({ seed: 1, faults: [] }), bounds: bounds(2) });
+    await runOnce(spec(2), platform, run);
+    expect(run.unsupportedReasons).toEqual([]);
+    expect(order.indexOf("y entered")).toBeLessThan(order.indexOf("x done"));
+  });
+
   test("the caller's own timers stay the caller's: they do not fire while its call is in flight", async () => {
     const run = new Run({ chooser: replayChooser({ seed: 1, faults: [] }), bounds: bounds(1) });
     run.install();
