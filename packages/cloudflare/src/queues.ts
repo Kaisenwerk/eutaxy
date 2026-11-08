@@ -15,7 +15,7 @@ import { drainBackground, executionContext, type RunningWorker } from "./backgro
 import type { QueueDrive } from "./scenario.ts";
 
 /** Deep-copy JSON data so a handler that mutates its message cannot leak into other runs. */
-function cloneJson(value: JsonValue): JsonValue {
+export function cloneJson(value: JsonValue): JsonValue {
   return JSON.parse(JSON.stringify(value)) as JsonValue;
 }
 

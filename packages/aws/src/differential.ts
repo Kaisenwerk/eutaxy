@@ -2,20 +2,12 @@
  * Differential check for the AWS platform: the proxied run against a raw run
  * in which the handler is called directly, with SDK calls only redirected to
  * the local clients (no recording, no faults) and the queue model applied by
- * hand. Per-attempt outcomes and the final tables must agree.
+ * the engine's raw loop. Per-attempt outcomes and the final tables must agree.
  */
 
 import type { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { type EventRef, type JsonValue, redelivery, type ScenarioSpec } from "@eutaxy/core";
-import {
-  compareSides,
-  DifferentialStuck,
-  effectLatencyMs,
-  installScriptedFetch,
-  patchGlobals,
-  proxiedSide,
-  settleOn,
-} from "@eutaxy/engine";
+import type { JsonValue, ScenarioSpec } from "@eutaxy/core";
+import { compareSides, effectLatencyMs, proxiedSide, rawRun } from "@eutaxy/engine";
 import { resetTables, scenarioTables, snapshotTables } from "./dynamodb.ts";
 import { batchFailed, type SqsBatchResponse, sqsInvocation } from "./lambda.ts";
 import { type AwsPlatformOptions, createAwsPlatform } from "./platform.ts";
@@ -70,77 +62,48 @@ async function rawSide(spec: ScenarioSpec, options: AwsPlatformOptions): Promise
   const drive = spec.drive as SqsDrive;
   const dynamo = options.clients["DynamoDBClient"] as DynamoDBClient | undefined;
   if (dynamo) await resetTables(dynamo, scenarioTables(spec));
-  const patched = patchGlobals(0);
-  const reasons: string[] = [];
-  const restoreFetch = installScriptedFetch(
-    spec.externals,
-    null,
-    (r) => reasons.push(r),
-    () => patched.clock.advance(effectLatencyMs),
-  );
-  const io = { n: 0 };
-  const restoreSdk = installSdkProxy({
-    clients: options.clients,
-    hooks: null,
-    invocation: () => "",
-    unsupported: (r) => reasons.push(r),
-    afterCall: () => patched.clock.advance(effectLatencyMs),
-    // Real SDK I/O: count it as in flight and give the SDK real timers, as the proxied side does.
-    wrapCall: async (perform) => {
-      io.n++;
-      try {
-        return await patched.libraryIo(perform);
-      } finally {
-        io.n--;
-      }
-    },
-  });
-  const attempts: AttemptRecord[] = [];
-  try {
-    const pending: EventRef[] = drive.messages.map((m) => ({ id: m.id, attempt: 1, data: m.body }));
-    while (pending.length > 0) {
-      const event = pending.shift() as EventRef;
-      const now = Date.now();
-      const { record, context } = sqsInvocation(
-        event,
-        {
-          queue: drive.queue,
-          region: options.region ?? "local",
-          functionName: options.functionName ?? "handler",
+  const attempts = await rawRun<AttemptRecord>(spec, {
+    events: drive.messages.map((m) => ({ id: m.id, attempt: 1, data: m.body })),
+    limit: drive.maxReceiveCount - 1,
+    install: (ctx) => ({
+      restore: installSdkProxy({
+        clients: options.clients,
+        hooks: null,
+        invocation: () => "",
+        unsupported: ctx.unsupported,
+        afterCall: () => ctx.clock.advance(effectLatencyMs),
+        // Real SDK I/O: count it as in flight and give the SDK real timers, as the proxied side does.
+        wrapCall: async (perform) => {
+          ctx.io.n++;
+          try {
+            return await ctx.libraryIo(perform);
+          } finally {
+            ctx.io.n--;
+          }
         },
-        now,
-      );
-      let status: "completed" | "errored";
-      let response: SqsBatchResponse | undefined;
-      try {
-        response = (await settleOn(
-          Promise.resolve().then(() => options.handler({ Records: [record] }, context)),
+      }),
+      attempt: async (event) => {
+        const { record, context } = sqsInvocation(
+          event,
           {
-            clock: patched.clock,
-            inFlight: () => io.n,
-            crashed: () => false,
-            stuck: () => {
-              throw new DifferentialStuck();
-            },
+            queue: drive.queue,
+            region: options.region ?? "local",
+            functionName: options.functionName ?? "handler",
           },
-        )) as SqsBatchResponse | undefined;
-        status = "completed";
-      } catch (err) {
-        if (err instanceof DifferentialStuck) throw err;
-        status = "errored";
-      }
-      const failed = batchFailed(response, event.id, [event.id]);
-      const deleted = status === "completed" && !failed;
-      attempts.push({ event: event.id, attempt: event.attempt, status, deleted });
-      const next = deleted ? null : redelivery(event, drive.maxReceiveCount - 1, spec.bounds);
-      if (next) pending.push(next);
-    }
-  } finally {
-    restoreSdk();
-    restoreFetch();
-    patched.restore();
-  }
-  if (reasons.length > 0) throw new Error(`raw side: ${reasons.join("; ")}`);
+          Date.now(),
+        );
+        const ran = await ctx.call(() => options.handler({ Records: [record] }, context));
+        const response =
+          ran.status === "completed" ? (ran.value as SqsBatchResponse | undefined) : undefined;
+        const failed = batchFailed(response, event.id, [event.id]);
+        const deleted = ran.status === "completed" && !failed;
+        return {
+          record: { event: event.id, attempt: event.attempt, status: ran.status, deleted },
+          handled: deleted,
+        };
+      },
+    }),
+  });
   const tables = dynamo ? await snapshotTables(dynamo, scenarioTables(spec)) : {};
   return { attempts, tables };
 }

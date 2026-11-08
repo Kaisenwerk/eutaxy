@@ -1,9 +1,9 @@
 /**
- * The delivery conventions: the invocation name, and the one redelivery rule held to the four forms the platforms wrote
- * before it existed, over every small combination of attempt and limits.
+ * The delivery conventions: the invocation name, which pending event goes next, and the one redelivery rule held to the
+ * four forms the platforms wrote before it existed, over every small combination of attempt and limits.
  */
 import { describe, expect, test } from "vitest";
-import { invocationOf, redelivery } from "./delivery.ts";
+import { earliestEvent, invocationOf, redelivery } from "./delivery.ts";
 import type { EventRef } from "./platform.ts";
 
 const event = (attempt: number): EventRef => ({
@@ -18,6 +18,22 @@ describe("invocationOf", () => {
   test("names the attempt by its event and attempt number", () => {
     expect(invocationOf(event(1))).toBe("m1#1");
     expect(invocationOf(event(3))).toBe("m1#3");
+  });
+});
+
+describe("earliestEvent", () => {
+  const at = (id: string, when?: number): EventRef => ({
+    id,
+    attempt: 1,
+    data: null,
+    ...(when === undefined ? {} : { at: when }),
+  });
+
+  test("picks the earliest due event, the first queued among equals, and an undated one as due now", () => {
+    expect(earliestEvent([at("a", 5), at("b", 3), at("c", 3)])).toBe(1);
+    expect(earliestEvent([at("a", 5), at("b")])).toBe(1);
+    expect(earliestEvent([at("a"), at("b")])).toBe(0);
+    expect(earliestEvent([at("a", 7)])).toBe(0);
   });
 });
 

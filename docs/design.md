@@ -1611,9 +1611,11 @@ word comes from anchors it does not control.
   handler called directly on the raw bindings; the per-attempt decisions
   and the final D1 tables and R2 objects must agree. Any divergence is a bug in Eutaxy's
   proxies or platform model. The raw side shares Eutaxy's reading of the
-  queue semantics but none of the proxy code. The proxied side and the
-  comparison are platform-neutral and live in `engine`; each platform
-  writes only its raw side and what an attempt's record holds.
+  queue semantics but none of the proxy code. The proxied side, the raw
+  side's loop (the same virtual globals and scripted externals, the same
+  pick of the next event, the same redelivery rule) and the comparison are
+  platform-neutral and live in `engine`; each platform writes only how one
+  raw attempt calls its handler and what an attempt's record holds.
 - **Lean kernel**: proofs that pass through a prover adapter are checked by
   Lean, not by Eutaxy, so they are independent of Eutaxy's own code.
 

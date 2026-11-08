@@ -19,7 +19,17 @@ export {
   virtualEpoch,
 } from "./clock.ts";
 export { decide, hostInvocation, note, type Outcome, runInvocation } from "./deliver.ts";
-export { type ComparedSide, compareSides, DifferentialStuck, proxiedSide } from "./differential.ts";
+export {
+  type ComparedSide,
+  compareSides,
+  DifferentialStuck,
+  proxiedSide,
+  type RawAttempt,
+  type RawContext,
+  type RawOutcome,
+  type RawSide,
+  rawRun,
+} from "./differential.ts";
 export { type ExploreOptions, explore, replay, replayRun, runOnce } from "./explore.ts";
 export {
   createScriptedFetch,

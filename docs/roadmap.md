@@ -163,14 +163,14 @@ it checks waits on them:
   it, is never explored. The model measures step timeouts and lets the
   timed-out attempt run on as a concurrent turn.
 
-The phase opens by paying for the duplication these features would
-otherwise add to: the Cloudflare delivery paths carry one contract
-written several times, the differential runner's raw side is written
-once per platform, and the wrangler config is read in three places that
-already disagree (a class renamed in a later migration is drafted as
-non-SQLite while `check` treats it as SQLite: a bug, fixed first with a
-test). Each becomes one copy before the new turns are added, with the
-byte-identical traces as the oracle that nothing else changed. Gate: an
+The phase opened by paying for the duplication these features would
+otherwise have added to: the Cloudflare delivery paths carried one
+contract written several times, the differential runner's raw side was
+written once per platform, and the wrangler config was read in three
+places that disagreed (a class renamed in a later migration was drafted
+as non-SQLite while `check` treated it as SQLite: a bug, fixed first with
+a test). Each is one copy now, with the byte-identical traces as the
+oracle that nothing else changed, before the new turns are added. Gate: an
 object's unawaited work and a timed-out step attempt each run as turns of
 their own; a planted bug in each is caught (a lost update in work started
 after the answer, a late attempt racing its recovery), each has a

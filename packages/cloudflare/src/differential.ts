@@ -4,7 +4,8 @@
  * HTTP caller's retry policy) applied on the raw side itself. Any difference in the per-attempt decisions or in
  * the final D1 and R2 state is a bug in the proxies or the platform model, not in
  * the Worker. The raw side shares Eutaxy's *reading* of Cloudflare's queue
- * semantics (core's redelivery rule among it); what it does not share is any proxy code.
+ * semantics (core's redelivery rule among it) and the engine's raw loop; what
+ * it does not share is any proxy code.
  */
 
 import {
@@ -12,29 +13,40 @@ import {
   getPath,
   invocationOf,
   type JsonValue,
-  redelivery,
   type ScenarioSpec,
   toJson,
 } from "@eutaxy/core";
 import {
-  CrashSignal,
   compareSides,
-  DifferentialStuck,
   effectLatencyMs,
-  installScriptedFetch,
-  patchGlobals,
   proxiedSide,
-  settleOn,
+  type RawAttempt,
+  type RawContext,
+  rawRun,
   type VirtualClock,
 } from "@eutaxy/engine";
 import { executionContext } from "./background.ts";
 import { type Binding, d1Binding, ownedSetups, r2Binding } from "./bindings.ts";
 import { isD1 } from "./d1.ts";
 import { requestFor } from "./http.ts";
-import { type CloudflarePlatformOptions, createCloudflarePlatform } from "./platform.ts";
+import {
+  type CloudflarePlatformOptions,
+  createCloudflarePlatform,
+  type WorkerHandler,
+} from "./platform.ts";
+import { cloneJson } from "./queues.ts";
 import { isR2 } from "./r2.ts";
 import { callMethod, describeError, entrypointClass } from "./rpc.ts";
-import { type Drive, driveEvents, type HttpRequestSpec, type RpcCallSpec } from "./scenario.ts";
+import {
+  type CronDrive,
+  type Drive,
+  driveEvents,
+  type HttpDrive,
+  type HttpRequestSpec,
+  type QueueDrive,
+  type RpcCallSpec,
+  type RpcDrive,
+} from "./scenario.ts";
 import type { TickData } from "./scheduled.ts";
 
 /** A type, not an interface, so it is JSON data the comparison takes as it is. */
@@ -174,10 +186,11 @@ function storedBindings(options: CloudflarePlatformOptions): readonly Binding[] 
 async function snapshotAll(
   spec: ScenarioSpec,
   options: CloudflarePlatformOptions,
+  stored: readonly Binding[],
 ): Promise<Side["state"]> {
   const env = options.env as Record<string, unknown>;
   const out: Record<string, { readonly [table: string]: readonly JsonValue[] }> = {};
-  for (const [binding, setup] of ownedSetups(spec.setup, storedBindings(options))) {
+  for (const [binding, setup] of ownedSetups(spec.setup, stored)) {
     // A D1 or R2 snapshot reports nothing; if one ever did, the comparison could not stand.
     const tables = await binding.snapshot(setup, env[setup.binding], (reason) => {
       throw new Error(`snapshot of ${setup.binding}: ${reason}`);
@@ -191,6 +204,7 @@ async function snapshotAll(
 async function eutaxySide(
   spec: ScenarioSpec,
   options: CloudflarePlatformOptions,
+  stored: readonly Binding[],
 ): Promise<Side & { readonly unsupported: readonly string[] }> {
   const { attempts, unsupported } = await proxiedSide(
     spec,
@@ -222,7 +236,7 @@ async function eutaxySide(
       };
     },
   );
-  return { attempts, state: await snapshotAll(spec, options), unsupported };
+  return { attempts, state: await snapshotAll(spec, options, stored), unsupported };
 }
 
 /** Each binding's tables under `<binding>.<table>`, as the comparison names them. */
@@ -233,227 +247,207 @@ function flatten(state: Side["state"]): { readonly [name: string]: readonly Json
   return out;
 }
 
-/** The next event as the engine picks it: the earliest due, the first inserted among equals. */
-function takeEarliest(pending: EventRef[]): EventRef {
-  let best = 0;
-  for (let i = 1; i < pending.length; i++)
-    if ((pending[i]?.at ?? 0) < (pending[best]?.at ?? 0)) best = i;
-  return pending.splice(best, 1)[0] as EventRef;
-}
-
-/** The raw side: the handler called directly with the real bindings and plain message or Request objects. */
-async function rawSide(spec: ScenarioSpec, options: CloudflarePlatformOptions): Promise<Side> {
-  const env = options.env as Record<string, unknown>;
-  const drive = spec.drive as Drive;
-  const maxRetries = options.maxRetries ?? 3;
-  // The same resets as the proxied side's, which ran first on the same env and so already holds.
-  for (const [binding, setup] of ownedSetups(spec.setup, storedBindings(options)))
-    await binding.reset(setup, env[setup.binding]);
-  const attempts: AttemptRecord[] = [];
-  const pending: EventRef[] = [...driveEvents(drive)];
-  // The same virtual globals as the proxied side, from the same seed, so Date.now and randomness agree,
-  // and the same scripted externals, without recording.
-  const patched = patchGlobals(0);
-  const unsupported: string[] = [];
-  const restoreFetch = installScriptedFetch(
-    spec.externals,
-    null,
-    (r) => unsupported.push(r),
-    () => patched.clock.advance(effectLatencyMs), // the proxied side advances per effect; match it
-  );
-  const io = { n: 0 };
+/** The real bindings with each call counted as I/O in flight and the clock advanced as the proxies do. */
+function countingEnv(env: Record<string, unknown>, ctx: RawContext): Record<string, unknown> {
   const counting = new Map<string, D1Database | R2Bucket>();
-  const countedEnv = new Proxy(env, {
+  return new Proxy(env, {
     get(target, prop, receiver) {
       const value = Reflect.get(target, prop, receiver) as unknown;
       if (typeof prop !== "string" || !(isD1(value) || isR2(value))) return value;
       let c = counting.get(prop);
       if (!c) {
         c = isD1(value)
-          ? countingD1(value, io, patched.clock)
-          : countingR2(value, io, patched.clock);
+          ? countingD1(value, ctx.io, ctx.clock)
+          : countingR2(value, ctx.io, ctx.clock);
         counting.set(prop, c);
       }
       return c;
     },
   });
-  const settle = <T>(p: Promise<T>): Promise<T> =>
-    settleOn(p, {
-      clock: patched.clock,
-      inFlight: () => io.n,
-      crashed: () => false,
-      stuck: () => {
-        throw new DifferentialStuck();
+}
+
+/** One raw attempt of a drive's event: the handler called directly with the real bindings and a plain message or Request object. */
+type RawAttemptOf = (event: EventRef) => Promise<RawAttempt<AttemptRecord>>;
+
+function rawCall(
+  ctx: RawContext,
+  drive: RpcDrive,
+  options: CloudflarePlatformOptions,
+  env: object,
+): RawAttemptOf {
+  const cls = entrypointClass(options.handler, options.exports, drive.entrypoint);
+  if (typeof cls !== "function") throw new Error("the Worker has no WorkerEntrypoint class");
+  return async (event) => {
+    const call = event.data as unknown as RpcCallSpec;
+    const background: Promise<unknown>[] = [];
+    const ran = await ctx.call(async () =>
+      toJson(await callMethod(cls, call, executionContext(background), env)),
+    );
+    await ctx.settle(Promise.all(background));
+    const result: JsonValue =
+      ran.status === "completed"
+        ? { ok: true, value: ran.value }
+        : { ok: false, error: describeError(ran.error) };
+    return {
+      record: {
+        event: event.id,
+        attempt: event.attempt,
+        status: ran.status,
+        decision: null,
+        result,
       },
+      handled: ran.status === "completed",
+    };
+  };
+}
+
+function rawTick(
+  ctx: RawContext,
+  _drive: CronDrive,
+  handlers: WorkerHandler,
+  env: object,
+): RawAttemptOf {
+  const handler = handlers.scheduled;
+  if (!handler) throw new Error("the Worker has no scheduled() handler");
+  return async (event) => {
+    const tick = event.data as unknown as TickData;
+    const background: Promise<unknown>[] = [];
+    const failures: unknown[] = [];
+    let noRetry = false;
+    const controller: ScheduledController = {
+      scheduledTime: tick.scheduledTime,
+      cron: tick.cron,
+      noRetry: () => {
+        noRetry = true;
+      },
+    };
+    const ran = await ctx.call(() =>
+      handler.call(handlers, controller, env, executionContext(background, failures)),
+    );
+    await ctx.settle(Promise.all(background));
+    // A failed waitUntil is the invocation's status, as for the proxied side.
+    const status = ran.status === "completed" && failures.length === 0 ? "completed" : "errored";
+    return {
+      record: {
+        event: event.id,
+        attempt: event.attempt,
+        status,
+        decision: noRetry ? "no_retry" : null,
+      },
+      handled: status === "completed" || noRetry,
+    };
+  };
+}
+
+function rawRequest(
+  ctx: RawContext,
+  drive: HttpDrive,
+  handlers: WorkerHandler,
+  env: object,
+): RawAttemptOf {
+  const handler = handlers.fetch;
+  if (!handler) throw new Error("the Worker has no fetch() handler");
+  return async (event) => {
+    const req = event.data as unknown as HttpRequestSpec;
+    const background: Promise<unknown>[] = [];
+    const ran = await ctx.call(async () => {
+      const r = await handler.call(handlers, requestFor(req), env, executionContext(background));
+      await r.clone().text();
+      return r.status;
     });
-  try {
-    // The queue and http drives need the handler object; an entrypoint class has neither handler.
-    const handlers = typeof options.handler === "function" ? {} : options.handler;
-    if (drive.kind === "websocket")
-      throw new Error(
-        "runDifferential has no raw side for a websocket drive: its messages are delivered inside the object",
-      );
-    if (drive.kind === "rpc") {
-      const cls = entrypointClass(options.handler, options.exports, drive.entrypoint);
-      if (typeof cls !== "function") throw new Error("the Worker has no WorkerEntrypoint class");
-      while (pending.length > 0) {
-        const event = takeEarliest(pending);
-        const call = event.data as unknown as RpcCallSpec;
-        const background: Promise<unknown>[] = [];
-        let status: "completed" | "errored";
-        let result: JsonValue;
-        try {
-          const value = await settle(
-            Promise.resolve().then(() =>
-              callMethod(cls, call, executionContext(background), countedEnv),
-            ),
-          );
-          result = { ok: true, value: toJson(value) };
-          status = "completed";
-        } catch (err) {
-          if (err instanceof CrashSignal || err instanceof DifferentialStuck) throw err;
-          result = { ok: false, error: describeError(err) };
-          status = "errored";
-        }
-        await settle(Promise.all(background));
-        attempts.push({ event: event.id, attempt: event.attempt, status, decision: null, result });
-        const next = status === "completed" ? null : redelivery(event, drive.retries, spec.bounds);
-        if (next) pending.push(next);
+    await ctx.settle(Promise.all(background));
+    const response = ran.status === "completed" ? ran.value : 500;
+    const accepted = drive.retryOn === "5xx" ? response < 500 : response >= 200 && response < 300;
+    return {
+      record: {
+        event: event.id,
+        attempt: event.attempt,
+        status: ran.status,
+        decision: null,
+        response,
+      },
+      handled: accepted,
+    };
+  };
+}
+
+function rawMessage(
+  ctx: RawContext,
+  drive: QueueDrive,
+  handlers: WorkerHandler,
+  env: object,
+): RawAttemptOf {
+  const handler = handlers.queue;
+  if (!handler) throw new Error("the Worker has no queue() handler");
+  return async (event) => {
+    let decision: "ack" | "retry" | null = null;
+    const background: Promise<unknown>[] = [];
+    const message: Message<unknown> = {
+      id: event.id,
+      timestamp: new Date(),
+      body: cloneJson(event.data),
+      attempts: event.attempt,
+      ack: () => {
+        decision ??= "ack";
+      },
+      retry: () => {
+        decision ??= "retry";
+      },
+    };
+    const batch: MessageBatch<unknown> = {
+      queue: drive.queue,
+      messages: [message],
+      metadata: { metrics: { backlogCount: 0, backlogBytes: 0 } },
+      ackAll: () => message.ack(),
+      retryAll: () => message.retry(),
+    };
+    const ran = await ctx.call(() =>
+      handler.call(handlers, batch, env, executionContext(background)),
+    );
+    if (ran.status === "completed") decision ??= "ack";
+    await ctx.settle(Promise.all(background));
+    return {
+      record: { event: event.id, attempt: event.attempt, status: ran.status, decision },
+      handled: decision === "ack",
+    };
+  };
+}
+
+/** The raw side: the engine's raw loop, each attempt calling the handler directly with the real bindings. */
+async function rawSide(
+  spec: ScenarioSpec,
+  options: CloudflarePlatformOptions,
+  stored: readonly Binding[],
+): Promise<Side> {
+  const env = options.env as Record<string, unknown>;
+  const drive = spec.drive as Drive;
+  if (drive.kind === "websocket")
+    throw new Error(
+      "runDifferential has no raw side for a websocket drive: its messages are delivered inside the object",
+    );
+  // The same resets as the proxied side's, which ran first on the same env and so already holds.
+  for (const [binding, setup] of ownedSetups(spec.setup, stored))
+    await binding.reset(setup, env[setup.binding]);
+  // The queue, http and cron drives need the handler object; an entrypoint class has none of the handlers.
+  const handlers: WorkerHandler = typeof options.handler === "function" ? {} : options.handler;
+  const attempts = await rawRun<AttemptRecord>(spec, {
+    events: driveEvents(drive),
+    limit: drive.kind === "queue" ? (options.maxRetries ?? 3) : drive.retries,
+    install: (ctx) => {
+      const counted = countingEnv(env, ctx);
+      switch (drive.kind) {
+        case "rpc":
+          return { attempt: rawCall(ctx, drive, options, counted) };
+        case "cron":
+          return { attempt: rawTick(ctx, drive, handlers, counted) };
+        case "http":
+          return { attempt: rawRequest(ctx, drive, handlers, counted) };
+        case "queue":
+          return { attempt: rawMessage(ctx, drive, handlers, counted) };
       }
-    } else if (drive.kind === "cron") {
-      const handler = handlers.scheduled;
-      if (!handler) throw new Error("the Worker has no scheduled() handler");
-      while (pending.length > 0) {
-        const event = takeEarliest(pending);
-        const tick = event.data as unknown as TickData;
-        // The proxied side's clock moved to the tick; so does this one.
-        if (event.at !== undefined && event.at > patched.clock.now())
-          patched.clock.advance(event.at - patched.clock.now());
-        const background: Promise<unknown>[] = [];
-        const failures: unknown[] = [];
-        let noRetry = false;
-        const controller: ScheduledController = {
-          scheduledTime: tick.scheduledTime,
-          cron: tick.cron,
-          noRetry: () => {
-            noRetry = true;
-          },
-        };
-        let status: "completed" | "errored";
-        try {
-          await settle(
-            Promise.resolve().then(() =>
-              handler.call(
-                handlers,
-                controller,
-                countedEnv,
-                executionContext(background, failures),
-              ),
-            ),
-          );
-          status = "completed";
-        } catch (err) {
-          if (err instanceof CrashSignal || err instanceof DifferentialStuck) throw err;
-          status = "errored";
-        }
-        await settle(Promise.all(background));
-        // A failed waitUntil is the invocation's status, as for the proxied side.
-        if (status === "completed" && failures.length > 0) status = "errored";
-        attempts.push({
-          event: event.id,
-          attempt: event.attempt,
-          status,
-          decision: noRetry ? "no_retry" : null,
-        });
-        const next =
-          status === "completed" || noRetry ? null : redelivery(event, drive.retries, spec.bounds);
-        if (next) pending.push(next);
-      }
-    } else if (drive.kind === "http") {
-      const handler = handlers.fetch;
-      if (!handler) throw new Error("the Worker has no fetch() handler");
-      while (pending.length > 0) {
-        const event = takeEarliest(pending);
-        const req = event.data as unknown as HttpRequestSpec;
-        const background: Promise<unknown>[] = [];
-        let status: "completed" | "errored";
-        let response = 500;
-        try {
-          const r = await settle(
-            Promise.resolve().then(() =>
-              handler.call(handlers, requestFor(req), countedEnv, executionContext(background)),
-            ),
-          );
-          await settle(r.clone().text());
-          response = r.status;
-          status = "completed";
-        } catch (err) {
-          if (err instanceof CrashSignal || err instanceof DifferentialStuck) throw err;
-          status = "errored";
-        }
-        await settle(Promise.all(background));
-        attempts.push({
-          event: event.id,
-          attempt: event.attempt,
-          status,
-          decision: null,
-          response,
-        });
-        const accepted =
-          drive.retryOn === "5xx" ? response < 500 : response >= 200 && response < 300;
-        const next = accepted ? null : redelivery(event, drive.retries, spec.bounds);
-        if (next) pending.push(next);
-      }
-    } else {
-      const handler = handlers.queue;
-      if (!handler) throw new Error("the Worker has no queue() handler");
-      while (pending.length > 0) {
-        const event = takeEarliest(pending);
-        let decision: "ack" | "retry" | null = null;
-        const background: Promise<unknown>[] = [];
-        const message: Message<unknown> = {
-          id: event.id,
-          timestamp: new Date(),
-          body: JSON.parse(JSON.stringify(event.data)) as JsonValue,
-          attempts: event.attempt,
-          ack: () => {
-            decision ??= "ack";
-          },
-          retry: () => {
-            decision ??= "retry";
-          },
-        };
-        const batch: MessageBatch<unknown> = {
-          queue: drive.queue,
-          messages: [message],
-          metadata: { metrics: { backlogCount: 0, backlogBytes: 0 } },
-          ackAll: () => message.ack(),
-          retryAll: () => message.retry(),
-        };
-        const ctx = executionContext(background);
-        let status: "completed" | "errored";
-        try {
-          await settle(
-            Promise.resolve().then(() => handler.call(handlers, batch, countedEnv, ctx)),
-          );
-          status = "completed";
-        } catch (err) {
-          if (err instanceof CrashSignal || err instanceof DifferentialStuck) throw err;
-          status = "errored";
-        }
-        if (status === "completed") decision ??= "ack";
-        await settle(Promise.all(background));
-        attempts.push({ event: event.id, attempt: event.attempt, status, decision });
-        const next = decision === "ack" ? null : redelivery(event, maxRetries, spec.bounds);
-        if (next) pending.push(next);
-      }
-    }
-  } finally {
-    restoreFetch();
-    patched.restore();
-  }
-  if (unsupported.length > 0) throw new DifferentialStuck(`raw side: ${unsupported.join("; ")}`);
-  return { attempts, state: await snapshotAll(spec, options) };
+    },
+  });
+  return { attempts, state: await snapshotAll(spec, options, stored) };
 }
 
 /** Run both sides and compare. The Eutaxy side runs first; both start from the schema. */
@@ -472,8 +466,9 @@ export async function runDifferential(
     throw new Error(
       "runDifferential keeps to the binding proxies: a scenario with a callee() has no raw side; script the service for the differential entry",
     );
-  const { unsupported, ...eutaxy } = await eutaxySide(spec, options);
-  const raw = await rawSide(spec, options);
+  const stored = storedBindings(options);
+  const { unsupported, ...eutaxy } = await eutaxySide(spec, options, stored);
+  const raw = await rawSide(spec, options, stored);
   const differences = compareSides(
     { attempts: eutaxy.attempts, state: flatten(eutaxy.state) },
     { attempts: raw.attempts, state: flatten(raw.state) },

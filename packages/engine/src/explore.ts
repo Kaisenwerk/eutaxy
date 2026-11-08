@@ -13,6 +13,7 @@ import {
   type EffectLog,
   type EffectRecord,
   type EventRef,
+  earliestEvent,
   nextU32,
   type Platform,
   type PrngState,
@@ -87,14 +88,6 @@ function concurrencyAssumption(bounds: Bounds): string {
   return `up to ${bounds.maxConcurrentInvocations} invocations in flight, interleaved only at asynchronous effects (proxied bindings, fetch): code between two such effects runs without interruption (except continuations of a promise it settles for another invocation, which run then and are still attributed to their own invocation), Web Crypto calls are waited for like I/O, other non-effect awaits (body reads included) settle within one turn of the event loop, synchronous effects are not interleaving points, an effect made by code another effect hosts (an object calling out during a call) is a turn of its own unless that code cannot be interrupted (an object inside blockConcurrencyWhile), when it runs within the hosting effect's turn, the next turn is a seeded pick among parked invocations, whether a new event starts while a slot is free is a seeded pick too, and timers fire only when no invocation can take a turn`;
 }
 
-/** The pending event to deliver next: the earliest by `at`, then the first queued. */
-function nextEvent(pending: readonly EventRef[]): number {
-  let best = 0;
-  for (let i = 1; i < pending.length; i++)
-    if ((pending[i]?.at ?? 0) < (pending[best]?.at ?? 0)) best = i;
-  return best;
-}
-
 /** The first record a replay recorded differently from the run, or how their lengths differ; null when the logs match. */
 function whatDiffered(run: EffectLog, replay: EffectLog): string | null {
   const show = (e: EffectRecord): string => {
@@ -135,7 +128,7 @@ function explorationAssumption(options: ExploreOptions): readonly string[] {
 async function deliverInOrder(spec: ScenarioSpec, platform: Platform, run: Run): Promise<void> {
   const pending: EventRef[] = [...platform.initialEvents(spec)];
   while (pending.length > 0) {
-    const [event] = pending.splice(nextEvent(pending), 1) as [EventRef];
+    const [event] = pending.splice(earliestEvent(pending), 1) as [EventRef];
     if (event.at !== undefined) await run.advanceTo(event.at);
     const result = await platform.deliver(event, run, spec);
     pending.push(...run.takeQueued(), ...result.followUps);
@@ -173,7 +166,7 @@ async function deliverConcurrently(
     pending.push(...run.takeQueued());
     if (pending.length > queuedBefore) run.queuedEvents();
     if (active.length === 0 && pending.length === 0) return;
-    const next = pending.length > 0 ? nextEvent(pending) : -1;
+    const next = pending.length > 0 ? earliestEvent(pending) : -1;
     const due = next >= 0 && (pending[next]?.at ?? 0) <= run.now();
     const canStart = active.length < spec.bounds.maxConcurrentInvocations && due;
     const turn = run.takeTurn(canStart);

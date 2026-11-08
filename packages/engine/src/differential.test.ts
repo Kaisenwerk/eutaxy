@@ -1,6 +1,7 @@
-import type { JsonValue, ScenarioSpec } from "@eutaxy/core";
+import type { EventRef, JsonValue, ScenarioSpec } from "@eutaxy/core";
 import { describe, expect, test } from "vitest";
-import { compareSides, proxiedSide } from "./differential.ts";
+import { virtualEpoch } from "./clock.ts";
+import { compareSides, DifferentialStuck, proxiedSide, rawRun } from "./differential.ts";
 import { buggyConsumer, createFakePlatform } from "./fake-platform.ts";
 
 const spec: ScenarioSpec = {
@@ -64,6 +65,92 @@ describe("proxiedSide", () => {
     const side = await proxiedSide(spec, platform, (event) => event.id);
     expect(side.attempts).toEqual(["m1", "m2"]);
     expect(platform.resets).toBe(1);
+  });
+});
+
+describe("rawRun", () => {
+  const event = (id: string, at?: number): EventRef => ({
+    id,
+    attempt: 1,
+    data: null,
+    ...(at === undefined ? {} : { at }),
+  });
+
+  test("delivers the earliest due event first, time moved to it, and an unhandled one again while the limits leave room", async () => {
+    const realNow = Date.now;
+    const seen: string[] = [];
+    const times: number[] = [];
+    let restoredUnderPatchedGlobals = false;
+    const attempts = await rawRun(spec, {
+      events: [event("late", virtualEpoch + 5_000), event("m1")],
+      limit: 1,
+      install: (ctx) => ({
+        attempt: async (e) => {
+          seen.push(`${e.id}#${e.attempt}`);
+          times.push(Date.now());
+          const ran = await ctx.call(async () => {
+            if (e.id === "m1") throw new Error("not this time");
+            return e.id;
+          });
+          return {
+            record: `${e.id}#${e.attempt}:${ran.status}`,
+            handled: ran.status === "completed",
+          };
+        },
+        restore: () => {
+          restoredUnderPatchedGlobals = Date.now !== realNow;
+        },
+      }),
+    });
+    // m1 twice (its limit is one redelivery; the spec allows two), then the tick once the clock reached it.
+    expect(attempts).toEqual(["m1#1:errored", "m1#2:errored", "late#1:completed"]);
+    expect(seen).toEqual(["m1#1", "m1#2", "late#1"]);
+    expect(times).toEqual([virtualEpoch, virtualEpoch, virtualEpoch + 5_000]);
+    expect(restoredUnderPatchedGlobals).toBe(true);
+    expect(Date.now).toBe(realNow);
+  });
+
+  test("a platform that cannot install its raw side leaves the globals as they were", async () => {
+    const realNow = Date.now;
+    const realFetch = globalThis.fetch;
+    await expect(
+      rawRun(spec, {
+        events: [event("m1")],
+        limit: 0,
+        install: () => {
+          throw new Error("the Worker has no fetch() handler");
+        },
+      }),
+    ).rejects.toThrow("the Worker has no fetch() handler");
+    expect(Date.now).toBe(realNow);
+    expect(globalThis.fetch).toBe(realFetch);
+  });
+
+  test("a handler waiting on nothing ends the comparison, as does anything the raw side could not control", async () => {
+    await expect(
+      rawRun(spec, {
+        events: [event("m1")],
+        limit: 0,
+        install: (ctx) => ({
+          attempt: async () => {
+            await ctx.call(() => new Promise<never>(() => {}));
+            return { record: null, handled: true };
+          },
+        }),
+      }),
+    ).rejects.toBeInstanceOf(DifferentialStuck);
+    await expect(
+      rawRun(spec, {
+        events: [event("m1")],
+        limit: 0,
+        install: (ctx) => ({
+          attempt: async (e) => {
+            ctx.unsupported("binding KV is not proxied");
+            return { record: e.id, handled: true };
+          },
+        }),
+      }),
+    ).rejects.toThrow("raw side: binding KV is not proxied");
   });
 });
 
