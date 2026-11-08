@@ -1107,7 +1107,10 @@ polls for the moves of a Durable Object's code, which cannot wake it (see
 Durable Objects above), and gives code waiting on something unseen one
 such turn before calling it idle. One turn per decision is the floor. In
 workerd a zero timer is the only way to the event loop (streams, bodies,
-message ports, crypto and the cache all resolve without one) and costs
+message ports, crypto and the cache all resolve without one, except that
+a body read inside a Durable Object takes a turn or more, so the scripted
+`fetch` reads a text body as given and its reply answers `text()` and
+`json()` from the known body within a microtask) and costs
 about a millisecond, so a concurrent run there costs about that per turn
 beyond its I/O; a bounded run of microtask hops cannot stand in for the
 turn, since a strand of the invocation midway through plain awaits would

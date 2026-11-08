@@ -79,11 +79,28 @@ export function replyOf(r: ScriptedResponse | null): Reply {
   return { status: r.status, headers, body };
 }
 
+/**
+ * The scripted reply as a `Response`. Its body is known, so `text()` and
+ * `json()` answer from it within a microtask: the model assumes body reads
+ * settle within one turn of the event loop, and a stream read inside a
+ * Durable Object can take a turn or more, during which the object's code
+ * looks idle to the run.
+ */
 export function toResponse(reply: Reply): Response {
-  return new Response(reply.body === "" ? null : reply.body, {
+  const response = new Response(reply.body === "" ? null : reply.body, {
     status: reply.status,
     headers: reply.headers,
   });
+  const text = reply.body;
+  Object.defineProperties(response, {
+    text: { value: () => Promise.resolve(text), configurable: true, writable: true },
+    json: {
+      value: () => Promise.resolve().then(() => JSON.parse(text) as unknown),
+      configurable: true,
+      writable: true,
+    },
+  });
+  return response;
 }
 
 /** A request or reply body as effect-log data: JSON when it parses, the text otherwise, null when empty. */
@@ -133,7 +150,17 @@ export function createScriptedFetch(
     });
     const dedupeHeader = external.guarantees.dedupeBy?.toLowerCase();
     const dedupeKey = dedupeHeader ? (headers[dedupeHeader] ?? null) : null;
-    const body = parseBody(await request.text());
+    // A body given as text is read as it is, without a turn of the event loop: the effect opens in
+    // the same task as the call, so the run never sees the caller idle in between (a stream read
+    // inside a Durable Object can take a turn or more). Other bodies are read as before.
+    const given = init?.body;
+    const text =
+      typeof given === "string"
+        ? given
+        : given === null || (given === undefined && !(input instanceof Request))
+          ? ""
+          : await request.text();
+    const body = parseBody(text);
     const args: JsonValue = { url: request.url, method, headers, body, dedupeKey };
 
     const perform = async (): Promise<{ reply: Reply; effective: boolean }> => {

@@ -129,6 +129,66 @@ describe("scripted fetch without hooks (raw side)", () => {
   });
 });
 
+describe("scripted fetch bodies and the event loop", () => {
+  const bounds = {
+    maxFaultsPerRun: 0,
+    maxRedeliveries: 0,
+    maxConcurrentInvocations: 1,
+    budgetMs: 2_000,
+  };
+
+  test("a request body given as text opens the effect without a turn of the event loop", async () => {
+    const run = new Run({ chooser: replayChooser({ seed: 1, faults: [] }), bounds });
+    run.install([payments]);
+    try {
+      run.startInvocation("i#1");
+      const sent = fetch("https://api.payments.example/charges", {
+        method: "POST",
+        body: JSON.stringify({ amount: 5 }),
+      });
+      // Microtasks only: the call record is already there before any real tick.
+      await Promise.resolve();
+      await Promise.resolve();
+      const [call] = run.log.entries;
+      expect(call?.kind).toBe("call");
+      expect(call && (call.payload as { args: { body: unknown } }).args.body).toEqual({
+        amount: 5,
+      });
+      await sent;
+    } finally {
+      run.uninstall();
+    }
+  });
+
+  test("a scripted reply's text() and json() settle within a microtask, and json() rejects on text that is not JSON", async () => {
+    const { fetch: f } = createScriptedFetch(
+      [
+        {
+          ...payments,
+          responses: [
+            { path: "/charges", status: 201, body: { id: "ch_1" } },
+            { path: "/health", status: 200, body: "fine" },
+          ],
+        },
+      ],
+      null,
+      () => {},
+    );
+    const reply = await f("https://api.payments.example/charges");
+    let parsed: unknown;
+    void reply.json().then((j) => {
+      parsed = j;
+    });
+    for (let i = 0; i < 4; i++) await Promise.resolve();
+    expect(parsed).toEqual({ id: "ch_1" });
+    const health = await f("https://api.payments.example/health");
+    await expect(health.text()).resolves.toBe("fine");
+    await expect(health.json()).rejects.toThrow();
+    expect(reply.status).toBe(201);
+    expect(reply instanceof Response).toBe(true);
+  });
+});
+
 describe("scripted fetch as effect points", () => {
   const spec: ScenarioSpec = {
     version: 1,
