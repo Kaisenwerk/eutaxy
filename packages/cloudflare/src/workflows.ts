@@ -25,8 +25,8 @@ import {
   runInvocation,
 } from "@eutaxy/engine";
 import { drainBackground, executionContext } from "./background.ts";
-import type { ProxyContext } from "./d1.ts";
 import { constructEntrypoint } from "./entrypoint.ts";
+import { type ProxyContext, refuse } from "./proxy-context.ts";
 
 /** The `EventRef.source` of a Workflow instance's run. */
 export const workflowSource = "workflow";
@@ -153,11 +153,8 @@ export function proxyWorkflow(
   registry: WorkflowRegistry,
 ): object {
   const target = `Workflow:${binding}`;
-  const unsupported = (what: string): never => {
-    const reason = `Workflow ${binding}: ${what} is not modelled`;
-    ctx.hooks.unsupported(reason);
-    throw new Error(`eutaxy: ${reason}`);
-  };
+  const unsupported = (what: string): never =>
+    refuse(ctx, `Workflow ${binding}: ${what} is not modelled`);
   const handle = (id: string): object => ({
     id,
     status: () =>

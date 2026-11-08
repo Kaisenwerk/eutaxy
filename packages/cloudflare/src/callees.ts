@@ -26,9 +26,9 @@
 import { type FaultKind, type JsonValue, toJson } from "@eutaxy/core";
 import { hostInvocation, isRedirect, type Outcome, runInvocation } from "@eutaxy/engine";
 import { drainBackground, executionContext } from "./background.ts";
-import type { ProxyContext } from "./d1.ts";
 import { isPlainData } from "./durable-objects.ts";
 import { constructEntrypoint } from "./entrypoint.ts";
+import { type ProxyContext, pointAt, refuse } from "./proxy-context.ts";
 import { describeError, entrypointClass, rpcMethod } from "./rpc.ts";
 import type { CalleeSetup } from "./scenario.ts";
 import { recordRequest, scriptedError, serviceStub } from "./services.ts";
@@ -194,18 +194,8 @@ export function proxyCallee(
   const view = calleeEnv(module.name, env);
   const entrypointName = setup.entrypoint ?? module.entrypoint;
   const props = module.props ?? {};
-  const unsupported = (what: string): never => {
-    const reason = `callee ${binding}: ${what}`;
-    ctx.hooks.unsupported(reason);
-    throw new Error(`eutaxy: ${reason}`);
-  };
-  const point = (op: string, args: JsonValue) => ({
-    invocation: ctx.currentInvocation(),
-    target,
-    op,
-    args,
-    allowed: callFaults,
-  });
+  const unsupported = (what: string): never => refuse(ctx, `callee ${binding}: ${what}`);
+  const point = (op: string, args: JsonValue) => pointAt(ctx, target, op, args, callFaults);
   /** The hosted invocation's id: the n-th call of a method from one caller invocation is `#n`. */
   const invocationId = (method: string): string => {
     const key = `${ctx.currentInvocation()}/${binding}.${method}`;

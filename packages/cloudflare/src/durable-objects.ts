@@ -16,7 +16,7 @@
 import { canonicalJson, type JsonValue, toJson, writeFaults } from "@eutaxy/core";
 import { withoutNetwork } from "@eutaxy/engine";
 import { AlarmBook, alarmControl, takenOver, takeOverAlarms } from "./alarms.ts";
-import type { ProxyContext } from "./d1.ts";
+import type { ProxyContext } from "./proxy-context.ts";
 import type { DurableObjectSqlSeed } from "./scenario.ts";
 
 /** Seeds by object name: key-value entries, and SQL for SQLite-backed objects. */

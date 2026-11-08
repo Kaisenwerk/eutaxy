@@ -13,9 +13,9 @@ import {
   r2Binding,
   workflowBinding,
 } from "./bindings.ts";
-import type { ProxyContext } from "./d1.ts";
 import { FakeR2 } from "./fake-r2.ts";
 import { createCloudflarePlatform } from "./platform.ts";
+import type { ProxyContext } from "./proxy-context.ts";
 import { durableObject, queue, r2Bucket, workflow } from "./scenario.ts";
 
 /** The fake bucket as the real binding's type; the records only call what it implements. */

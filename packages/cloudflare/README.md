@@ -61,7 +61,7 @@ for a UTF-8 object of up to 4 KiB). `r2Op(binding)` selects puts that stored an 
 A committed write is a `result` record; `d1Write(binding)` selects results
 with `result.changes` of at least 1.
 
-`object-access.ts` holds what a delivery into an object needs of its namespace (`ObjectAccess`) and `hostedInObject`, the one effect an alarm or a WebSocket message performs inside an object: it hosts the object's effects, a fault abandoning it resets the object, and a crash evicts the instance.
+`proxy-context.ts` holds `ProxyContext` (what every binding proxy is given), `pointAt` (the effect point of a proxied call) and `refuse` (report an unsupported reason and refuse the call with it), which the proxies' local one-liners delegate to. `object-access.ts` holds what a delivery into an object needs of its namespace (`ObjectAccess`) and `hostedInObject`, the one effect an alarm or a WebSocket message performs inside an object: it hosts the object's effects, a fault abandoning it resets the object, and a crash evicts the instance.
 
 **May import.** `@eutaxy/engine`, `@eutaxy/core`. Only these are declared in `package.json`, and
 pnpm links only declared workspace dependencies, so an import of any other

@@ -28,10 +28,10 @@ import {
   workflowBinding,
 } from "./bindings.ts";
 import type { CalleeModule } from "./callees.ts";
-import type { ProxyContext } from "./d1.ts";
 import type { DurableObjectTestHelpers } from "./durable-objects.ts";
 import { entrypointHandler } from "./entrypoint.ts";
 import { deliverRequest } from "./http.ts";
+import type { ProxyContext } from "./proxy-context.ts";
 import { deliverMessage } from "./queues.ts";
 import { deliverCall, entrypointClass } from "./rpc.ts";
 import { type Drive, driveEvents, restrictDrive } from "./scenario.ts";

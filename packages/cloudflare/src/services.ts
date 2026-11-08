@@ -13,7 +13,7 @@
 
 import { type EffectPoint, type JsonValue, toJson, writeFaults } from "@eutaxy/core";
 import { findResponse, isRedirect, parseBody, replyOf, toResponse } from "@eutaxy/engine";
-import type { ProxyContext } from "./d1.ts";
+import { type ProxyContext, pointAt, refuse } from "./proxy-context.ts";
 import type { ScriptedReply, ServiceSetup } from "./scenario.ts";
 
 /** Marks of the other kinds of binding, which a service binding's duck type must not carry. */
@@ -103,11 +103,7 @@ export interface ServiceAnswers {
  * (promise pipelining, `connect()`), with the answers supplied.
  */
 export function serviceStub(binding: string, ctx: ProxyContext, answers: ServiceAnswers): object {
-  const unsupported = (what: string): never => {
-    const reason = `service binding ${binding}: ${what}`;
-    ctx.hooks.unsupported(reason);
-    throw new Error(`eutaxy: ${reason}`);
-  };
+  const unsupported = (what: string): never => refuse(ctx, `service binding ${binding}: ${what}`);
 
   /**
    * The promise a call returns. On the real stub it is an RPC promise that
@@ -170,18 +166,9 @@ export function serviceStub(binding: string, ctx: ProxyContext, answers: Service
 /** The scripted stub a Worker sees under a service binding's name. */
 export function proxyService(binding: string, ctx: ProxyContext, script: ServiceSetup): object {
   const target = `Service:${binding}`;
-  const point = (op: string, args: JsonValue): EffectPoint => ({
-    invocation: ctx.currentInvocation(),
-    target,
-    op,
-    args,
-    allowed: writeFaults,
-  });
-  const unsupported = (what: string): never => {
-    const reason = `service binding ${binding}: ${what}`;
-    ctx.hooks.unsupported(reason);
-    throw new Error(`eutaxy: ${reason}`);
-  };
+  const point = (op: string, args: JsonValue): EffectPoint =>
+    pointAt(ctx, target, op, args, writeFaults);
+  const unsupported = (what: string): never => refuse(ctx, `service binding ${binding}: ${what}`);
   /** The scripted reply to a method, by name; a method the script lacks cannot be answered. */
   const replyTo = (method: string): ScriptedReply => {
     if (script.methods === undefined) return { returns: null };

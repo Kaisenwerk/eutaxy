@@ -4,16 +4,8 @@
  * and the log records call, result and fault in the documented shape.
  */
 
-import {
-  canonicalJson,
-  type EffectPoint,
-  type FaultKind,
-  type JsonValue,
-  type RunHooks,
-  readFaults,
-  toJson,
-  writeFaults,
-} from "@eutaxy/core";
+import { canonicalJson, type JsonValue, readFaults, toJson, writeFaults } from "@eutaxy/core";
+import { type ProxyContext, pointAt as point } from "./proxy-context.ts";
 
 /** Whether a binding is a D1 database (what the proxies and the differential wrap). */
 export function isD1(value: unknown): value is D1Database {
@@ -25,29 +17,7 @@ export function isD1(value: unknown): value is D1Database {
   );
 }
 
-export interface ProxyContext {
-  readonly hooks: RunHooks;
-  /** The invocation currently running; only one runs at a time, even with several in flight. */
-  readonly currentInvocation: () => string;
-  /** Told when a Durable Object stub's fetch answered 101: the object a WebSocket connection reached, the invocation whose call it was, and the client end. */
-  readonly onUpgrade?: (info: {
-    binding: string;
-    id: string;
-    object: string;
-    invocation: string;
-    client: WebSocket;
-  }) => void;
-}
-
-function point(
-  ctx: ProxyContext,
-  target: string,
-  op: string,
-  args: JsonValue,
-  allowed: readonly FaultKind[],
-): EffectPoint {
-  return { invocation: ctx.currentInvocation(), target, op, args, allowed };
-}
+export type { ProxyContext } from "./proxy-context.ts";
 
 function metaOf(result: D1Result<unknown>): JsonValue {
   return { changes: result.meta.changes ?? 0, lastRowId: result.meta.last_row_id ?? null };

@@ -15,7 +15,7 @@ import {
   toJson,
   writeFaults,
 } from "@eutaxy/core";
-import type { ProxyContext } from "./d1.ts";
+import { type ProxyContext, pointAt, refuse } from "./proxy-context.ts";
 
 /** Whether a binding is an R2 bucket (Miniflare's `R2Bucket`). */
 export function isR2(value: unknown): value is R2Bucket {
@@ -153,18 +153,10 @@ export function proxyR2(
   book: VersionBook,
 ): R2Bucket {
   const target = `R2:${binding}`;
-  const point = (op: string, args: JsonValue, allowed: readonly FaultKind[]): EffectPoint => ({
-    invocation: ctx.currentInvocation(),
-    target,
-    op,
-    args,
-    allowed,
-  });
-  const notModelled = (what: string): never => {
-    const reason = `R2 ${binding}: ${what} is not modelled`;
-    ctx.hooks.unsupported(reason);
-    throw new Error(`eutaxy: ${reason}`);
-  };
+  const point = (op: string, args: JsonValue, allowed: readonly FaultKind[]): EffectPoint =>
+    pointAt(ctx, target, op, args, allowed);
+  const notModelled = (what: string): never =>
+    refuse(ctx, `R2 ${binding}: ${what} is not modelled`);
   /** Date conditions compare the store's real upload time, not the stand-in the Worker saw. */
   const checkConditions = (onlyIf: unknown): void => {
     const datedHeaders = ["if-modified-since", "if-unmodified-since"];

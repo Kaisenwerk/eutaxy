@@ -18,7 +18,7 @@ import type {
 import { note } from "@eutaxy/engine";
 import { alarmSource, deliverAlarm } from "./alarms.ts";
 import { type CalleeModule, CalleeState, calleeEnv, proxyCallee } from "./callees.ts";
-import { isD1, type ProxyContext, proxyD1, resetD1, snapshotD1 } from "./d1.ts";
+import { isD1, proxyD1, resetD1, snapshotD1 } from "./d1.ts";
 import {
   BindingState,
   type DurableObjectTestHelpers,
@@ -30,6 +30,7 @@ import {
   snapshotNamespace,
 } from "./durable-objects.ts";
 import type { ObjectAccess } from "./object-access.ts";
+import type { ProxyContext } from "./proxy-context.ts";
 import { isR2, proxyR2, resetR2, snapshotR2, VersionBook } from "./r2.ts";
 import {
   type CalleeSetup,
