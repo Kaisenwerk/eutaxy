@@ -1,12 +1,13 @@
 /**
- * An object that runs jobs after answering, the way an agent does: `start`
- * records the run, kicks the job off with `void` and answers at once; the job
- * asks an external model for the plan and adds its steps to a running total.
+ * An object that runs jobs it does not wait for, the way an agent does:
+ * `start` records the run, kicks the job off with `void` and answers at once;
+ * the job asks an external model for the plan and adds its steps to a running
+ * total, finishing after the answer.
  *
  * Planted bug: the total is read before the model call and written after
- * it. Nothing awaits the job, so the second job's read runs while the first
- * awaits the model, both read 0, and the total ends at one job's steps. The
- * fix adds the steps in one statement.
+ * it. Nothing awaits the job, so a second call enters the object while the
+ * first job awaits the model: both read 0, and the total ends at one job's
+ * steps. The fix adds the steps in one statement.
  */
 
 import { DurableObject } from "cloudflare:workers";
@@ -43,8 +44,6 @@ abstract class JobRunner extends DurableObject<Env> {
 
   private async execute(runId: string): Promise<void> {
     try {
-      // The job starts a tick later, as a job queued behind the answer does.
-      await new Promise((resolve) => setTimeout(resolve, 10));
       const { steps, total } = await this.count(() => this.plan(runId));
       this.ctx.storage.sql.exec(
         "UPDATE runs SET status = 'done', steps = ?, total = ? WHERE id = ?",

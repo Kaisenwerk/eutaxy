@@ -58,6 +58,8 @@ export class VirtualClock {
   private timers: Timer[] = [];
   /** Deferred timers fired and not yet run by their pollers: work on its way, inside a host. */
   private readonly unrun = new Set<Timer>();
+  /** Set by `stop`: the run is over, so no timer is pending and every deferred poller ends. */
+  private stopped = false;
   private nextId = 1;
   /** The invocation whose code is running; timers scheduled now belong to it. */
   owner: string | null = null;
@@ -65,7 +67,7 @@ export class VirtualClock {
   ownerNow: (() => string | null) | null = null;
   /** Set by the run: the effect being performed by the code scheduling a timer, kept on the timer. */
   scopeNow: (() => unknown) | null = null;
-  /** Set by the run: told whose timer `fireNext` fired (or marked fired), after it did. */
+  /** Set by the run: told whose timer fired (or was marked fired), whichever path fired it. */
   afterFire: ((owner: string | null) => void) | null = null;
   /** Set by a concurrent run: binds a callback to the async context it was scheduled in. */
   bind: ((callback: (...args: unknown[]) => void) => (...args: unknown[]) => void) | null = null;
@@ -96,6 +98,7 @@ export class VirtualClock {
       deferred: false,
       fired: 0,
     };
+    if (this.stopped) return timer.id;
     // Inside a host's code in workerd, the timer must be run from inside it too: a poller armed here.
     if (timer.scope !== undefined && inWorkerd) {
       (timer as { deferred: boolean }).deferred = true;
@@ -147,6 +150,18 @@ export class VirtualClock {
 
   pendingTimers(): number {
     return this.timers.length;
+  }
+
+  /**
+   * The run is over: drop every timer, fired or not, so the pollers armed
+   * inside hosts' code end (one left polling would keep an object referenced
+   * past the run) and nothing of the run's fires later.
+   */
+  stop(): void {
+    this.stopped = true;
+    for (const t of this.unrun) t.fired = 0;
+    this.unrun.clear();
+    this.timers = [];
   }
 
   /** Deferred timers fired and not yet run: what waits on nothing visible is still about to move. */
@@ -205,9 +220,9 @@ export class VirtualClock {
     return earliest;
   }
 
-  /** Who set the timer `fireNext` would run: an invocation, null for none, undefined when no timer is pending. */
-  nextOwner(): string | null | undefined {
-    return this.earliest()?.owner;
+  /** Who set the timer `fireNextOwned` would run for `owned`; undefined when none is pending. */
+  nextOwnerOwned(owned: (owner: string | null) => boolean): string | null | undefined {
+    return this.earliestOwned(owned)?.owner;
   }
 
   /** Advance to the earliest due timer and run it. False when none is pending. */
@@ -427,6 +442,7 @@ export function patchGlobals(seed: number | string, options: PatchOptions = {}):
     restore() {
       if (restored) return;
       restored = true;
+      clock.stop();
       for (const u of undo.reverse()) u();
     },
   };
@@ -488,8 +504,20 @@ export interface SettleContext {
   readonly inFlight: () => number;
   /** True once the invocation has been crashed; the promise is then abandoned. */
   readonly crashed: () => boolean;
+  /**
+   * What to reject with once `crashed` is true, seen on the wait's own tick
+   * (a promise settled where the crash happened may never wake its waiters:
+   * the object's task is being torn down); without it the wait hangs.
+   */
+  readonly crashError?: () => unknown;
   /** Called when nothing can make progress: no I/O, no timers, not done. */
   readonly stuck: () => void;
+  /**
+   * While I/O is in flight: whose timers may fire anyway, when everything in
+   * flight is a hosting effect whose code is idle and so awaits a timer of
+   * its own (an object sleeping before it answers); null otherwise.
+   */
+  readonly idle?: () => ((owner: string | null) => boolean) | null;
 }
 
 /**
@@ -516,6 +544,9 @@ export async function settleOn<T>(promise: Promise<T>, ctx: SettleContext): Prom
   // event loop is enough to see it, where a real zero timer would cost a millisecond per virtual
   // timer. While real I/O is in flight, and once before calling the wait stuck, the real tick stays.
   let afterTimer = false;
+  // Whether the last tick too found only idle hosting effects in flight: code that waits on
+  // nothing visible gets one real tick for work the run cannot see before its timer fires.
+  let idleBefore = false;
   for (;;) {
     await Promise.race([tracked, afterTimer ? eventLoopTurn() : realTick()]);
     const cheap = afterTimer;
@@ -524,8 +555,19 @@ export async function settleOn<T>(promise: Promise<T>, ctx: SettleContext): Prom
       if (failed) throw error;
       return value as T;
     }
-    if (ctx.crashed()) return new Promise<T>(() => {});
-    if (ctx.inFlight() > 0) continue;
+    if (ctx.crashed()) {
+      if (ctx.crashError) throw ctx.crashError();
+      return new Promise<T>(() => {});
+    }
+    if (ctx.inFlight() > 0) {
+      const owned = ctx.idle?.() ?? null;
+      if (owned && idleBefore && ctx.clock.fireNextOwned(owned)) {
+        idleBefore = false;
+        afterTimer = true;
+      } else idleBefore = owned !== null;
+      continue;
+    }
+    idleBefore = false;
     if (ctx.clock.fireNext()) {
       afterTimer = true;
       continue;

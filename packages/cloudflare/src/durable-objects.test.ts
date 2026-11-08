@@ -76,6 +76,12 @@ class Counter {
     })();
     return "soon";
   }
+  /** Waits on a timer of its own before answering, as an object pacing its work does. */
+  async nap() {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    await fetch("https://api.test/napped");
+    return "rested";
+  }
   /** Writes a row into a SQL table the seed created, as a SQLite-backed object does. */
   async tally(by: number) {
     this.ctx.storage.sql.exec(`INSERT INTO "tallies" ("n", "note") VALUES (?, ?)`, by, "tallied");
@@ -115,6 +121,7 @@ function fakeNamespace() {
         bump: (by: number) => instanceOf(hex).bump(by),
         tally: (by: number) => instanceOf(hex).tally(by),
         later: () => instanceOf(hex).later(),
+        nap: () => instanceOf(hex).nap(),
         remind: () => instanceOf(hex).remind(),
         relay: () => instanceOf(hex).relay(),
         open: () => instanceOf(hex).open(),
@@ -171,21 +178,23 @@ const handler: WorkerHandler = {
           ? await stub.tally(3)
           : path === "/later"
             ? await stub.later()
-            : path === "/remind"
-              ? await stub.remind()
-              : path === "/relay"
-                ? await stub.relay()
-                : path === "/crash-self"
-                  ? await stub.crashSelf()
-                  : path === "/pipelined-property"
-                    ? await (stub as unknown as { total: { value: Promise<number> } }).total.value
-                    : path === "/pipelined"
-                      ? await (stub.bump(2) as unknown as { value: Promise<number> }).value
-                      : path === "/open"
-                        ? ((await stub.open()) as unknown as string)
-                        : path === "/total"
-                          ? await (stub as unknown as { total: Promise<number> }).total
-                          : await stub.bump(2);
+            : path === "/nap"
+              ? await stub.nap()
+              : path === "/remind"
+                ? await stub.remind()
+                : path === "/relay"
+                  ? await stub.relay()
+                  : path === "/crash-self"
+                    ? await stub.crashSelf()
+                    : path === "/pipelined-property"
+                      ? await (stub as unknown as { total: { value: Promise<number> } }).total.value
+                      : path === "/pipelined"
+                        ? await (stub.bump(2) as unknown as { value: Promise<number> }).value
+                        : path === "/open"
+                          ? ((await stub.open()) as unknown as string)
+                          : path === "/total"
+                            ? await (stub as unknown as { total: Promise<number> }).total
+                            : await stub.bump(2);
       return Response.json({ value });
     } catch {
       return new Response("object unavailable", { status: 503 });
@@ -746,7 +755,7 @@ describe("Durable Object setup validation", () => {
 });
 
 describe("work an object does not await", () => {
-  async function runLater(faults: Schedule["faults"]) {
+  async function runLater(faults: Schedule["faults"], path = "/later") {
     const { namespace, helpers, storages } = fakeNamespace();
     const platform = createCloudflarePlatform({
       env: { COUNTER: namespace },
@@ -754,7 +763,7 @@ describe("work an object does not await", () => {
       schemas: {},
       durableObjects: helpers,
     });
-    const s: ScenarioSpec = { ...spec("/later"), externals: [external("api", "api.test")] };
+    const s: ScenarioSpec = { ...spec(path), externals: [external("api", "api.test")] };
     const run = new Run({ chooser: replayChooser({ seed: 1, faults }), bounds: s.bounds });
     const log = await runOnce(s, platform, run);
     return { log, run, storages };
@@ -794,5 +803,18 @@ describe("work an object does not await", () => {
       "platform snapshot DO:COUNTER snapshot",
     ]);
     expect(storages.get("id-c")?.data.get("later")).toBeUndefined();
+  });
+
+  test("an object that awaits a timer of its own before answering is woken by it, and its request after the timer is the call's", async () => {
+    const { log, run } = await runLater([], "/nap");
+    expect(run.unsupportedReasons).toEqual([]);
+    expect(response(log).result.body).toEqual({ value: "rested" });
+    expect(lines(log).slice(0, 4)).toEqual([
+      "req-1#1 call DO:COUNTER nap",
+      "req-1#1 call Fetch:api GET",
+      "req-1#1 result Fetch:api GET",
+      "req-1#1 result DO:COUNTER nap",
+    ]);
+    expect(run.now()).toBeGreaterThanOrEqual(Date.UTC(2026, 0, 1) + 10);
   });
 });

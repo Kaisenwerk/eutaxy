@@ -37,7 +37,6 @@ import {
   realDeadline,
   realTick,
   settleOn,
-  type VirtualClock,
 } from "./clock.ts";
 import { asyncScope } from "./context.ts";
 import { installScriptedFetch } from "./fetch.ts";
@@ -159,15 +158,24 @@ function waitingUnseen(invocation: string): string {
 }
 
 /**
- * Timers an object's work after an answer may fire in one run before the run
+ * Timers an object's work may fire without the work settling before the run
  * is called UNSUPPORTED: a heartbeat (`setInterval`, a timeout that re-arms
  * itself) never settles, and the runtime would run it until the object is
- * evicted, which a run cannot wait for.
+ * evicted, which a run cannot wait for. The count starts over each time the
+ * work settles, so an object that sleeps once per call is not a heartbeat.
  */
 export const afterWorkTimerLimit = 100;
 
 /** Delivered invocations are `<event>#<attempt>`, so this id is never one of theirs. */
 const bookkeepingId = "platform";
+
+function isThenable(value: unknown): value is PromiseLike<unknown> {
+  return (
+    value !== null &&
+    (typeof value === "object" || typeof value === "function") &&
+    typeof (value as { then?: unknown }).then === "function"
+  );
+}
 
 export class Run implements RunHooks {
   /** The records, appended in place. */
@@ -198,10 +206,21 @@ export class Run implements RunHooks {
   private readonly hostFrames = new Map<string, Frame>();
   /** Continuations with work that may still move: the run does not end while one is alive. */
   private readonly afterWork = new Set<InvocationState>();
-  /** Per continuation, timers of its fired this run (see `afterWorkTimerLimit`). */
+  /** Per continuation, timers of its fired since its work last settled (see `afterWorkTimerLimit`). */
   private readonly afterWorkTimers = new Map<string, number>();
+  /** Per host, real work its code started and the run tracks (Web Crypto) still running; see `leftHost`. */
+  private readonly hostIo = new Map<string, number>();
+  /**
+   * Hosting effects that ended with effects of their hosted code outstanding
+   * (parked or performing), and the host's work after its answer, which owns
+   * those effects from then on; see `ownerOf`.
+   */
+  private readonly adopted = new WeakMap<Frame, InvocationState>();
   /** Per host, its poller (concurrent runs; see `pollHost`). */
   private readonly hostPollers = new Map<string, { waiters: (() => void)[] }>();
+  /** Concurrent runs: settles waiting on invocations, released with a `CrashSignal` once theirs crashed; see `settle`. */
+  private crashWatch: { readonly inv: InvocationState; readonly reject: (err: unknown) => void }[] =
+    [];
   private patched: Patched | null = null;
   private restoreFetch: (() => void) | null = null;
   /** The invocation whose code is running (one at a time); outbound fetches are attributed to it. */
@@ -225,6 +244,7 @@ export class Run implements RunHooks {
       () => this.patched?.reads,
       () => this.firedPending(),
       () => this.hasAfterWork(),
+      () => this.timersAllowed() !== null,
     );
     this.concurrent = options.bounds.maxConcurrentInvocations > 1;
   }
@@ -283,10 +303,18 @@ export class Run implements RunHooks {
     if (!this.patched) {
       this.patched = patchGlobals(this.options.chooser.seed, {
         // Web Crypto is real work the handler waits on: the run waits for it like an effect's I/O.
+        // A host's code's is the host's: work of its own still pending once its effect has ended.
         trackIo: (work) => {
           this.frames.inFlight++;
+          const host = hostScope?.getStore()?.host;
+          if (host !== undefined) this.hostIo.set(host, (this.hostIo.get(host) ?? 0) + 1);
           return work.finally(() => {
             this.frames.inFlight--;
+            if (host !== undefined) {
+              const left = (this.hostIo.get(host) ?? 1) - 1;
+              if (left > 0) this.hostIo.set(host, left);
+              else this.hostIo.delete(host);
+            }
             if (this.concurrent) this.progressed();
           });
         },
@@ -297,7 +325,10 @@ export class Run implements RunHooks {
       clock.ownerNow = () => this.timerOwner();
       // Whose code set a timer: a host's timers are the host's, pending work of its own once its effect ends.
       clock.scopeNow = () => hostScope?.getStore()?.host;
-      clock.afterFire = (owner) => this.timerFired(owner);
+      // Whichever path fires a timer of an object's work counts it against the heartbeat bound.
+      clock.afterFire = (owner) => {
+        if (owner !== null) this.timerFired(owner);
+      };
       // A timer's callback, and everything it goes on to run, belongs to the invocation that set it:
       // its delivery's or hosted cell where it has one, else a cell naming the invocation running now,
       // so a sequential caller's timer fired while a hosted callee waits is still the caller's.
@@ -387,7 +418,16 @@ export class Run implements RunHooks {
       current?.host === host && current.active ? current : this.frames.claimHost(host, op);
     // An object's code is handler code: its timers are virtual, inside a call's I/O or not.
     const run = (): T => (this.patched ? this.patched.handlerCode(code) : code());
-    return hostScope ? hostScope.run({ host, frame }, run) : run();
+    const result = hostScope ? hostScope.run({ host, frame }, run) : run();
+    // Once the code has returned its answer is in transit: the call is no longer idle code that a
+    // timer of the host's may wake (a timer it set and did not await fires after the answer), and
+    // it is in flight until the answer has crossed, whatever the code left parked.
+    if (frame) {
+      const answered = (): void => this.frames.answered(frame);
+      if (isThenable(result)) void Promise.resolve(result).then(answered, answered);
+      else answered();
+    }
+    return result;
   }
 
   /**
@@ -487,21 +527,53 @@ export class Run implements RunHooks {
     cont.crash();
   }
 
-  /** A host's effect ended: work its code left outstanding (effects parked or performing, timers pending) is the host's own now. */
+  /**
+   * A host's effect ended: work its code left outstanding (effects parked or
+   * performing, timers pending, real work tracked) is the host's own now,
+   * its continuation's, which owns the outstanding effects from here on
+   * (see `ownerOf`): the caller's crash does not end them, and a fault in
+   * them is the object's.
+   */
   private leftHost(frame: Frame): void {
-    if (frame.host === undefined) return;
+    // An abandoned effect reset the object: what its code left outstanding died with the instance.
+    if (frame.host === undefined || frame.isAbandoned) return;
     this.hostFrames.set(frame.host, frame);
-    if (frame.children > 0 || frame.performing > 0 || this.patched?.clock.hasTimerIn(frame.host))
-      this.continuationOf(frame.host);
+    const effects = frame.children > 0 || frame.performing > 0;
+    if (
+      !effects &&
+      !this.patched?.clock.hasTimerIn(frame.host) &&
+      (this.hostIo.get(frame.host) ?? 0) === 0
+    ) {
+      // Nothing outstanding: the object's work has settled, so a heartbeat is counted from here (a
+      // call that slept once is not one, however many such calls one handler makes).
+      const cont = this.continuations.get(frame.host);
+      if (cont) this.afterWorkTimers.delete(cont.id);
+      return;
+    }
+    const cont = this.continuationOf(frame.host);
+    if (!effects) return;
+    this.adopted.set(frame, cont);
+    if (this.concurrent) this.turns.adopt(frame, cont);
   }
 
   /**
-   * A timer fired: a continuation's count against `afterWorkTimerLimit`; past
-   * it the object's work does not settle, so the run is UNSUPPORTED and the
-   * work ends (its timers with it).
+   * Who owns an effect of `inv`'s made inside `enclosing`: `inv`, unless the
+   * enclosing effect was a host's, ended while this one was outstanding and
+   * handed it to the host's work after its answer (`leftHost`). The call's
+   * invocation may be long finished or crashed then; the object goes on.
    */
-  private timerFired(owner: string | null): void {
-    if (owner === null) return;
+  private ownerOf(inv: InvocationState, enclosing: Frame | undefined): InvocationState {
+    const adopted = enclosing && this.adopted.get(enclosing);
+    return adopted && enclosing.invocation === inv.id ? adopted : inv;
+  }
+
+  /**
+   * A timer of a continuation's fired, by whichever path: its count against
+   * `afterWorkTimerLimit` since its work last settled; past it the object's
+   * work does not settle, so the run is UNSUPPORTED and the work ends (its
+   * timers with it).
+   */
+  private timerFired(owner: string): void {
     let cont: InvocationState | undefined;
     for (const c of this.continuations.values()) if (c.id === owner) cont = c;
     if (!cont || cont.isCrashed()) return;
@@ -509,7 +581,7 @@ export class Run implements RunHooks {
     this.afterWorkTimers.set(owner, n);
     if (n <= afterWorkTimerLimit) return;
     this.unsupported(
-      `${owner}: the object's work after its answer fired its timers ${n} times and does not settle (an interval or a timer that re-arms itself); the model waits for such work only up to ${afterWorkTimerLimit} firings per run`,
+      `${owner}: the object's work after its answer fired its timers ${n} times and does not settle (an interval or a timer that re-arms itself); the model waits for such work only up to ${afterWorkTimerLimit} firings without it settling`,
     );
     this.afterWork.delete(cont);
     cont.crash();
@@ -533,6 +605,8 @@ export class Run implements RunHooks {
    */
   settleAfterWork(): number {
     const n = this.afterWork.size;
+    // Settled: a heartbeat is counted from here (an object that sleeps once per call is not one).
+    for (const cont of this.afterWork) this.afterWorkTimers.delete(cont.id);
     this.afterWork.clear();
     return n;
   }
@@ -544,11 +618,28 @@ export class Run implements RunHooks {
    * can move it has settled.
    */
   async driveAfterWork(): Promise<void> {
+    // Whether the last tick too found only idle hosting effects in flight (see `timersAllowed`).
+    let idleBefore = false;
     while (this.hasAfterWork()) {
-      if (this.frames.inFlight > 0 || this.firedPending() > 0) {
+      if (this.firedPending() > 0) {
+        idleBefore = false;
         await realTick();
         continue;
       }
+      if (this.frames.inFlight > 0) {
+        // The work called into an object that awaits a timer of its own before it answers: after a
+        // tick for anything the run cannot see, the timer fires.
+        const allowed = this.timersAllowed();
+        if (allowed && idleBefore && this.fireOwned(allowed) !== undefined) {
+          idleBefore = false;
+          await eventLoopTurn();
+        } else {
+          idleBefore = allowed !== null;
+          await realTick();
+        }
+        continue;
+      }
+      idleBefore = false;
       // Only the work's own timers: a finished handler's stray timer is not the object's to run.
       if (this.fireAfterWorkTimer()) {
         await eventLoopTurn();
@@ -564,16 +655,70 @@ export class Run implements RunHooks {
 
   /** Fire the next due timer of an object's work after an answer, as that work. False when none is pending. */
   fireAfterWorkTimer(): boolean {
-    const clock = this.patched?.clock;
-    if (!clock) return false;
     const alive = this.aliveAfterWork();
     if (alive.size === 0) return false;
+    return this.fireOwned((owner) => owner !== null && alive.has(owner)) !== undefined;
+  }
+
+  /**
+   * Whose timers may fire now: anyone's while nothing is in flight; while
+   * only hosting effects whose hosted code is idle are, and one of those
+   * hosts has a timer pending (an object awaiting a timer of its own before
+   * it answers, see `Frames.idleHosts`), the timers of those hosts' work;
+   * nobody's otherwise: a fired timer not yet run, or idle hosted code with
+   * no timer, is work on its way that the run cannot see yet (a call
+   * crossing into the object, storage I/O).
+   */
+  private timersAllowed(): ((owner: string | null) => boolean) | null {
+    const clock = this.patched?.clock;
+    if (!clock || this.firedPending() > 0) return null;
+    if (this.frames.inFlight === 0) return () => true;
+    const hosts = this.frames.idleHosts();
+    if (!hosts) return null;
+    const owners = new Set<string>();
+    for (const host of hosts) {
+      const cont = this.continuations.get(host);
+      if (cont) owners.add(cont.id);
+    }
+    const allowed = (owner: string | null): boolean => owner !== null && owners.has(owner);
+    return clock.nextDueOwned(allowed) === undefined ? null : allowed;
+  }
+
+  /**
+   * Fire the earliest due timer whose owner `allowed` accepts, as that owner
+   * (a step of a concurrent run). The owner it fired as (null for none);
+   * undefined when no such timer is pending.
+   */
+  private fireOwned(allowed: (owner: string | null) => boolean): string | null | undefined {
+    const clock = this.patched?.clock;
+    if (!clock) return undefined;
+    const owner = clock.nextOwnerOwned(allowed);
+    if (owner === undefined) return undefined;
+    this.runAs(owner);
     if (this.concurrent) this.turns.step();
-    return clock.fireNextOwned((owner) => {
-      if (owner === null || !alive.has(owner)) return false;
-      this.runAs(owner);
-      return true;
-    });
+    clock.fireNextOwned(allowed);
+    return owner;
+  }
+
+  /**
+   * Wait until what is running has come to rest: fired timers run and real
+   * I/O done; or, two turns of the event loop running, only hosting effects
+   * whose code is idle in flight (an object awaiting a timer of its own
+   * before it answers), which the next timer to fire is for.
+   */
+  private async rest(): Promise<void> {
+    let idleBefore = false;
+    for (;;) {
+      await eventLoopTurn();
+      if (this.firedPending() > 0) {
+        idleBefore = false;
+        continue;
+      }
+      if (this.frames.inFlight === 0) return;
+      const idle = this.timersAllowed() !== null;
+      if (idle && idleBefore) return;
+      idleBefore = idle;
+    }
   }
 
   private runAs(id: string | null): void {
@@ -738,13 +883,17 @@ export class Run implements RunHooks {
         inv,
         enclosing,
         enclosing,
-        async (park) => {
-          // Wait by polling a flag with real zero timers made here, inside the hosted code: no
-          // promise is settled from outside it (workerd refuses that for a Durable Object), and no
-          // event has to enter it (its input gate may be closed, as in blockConcurrencyWhile).
+        async (park, crashed) => {
+          // Wait by polling a flag from inside the hosted code: no promise is settled from outside
+          // it (workerd refuses that for a Durable Object), and no event has to enter it (its input
+          // gate may be closed, as in blockConcurrencyWhile). On the host's poller's ticks where the
+          // code is a host's: a real timer of its own armed after its answer crossed would keep the
+          // object referenced (see `pollHost`).
           let released = false;
           park(() => (released = true));
-          while (!released && !inv.isCrashed()) await realTick();
+          const host = enclosing.host;
+          while (!released && !crashed())
+            await (host === undefined ? realTick() : this.hostTick(host));
           return released;
         },
       );
@@ -766,10 +915,12 @@ export class Run implements RunHooks {
     inv: InvocationState,
     enclosing: Frame | undefined,
     host: Frame,
-    wait: (park: (go: () => void) => void) => Promise<boolean>,
+    wait: (park: (go: () => void) => void, crashed: () => boolean) => Promise<boolean>,
   ): Promise<T> {
     this.childWaits(host);
-    if (!(await wait((go) => this.turns.park(inv, point.target, go, host)))) {
+    // Whose turn it waits for: the host's work's once the hosting effect has answered (`ownerOf`).
+    const crashed = (): boolean => this.ownerOf(inv, enclosing).isCrashed();
+    if (!(await wait((go) => this.turns.park(inv, point.target, go, host), crashed))) {
       this.childLeaves(host, true);
       return hang();
     }
@@ -798,7 +949,7 @@ export class Run implements RunHooks {
 
   /** The effect once it has its turn: the fault, the perform under its deadline, the record. */
   private async performEffect<T>(
-    point: EffectPoint,
+    made: EffectPoint,
     perform: () => Promise<T>,
     summarize: (value: T) => JsonValue,
     options: EffectOptions,
@@ -807,13 +958,19 @@ export class Run implements RunHooks {
     /** The hosting effect this one waited for a turn under, which waits on it while it waits. */
     host?: Frame,
   ): Promise<T> {
-    // A crash hangs this effect; inside another effect's perform it ends that effect too.
+    // A crash hangs this effect; inside another effect's perform it ends that effect too (a host's
+    // that has ended resets the object).
     const dead = (): Promise<T> => {
       enclosing?.crash();
       return hang();
     };
-    const fault = this.open(point, inv);
-    const before = this.faultBefore(point, inv, fault);
+    // Whose effect this is now: the object's code issued it during a call that has since answered,
+    // it is the object's work (`ownerOf`), opened and recorded as such when it opens after the answer.
+    const owner = (): InvocationState => this.ownerOf(inv, enclosing);
+    const opener = owner();
+    const point = opener === inv ? made : { ...made, invocation: opener.id };
+    const fault = this.open(point, opener);
+    const before = this.faultBefore(point, opener, fault);
     if (before === "crashed") return dead();
     if (before) throw before;
     let settled:
@@ -855,7 +1012,7 @@ export class Run implements RunHooks {
       this.unsupported(
         `${point.target} ${point.op} did not complete within ${this.options.bounds.budgetMs} ms of real time`,
       );
-      inv.crash();
+      owner().crash();
       frame.abandon();
       return hang();
     }
@@ -872,9 +1029,9 @@ export class Run implements RunHooks {
     }
     const value = settled.value;
     this.record(point, "result", { args: point.args, result: summarize(value) });
-    // The effect committed while the invocation was dying: nothing after it runs.
-    if (inv.isCrashed()) return hang();
-    const after = this.faultAfter(point, inv, fault);
+    // The effect committed while its owner was dying: nothing after it runs.
+    if (owner().isCrashed()) return hang();
+    const after = this.faultAfter(point, owner(), fault);
     if (after === "crashed") return dead();
     if (after) throw after;
     return value;
@@ -947,8 +1104,17 @@ export class Run implements RunHooks {
 
   settle<T>(promise: Promise<T>, invocation: string): Promise<T> {
     const inv = this.invocation(invocation);
-    // In a concurrent run the run itself fires timers and detects a stuck run (see `quiesce`).
-    if (this.concurrent) return Promise.race([promise, inv.crashed.then(() => hang<T>())]);
+    // In a concurrent run the run itself fires timers and detects a stuck run (see `quiesce`). A crash
+    // is seen on the run's own step, not through a promise settled where it happened: an object's
+    // task being torn down by its reset may never wake what it settled.
+    if (this.concurrent)
+      return Promise.race([
+        promise,
+        new Promise<T>((_, reject) => {
+          if (inv.isCrashed()) reject(new CrashSignal(inv.id));
+          else this.crashWatch.push({ inv, reject });
+        }),
+      ]);
     const patched = this.patched;
     // A hosted invocation is known by its cell, never by `current`: the caller's own code may still
     // run beside it (two calls awaited together) and must stay the caller's.
@@ -962,7 +1128,11 @@ export class Run implements RunHooks {
       // An invocation hosted inside one of this one's effects is work of this one's, which its own
       // settle drives: not a timer to fire here, nor a reason to call this one stuck.
       inFlight: () => this.frames.inFlight + this.hostedBy(invocation) + this.firedPending(),
+      // While its own effect hosts an object awaiting a timer of its own, that timer fires; a hosted
+      // invocation's settle is the one to fire timers while it runs.
+      idle: () => (this.hostedBy(invocation) > 0 ? null : this.timersAllowed()),
       crashed: () => inv.isCrashed(),
+      crashError: () => new CrashSignal(invocation),
       stuck: () => {
         // Nothing can make progress: report it and abandon the invocation so the run can end.
         this.unsupported(waitingUnseen(invocation));
@@ -1048,7 +1218,19 @@ export class Run implements RunHooks {
    * path gives, before it counts as idle.
    */
   quiesce(): Promise<void> {
+    this.releaseCrashed();
     return this.turns.quiesce();
+  }
+
+  /** Concurrent runs: settles waiting on invocations that have crashed since are released, on the run's own step. */
+  private releaseCrashed(): void {
+    if (this.crashWatch.length === 0) return;
+    const waiting = this.crashWatch;
+    this.crashWatch = [];
+    for (const w of waiting) {
+      if (w.inv.isCrashed()) w.reject(new CrashSignal(w.inv.id));
+      else this.crashWatch.push(w);
+    }
   }
 
   /**
@@ -1070,12 +1252,14 @@ export class Run implements RunHooks {
     const clock = this.patched?.clock;
     if (!clock) return false;
     let fired = false;
-    for (let due = clock.nextDue(); due !== undefined && due <= at; due = clock.nextDue()) {
-      this.fireNextTimer(clock);
+    for (;;) {
+      const allowed = this.timersAllowed();
+      const due = allowed ? clock.nextDueOwned(allowed) : undefined;
+      if (!allowed || due === undefined || due > at) break;
+      this.fireOwned(allowed);
       fired = true;
       // What the timer set off runs at its own time, before the clock moves on.
-      do await eventLoopTurn();
-      while (this.frames.inFlight > 0 || this.firedPending() > 0);
+      await this.rest();
     }
     clock.advance(at - clock.now());
     return fired;
@@ -1089,7 +1273,10 @@ export class Run implements RunHooks {
   nextTimerDue(afterWorkOnly = false): number | undefined {
     const clock = this.patched?.clock;
     if (!clock) return undefined;
-    if (!afterWorkOnly) return clock.nextDue();
+    if (!afterWorkOnly) {
+      const allowed = this.timersAllowed();
+      return allowed ? clock.nextDueOwned(allowed) : undefined;
+    }
     const alive = this.aliveAfterWork();
     return clock.nextDueOwned((owner) => owner !== null && alive.has(owner));
   }
@@ -1101,18 +1288,13 @@ export class Run implements RunHooks {
     return alive;
   }
 
-  /** Concurrent runs: fire the next due timer as the invocation that set it. False when none is pending. */
+  /**
+   * Concurrent runs: fire the next due timer that may fire now
+   * (`timersAllowed`) as the invocation that set it. False when none is.
+   */
   fireTimer(): boolean {
-    const clock = this.patched?.clock;
-    if (!clock || clock.nextOwner() === undefined) return false;
-    return this.fireNextTimer(clock);
-  }
-
-  /** Fire the next due timer as the invocation that set it (a step of a concurrent run). */
-  private fireNextTimer(clock: VirtualClock): boolean {
-    this.runAs(clock.nextOwner() ?? null);
-    if (this.concurrent) this.turns.step();
-    return clock.fireNext();
+    const allowed = this.timersAllowed();
+    return allowed !== null && this.fireOwned(allowed) !== undefined;
   }
 
   /**

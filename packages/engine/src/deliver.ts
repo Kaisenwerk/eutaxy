@@ -17,24 +17,32 @@ export type Outcome<T> =
  * Run user code as an invocation: under `RunHooks.settle` (real I/O
  * completes, timers fire while it is idle) and ended as "crashed" when an
  * injected fault crashes the invocation, whether the code saw the crash as
- * a `CrashSignal` or an effect of its hung, as "errored" when it threw
- * anything else.
+ * a `CrashSignal`, an effect of its hung (the settle then rejects with the
+ * signal, on the run's own tick), the invocation's `crashed` settled, or
+ * the code returned or threw anything else after the crash (an object's
+ * reset rejecting the call into it with an error of the runtime's); as
+ * "errored" when it threw anything else.
  */
 export async function runInvocation<T>(
   hooks: RunHooks,
   inv: Invocation,
   work: () => T | Promise<T>,
 ): Promise<Outcome<T>> {
+  const crashed: Outcome<T> = { status: "crashed" };
   const outcome: Promise<Outcome<T>> = Promise.resolve()
     .then(work)
     .then(
-      (value) => ({ status: "completed", value }),
+      (value) => (inv.isCrashed() ? crashed : { status: "completed", value }),
       (error: unknown) =>
-        error instanceof CrashSignal ? { status: "crashed" } : { status: "errored", error },
+        error instanceof CrashSignal || inv.isCrashed() ? crashed : { status: "errored", error },
     );
   return Promise.race([
-    hooks.settle(outcome, inv.id),
-    inv.crashed.then((): Outcome<T> => ({ status: "crashed" })),
+    hooks
+      .settle(outcome, inv.id)
+      .catch((error: unknown) =>
+        error instanceof CrashSignal ? crashed : Promise.reject<Outcome<T>>(error),
+      ),
+    inv.crashed.then(() => crashed),
   ]);
 }
 

@@ -41,6 +41,8 @@ export class Frame {
   performing = 0;
   /** A host's effect whose call the host's code has started (`Frames.claimHost`). */
   claimed = false;
+  /** The host's code this effect is the call of has returned (`Frames.answered`): its answer is in transit. */
+  answered = false;
   /** Of those, the ones parked, or running but only waiting on parked effects of their own. */
   waitingChildren = 0;
   private abandoned = false;
@@ -66,16 +68,36 @@ export class Frame {
     return this.children > 0 && this.waitingChildren === this.children;
   }
 
-  crash(): void {
-    this.abandon();
-    this.wake();
+  /**
+   * Whether it counts as real I/O pending: unless its hosted code is only
+   * waiting on parked effects of its own; once that code has answered, the
+   * answer is on its way whatever it left parked, so the effect counts again
+   * until it ends.
+   */
+  inFlight(): boolean {
+    return this.answered || !this.isWaiting();
   }
 
+  crash(): void {
+    this.wake();
+    this.abandon();
+  }
+
+  /** Whether the effect was abandoned: a crash in its hosted code, or its I/O past the budget; the host was reset. */
+  get isAbandoned(): boolean {
+    return this.abandoned;
+  }
+
+  /**
+   * The run's bookkeeping first, the platform's reset last: a Durable
+   * Object's `abort()` tears down the task it is called in, so nothing after
+   * it may be counted on to run.
+   */
   abandon(): void {
     if (this.abandoned) return;
     this.abandoned = true;
-    this.onAbandon?.();
     if (this.host !== undefined) this.onHostAbandoned?.(this.host);
+    this.onAbandon?.();
   }
 }
 
@@ -121,6 +143,28 @@ export class Frames {
   }
 
   /**
+   * The hosts of the effects in flight, when every one of them is a hosting
+   * effect whose hosted code is idle: still running (its answer not yet on
+   * its way), with no effect of it performing or waiting for a turn, nothing
+   * hosted inside it and no real work tracked. Such code can only be
+   * awaiting a timer of its own (an object sleeping before it answers),
+   * which the run may fire for it. Null while anything else is in flight,
+   * or nothing is.
+   */
+  idleHosts(): Set<string> | null {
+    let counted = 0;
+    const hosts = new Set<string>();
+    for (const frame of this.stack) {
+      if (frame.isWaiting()) continue;
+      counted++;
+      if (frame.host === undefined || frame.answered || frame.performing > 0 || frame.children > 0)
+        return null;
+      hosts.add(frame.host);
+    }
+    return counted > 0 && counted === this.inFlight ? hosts : null;
+  }
+
+  /**
    * The effect an invocation's new effect is made inside of, if any. Async
    * context tells exactly which code is inside; an invocation merely woken
    * meanwhile is not. A hosting effect's own effects are attributed to its
@@ -161,6 +205,19 @@ export class Frames {
     }
   }
 
+  /**
+   * The host's code `frame` is the call of has returned: its answer is in
+   * transit, so the effect is in flight until it ends, whatever that code
+   * left parked (the run waits for the answer before its next turn, so what
+   * the code left outstanding is handed over before anything else moves).
+   */
+  answered(frame: Frame): void {
+    if (frame.answered) return;
+    const before = frame.inFlight();
+    frame.answered = true;
+    if (frame.active && !before) this.inFlight++;
+  }
+
   /** An effect's perform has ended. */
   leave(frame: Frame): void {
     if (frame.hosts) {
@@ -175,8 +232,8 @@ export class Frames {
     }
     // A frame only waiting on parked effects already counts as not in flight, and as waiting for
     // its parent: undo both as it ends.
-    if (!frame.isWaiting()) this.inFlight--;
-    else if (frame.parent) {
+    if (frame.inFlight()) this.inFlight--;
+    if (frame.isWaiting() && frame.parent) {
       const parent = frame.parent;
       this.adjust(parent, () => parent.waitingChildren--);
     }
@@ -190,14 +247,15 @@ export class Frames {
    * and a frame that starts or stops waiting does so for its parent too.
    */
   adjust(frame: Frame, change: () => void): void {
-    const before = frame.isWaiting();
+    const waitingBefore = frame.isWaiting();
+    const inFlightBefore = frame.inFlight();
     change();
-    const after = frame.isWaiting();
-    if (before === after) return;
-    if (frame.active) this.inFlight += after ? -1 : 1;
+    const waiting = frame.isWaiting();
+    if (frame.active && inFlightBefore !== frame.inFlight()) this.inFlight += waiting ? -1 : 1;
+    if (waitingBefore === waiting) return;
     const parent = frame.parent;
     if (frame.active && parent)
-      this.adjust(parent, () => (parent.waitingChildren += after ? 1 : -1));
+      this.adjust(parent, () => (parent.waitingChildren += waiting ? 1 : -1));
   }
 
   private hostingFrames(invocation: string): Frame[] {

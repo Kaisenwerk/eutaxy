@@ -9,10 +9,10 @@
 import type { Bounds, EffectRecord, Platform, RunHooks, ScenarioSpec } from "@eutaxy/core";
 import { describe, expect, test } from "vitest";
 import { replayChooser } from "./chooser.ts";
-import { virtualEpoch } from "./clock.ts";
+import { realTick, virtualEpoch } from "./clock.ts";
 import { runInvocation } from "./deliver.ts";
 import { runOnce } from "./explore.ts";
-import { afterWorkTimerLimit, Run } from "./run.ts";
+import { afterWorkTimerLimit, CrashSignal, Run } from "./run.ts";
 
 const bounds = (concurrent: number): Bounds => ({
   maxFaultsPerRun: 1,
@@ -768,5 +768,697 @@ describe("an object's work after its answer", () => {
       "DO:X/x/after result PUT",
       "DO:X/x/after result PUT",
     ]);
+  });
+});
+
+/** A platform whose every event is one call into the object `x`, with the method `code` runs as the host's code. */
+function objectPlatform(
+  events: readonly { id: string; at?: number }[],
+  code: (event: string, hooks: RunHooks, inv: string) => Promise<unknown>,
+  options: { onAbandon?: () => void; host?: string } = {},
+): Platform {
+  return {
+    name: "objects",
+    assumptions: [],
+    concurrent: true,
+    reset: async () => {},
+    initialEvents: () =>
+      events.map((e) => ({ id: e.id, attempt: 1, data: null, ...(e.at ? { at: e.at } : {}) })),
+    restrictEvents: (s) => s,
+    async deliver(event, hooks) {
+      const inv = hooks.startInvocation(`${event.id}#${event.attempt}`);
+      const outcome = await runInvocation(hooks, inv, () =>
+        hooks.effect(
+          {
+            invocation: inv.id,
+            target: "DO:X",
+            op: "call",
+            args: null,
+            allowed: ["crash_after"],
+            hostsEffects: true,
+          },
+          () => hooks.hostedCode(options.host ?? HOST, () => code(event.id, hooks, inv.id)),
+          none,
+          { host: options.host ?? HOST, onAbandon: options.onAbandon ?? (() => {}) },
+        ),
+      );
+      return { status: outcome.status, followUps: [] };
+    },
+  };
+}
+
+const spec = (concurrent: number): ScenarioSpec => ({
+  version: 1,
+  name: "timing",
+  worker: { entry: "./w.ts", config: "./wrangler.jsonc" },
+  drive: { kind: "queue", queue: "q", messages: [] },
+  setup: [],
+  externals: [],
+  invariants: [],
+  bounds: bounds(concurrent),
+});
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+describe("an object's timers and effects around its answer", () => {
+  test("an object that awaits one of its own timers before answering is woken by it: the call completes", async () => {
+    const run = new Run({ chooser: replayChooser({ seed: 1, faults: [] }), bounds: bounds(1) });
+    run.install();
+    try {
+      const inv = run.startInvocation("i#1");
+      const result = await runInvocation(run, inv, () =>
+        run.effect(
+          {
+            invocation: "i#1",
+            target: "DO:X",
+            op: "call",
+            args: null,
+            allowed: [],
+            hostsEffects: true,
+          },
+          () =>
+            run.hostedCode(HOST, async () => {
+              await sleep(10);
+              await objectFetch(run, run.running());
+              return "answered";
+            }),
+          (v) => v,
+          { host: HOST },
+        ),
+      );
+      expect(result).toEqual({ status: "completed", value: "answered" });
+      expect(run.unsupportedReasons).toEqual([]);
+      expect(run.now()).toBeGreaterThanOrEqual(virtualEpoch + 10);
+      expect(ops(run.log.entries)).toEqual([
+        "i#1 call call",
+        "i#1 call GET",
+        "i#1 result GET",
+        "i#1 result call",
+      ]);
+      await run.driveAfterWork();
+      expect(run.hasAfterWork()).toBe(false);
+    } finally {
+      run.uninstall();
+    }
+  });
+
+  test("a timer the object set during the call and did not await fires after the answer crossed, not while it is in transit", async () => {
+    const run = new Run({ chooser: replayChooser({ seed: 1, faults: [] }), bounds: bounds(1) });
+    run.install();
+    try {
+      const inv = run.startInvocation("i#1");
+      await runInvocation(run, inv, () =>
+        run.effect(
+          {
+            invocation: "i#1",
+            target: "DO:X",
+            op: "call",
+            args: null,
+            allowed: [],
+            hostsEffects: true,
+          },
+          async () => {
+            const answer = run.hostedCode(HOST, async () => {
+              setTimeout(() => void objectFetch(run, run.running()), 10);
+              return "answered";
+            });
+            // The answer crosses back over several real ticks, as an RPC's does.
+            for (let i = 0; i < 4; i++) await realTick();
+            return answer;
+          },
+          none,
+          { host: HOST },
+        ),
+      );
+      await run.driveAfterWork();
+      expect(ops(run.log.entries)).toEqual([
+        "i#1 call call",
+        "i#1 result call",
+        "DO:X/x/after call GET",
+        "DO:X/x/after result GET",
+      ]);
+    } finally {
+      run.uninstall();
+    }
+  });
+
+  test("the caller's own timers stay the caller's: they do not fire while its call is in flight", async () => {
+    const run = new Run({ chooser: replayChooser({ seed: 1, faults: [] }), bounds: bounds(1) });
+    run.install();
+    try {
+      const inv = run.startInvocation("i#1");
+      let timedOut = false;
+      await runInvocation(run, inv, async () => {
+        const timeout = sleep(5).then(() => {
+          timedOut = true;
+        });
+        await run.effect(
+          {
+            invocation: "i#1",
+            target: "DO:X",
+            op: "call",
+            args: null,
+            allowed: [],
+            hostsEffects: true,
+          },
+          () =>
+            run.hostedCode(HOST, async () => {
+              await sleep(10);
+              return "answered";
+            }),
+          (v) => v,
+          { host: HOST },
+        );
+        expect(timedOut).toBe(false);
+        await timeout;
+      });
+      expect(timedOut).toBe(true);
+      expect(run.unsupportedReasons).toEqual([]);
+    } finally {
+      run.uninstall();
+    }
+  });
+
+  test("in a concurrent run the sleeping object's call completes, a delayed event due meanwhile is delivered first, and the log repeats", async () => {
+    const order: string[] = [];
+    const platform = objectPlatform(
+      [{ id: "a" }, { id: "b", at: virtualEpoch + 50 }],
+      async (event) => {
+        order.push(`${event} in`);
+        if (event === "a") await sleep(100);
+        order.push(`${event} out at ${Date.now() - virtualEpoch}`);
+        return event;
+      },
+    );
+    const logs: string[][] = [];
+    for (let i = 0; i < 2; i++) {
+      order.length = 0;
+      const run = new Run({ chooser: replayChooser({ seed: 3, faults: [] }), bounds: bounds(2) });
+      const log = await runOnce(spec(2), platform, run);
+      expect(run.unsupportedReasons).toEqual([]);
+      logs.push(ops(log.entries));
+    }
+    expect(logs[1]).toEqual(logs[0]);
+    expect(order).toEqual(["a in", "b in", "b out at 50", "a out at 100"]);
+  });
+
+  test("work after an answer that calls into another object sleeping before its answer completes too", async () => {
+    const run = new Run({ chooser: replayChooser({ seed: 1, faults: [] }), bounds: bounds(1) });
+    run.install();
+    try {
+      const inv = run.startInvocation("i#1");
+      let answered: unknown;
+      await runInvocation(run, inv, () =>
+        callObject(
+          run,
+          "i#1",
+          () => {},
+          async (running) => {
+            answered = await run.effect(
+              {
+                invocation: running,
+                target: "DO:Y",
+                op: "call",
+                args: null,
+                allowed: [],
+                hostsEffects: true,
+              },
+              () =>
+                run.hostedCode("DO:Y/y", async () => {
+                  await sleep(10);
+                  return "y";
+                }),
+              (v) => v,
+              { host: "DO:Y/y" },
+            );
+          },
+        ),
+      );
+      await run.driveAfterWork();
+      expect(answered).toBe("y");
+      expect(run.unsupportedReasons).toEqual([]);
+      expect(ops(run.log.entries)).toContain("DO:X/x/after result call");
+    } finally {
+      run.uninstall();
+    }
+  });
+
+  test("an effect the object issued before its answer outlives the caller's crash: it is the object's work once the call ended", async () => {
+    const run = new Run({
+      chooser: replayChooser({
+        seed: 1,
+        faults: [
+          { invocation: "i#1", ordinal: 0, fault: "crash_after", target: "DO:X", op: "call" },
+        ],
+      }),
+      bounds: bounds(1),
+    });
+    run.install();
+    try {
+      const inv = run.startInvocation("i#1");
+      let written = false;
+      const result = await runInvocation(run, inv, () =>
+        run.effect(
+          {
+            invocation: "i#1",
+            target: "DO:X",
+            op: "call",
+            args: null,
+            allowed: ["crash_after"],
+            hostsEffects: true,
+          },
+          async () =>
+            run.hostedCode(HOST, () => {
+              void run
+                .effect(
+                  { invocation: "i#1", target: "Fetch:api", op: "GET", args: null, allowed: [] },
+                  () => new Promise<number>((resolve) => setTimeout(() => resolve(1), 20)),
+                  none,
+                )
+                .then(() => {
+                  written = true;
+                });
+              return "answered";
+            }),
+          none,
+          { host: HOST },
+        ),
+      );
+      expect(result).toEqual({ status: "crashed" });
+      expect(run.hasAfterWork()).toBe(true);
+      await run.driveAfterWork();
+      expect(written).toBe(true);
+      expect(ops(run.log.entries)).toEqual([
+        "i#1 call call",
+        "i#1 call GET",
+        "i#1 result call",
+        "i#1 fault call",
+        "i#1 result GET",
+      ]);
+    } finally {
+      run.uninstall();
+    }
+  });
+
+  test("a crash injected into such an effect after the answer resets the object, not the caller", async () => {
+    const run = new Run({
+      chooser: replayChooser({
+        seed: 1,
+        faults: [
+          { invocation: "i#1", ordinal: 1, fault: "crash_after", target: "Fetch:api", op: "GET" },
+        ],
+      }),
+      bounds: bounds(1),
+    });
+    run.install();
+    try {
+      const inv = run.startInvocation("i#1");
+      let reset = false;
+      let continued = false;
+      const result = await runInvocation(run, inv, () =>
+        run.effect(
+          {
+            invocation: "i#1",
+            target: "DO:X",
+            op: "call",
+            args: null,
+            allowed: [],
+            hostsEffects: true,
+          },
+          async () =>
+            run.hostedCode(HOST, () => {
+              void run
+                .effect(
+                  {
+                    invocation: "i#1",
+                    target: "Fetch:api",
+                    op: "GET",
+                    args: null,
+                    allowed: ["crash_after"],
+                  },
+                  () => new Promise<number>((resolve) => setTimeout(() => resolve(1), 20)),
+                  none,
+                )
+                .then(() => {
+                  continued = true;
+                });
+              return "answered";
+            }),
+          none,
+          {
+            host: HOST,
+            onAbandon: () => {
+              reset = true;
+            },
+          },
+        ),
+      );
+      expect(result).toEqual({ status: "completed", value: "answered" });
+      await run.driveAfterWork();
+      expect(inv.isCrashed()).toBe(false);
+      expect(reset).toBe(true);
+      expect(continued).toBe(false);
+      expect(run.hasAfterWork()).toBe(false);
+      expect(ops(run.log.entries)).toEqual([
+        "i#1 call call",
+        "i#1 call GET",
+        "i#1 result call",
+        "i#1 result GET",
+        "i#1 fault GET",
+      ]);
+    } finally {
+      run.uninstall();
+    }
+  });
+
+  test("in a concurrent run an effect parked when the answer crossed is the object's own turn, faults included", async () => {
+    let reset = false;
+    const crashed: string[] = [];
+    const platform = objectPlatform(
+      [{ id: "a" }, { id: "b" }],
+      async (event, hooks) => {
+        if (event === "a") {
+          // Issued before the answer, not awaited: parked for its turn when the answer crosses.
+          void objectFetch(hooks, hooks.running(), "GET", ["crash_before"]).then(
+            () => crashed.push("a went on"),
+            () => crashed.push("a saw an error"),
+          );
+        }
+        return event;
+      },
+      {
+        onAbandon: () => {
+          reset = true;
+        },
+      },
+    );
+    const run = new Run({
+      chooser: replayChooser({
+        seed: 5,
+        faults: [
+          {
+            invocation: "DO:X/x/after",
+            ordinal: 0,
+            fault: "crash_before",
+            target: "Fetch:api",
+            op: "GET",
+          },
+        ],
+      }),
+      bounds: bounds(2),
+    });
+    const log = await runOnce(spec(2), platform, run);
+    expect(run.unsupportedReasons).toEqual([]);
+    const lines = ops(log.entries);
+    expect(lines.filter((l) => l.endsWith("result call"))).toEqual([
+      "a#1 result call",
+      "b#1 result call",
+    ]);
+    expect(lines).toContain("DO:X/x/after call GET");
+    expect(lines).toContain("DO:X/x/after fault GET");
+    expect(reset).toBe(true);
+    expect(crashed).toEqual([]);
+    expect(run.hasAfterWork()).toBe(false);
+  });
+
+  test("in a concurrent run a settle on a crashed invocation is released on the run's own step, with the crash signal", async () => {
+    const run = new Run({ chooser: replayChooser({ seed: 1, faults: [] }), bounds: bounds(2) });
+    const inv = run.startInvocation("i#1");
+    // The promise a crash settled where it happened may never wake its waiters (an object's task
+    // being torn down): the run itself releases them at its next step.
+    const wait = run.settle(new Promise<never>(() => {}), "i#1");
+    const outcome = runInvocation(run, inv, () => new Promise<never>(() => {}));
+    const released = expect(wait).rejects.toThrow(CrashSignal);
+    expect(run.abandon(["i#1"])).toBe(1);
+    expect(inv.isCrashed()).toBe(true);
+    await run.quiesce();
+    await released;
+    await expect(outcome).resolves.toEqual({ status: "crashed" });
+  });
+
+  test("a crash in one of two effects the object awaits during the call resets it: the other dies with the instance", async () => {
+    let reset = 0;
+    const ran: string[] = [];
+    const platform = objectPlatform(
+      [{ id: "a" }],
+      async (_event, hooks) => {
+        // Two effects issued together and awaited before the answer: both park, one gets its turn first.
+        await Promise.all(
+          ["GET", "PUT"].map((op) =>
+            objectFetch(hooks, hooks.running(), op, ["crash_before"]).then(() => ran.push(op)),
+          ),
+        );
+        return "answered";
+      },
+      {
+        onAbandon: () => {
+          reset++;
+        },
+      },
+    );
+    const run = new Run({
+      chooser: replayChooser({
+        seed: 2,
+        faults: [
+          { invocation: "a#1", ordinal: 1, fault: "crash_before", target: "Fetch:api", op: "GET" },
+        ],
+      }),
+      bounds: bounds(2),
+    });
+    const log = await runOnce(spec(2), platform, run);
+    expect(run.unsupportedReasons).toEqual([]);
+    expect(reset).toBe(1);
+    // Neither effect's code went on: the instance that issued them is gone, the other is not the next instance's work.
+    expect(ran).toEqual([]);
+    const lines = ops(log.entries);
+    expect(lines.filter((l) => l.startsWith("DO:X/x/after"))).toEqual([]);
+    // The fault hit whichever of the two the seed released first; neither performed.
+    expect(lines.filter((l) => /^a#1 fault (GET|PUT)$/.test(l))).toHaveLength(1);
+    expect(lines.filter((l) => / result (GET|PUT)$/.test(l))).toEqual([]);
+  });
+
+  test("a heartbeat fired by the caller's own wait counts against the bound too", async () => {
+    const run = new Run({ chooser: replayChooser({ seed: 1, faults: [] }), bounds: bounds(1) });
+    run.install();
+    try {
+      const inv = run.startInvocation("i#1");
+      let beats = 0;
+      await runInvocation(run, inv, async () => {
+        await run.effect(
+          {
+            invocation: "i#1",
+            target: "DO:X",
+            op: "call",
+            args: null,
+            allowed: [],
+            hostsEffects: true,
+          },
+          async () =>
+            run.hostedCode(HOST, () => {
+              setInterval(() => {
+                beats++;
+              }, 1);
+              return "answered";
+            }),
+          none,
+          { host: HOST },
+        );
+        // The caller goes on waiting on a timer of its own, during which the object's interval fires.
+        await sleep(10_000);
+      });
+      expect(beats).toBe(afterWorkTimerLimit + 1);
+      expect(run.unsupportedReasons.join()).toContain("fired its timers");
+    } finally {
+      run.uninstall();
+    }
+  });
+
+  test("an object that sleeps once per call is not a heartbeat: the count starts over when its work settles", async () => {
+    const run = new Run({ chooser: replayChooser({ seed: 1, faults: [] }), bounds: bounds(1) });
+    run.install();
+    try {
+      for (let i = 0; i < afterWorkTimerLimit + 5; i++) {
+        const inv = run.startInvocation(`i#${i}`);
+        await runInvocation(run, inv, () =>
+          run.effect(
+            {
+              invocation: inv.id,
+              target: "DO:X",
+              op: "call",
+              args: null,
+              allowed: [],
+              hostsEffects: true,
+            },
+            () =>
+              run.hostedCode(HOST, async () => {
+                await sleep(1);
+                return "answered";
+              }),
+            none,
+            { host: HOST },
+          ),
+        );
+        await run.driveAfterWork();
+      }
+      expect(run.unsupportedReasons).toEqual([]);
+    } finally {
+      run.uninstall();
+    }
+  });
+
+  test("one handler making many sleeping calls in a row is not a heartbeat either: each call ends with nothing outstanding", async () => {
+    const run = new Run({ chooser: replayChooser({ seed: 1, faults: [] }), bounds: bounds(1) });
+    run.install();
+    try {
+      const inv = run.startInvocation("i#1");
+      await runInvocation(run, inv, async () => {
+        for (let i = 0; i < afterWorkTimerLimit + 5; i++)
+          await run.effect(
+            {
+              invocation: "i#1",
+              target: "DO:X",
+              op: "call",
+              args: null,
+              allowed: [],
+              hostsEffects: true,
+            },
+            () =>
+              run.hostedCode(HOST, async () => {
+                await sleep(1);
+                return "answered";
+              }),
+            none,
+            { host: HOST },
+          );
+      });
+      expect(run.unsupportedReasons).toEqual([]);
+    } finally {
+      run.uninstall();
+    }
+  });
+
+  test("code that returns or throws after its invocation crashed ended crashed, even where the crash woke nothing", async () => {
+    const run = new Run({ chooser: replayChooser({ seed: 1, faults: [] }), bounds: bounds(1) });
+    run.install();
+    try {
+      // As in workerd when the crash reset the object: the invocation's `crashed` promise wakes no
+      // waiter, only its flag tells; the runtime's own error for the aborted call arrives first.
+      const silent = (real: ReturnType<Run["startInvocation"]>) => ({
+        id: real.id,
+        crashed: new Promise<void>(() => {}),
+        isCrashed: () => real.isCrashed(),
+      });
+      const a = run.startInvocation("a#1");
+      const thrown = await runInvocation(run, silent(a), async () => {
+        run.abandon(["a#1"]);
+        throw new Error("the object was aborted");
+      });
+      expect(thrown).toEqual({ status: "crashed" });
+      const b = run.startInvocation("b#1");
+      const returned = await runInvocation(run, silent(b), async () => {
+        run.abandon(["b#1"]);
+        return "late";
+      });
+      expect(returned).toEqual({ status: "crashed" });
+    } finally {
+      run.uninstall();
+    }
+  });
+
+  test("a crash in a call ends the object's work and timers before the platform resets it: a reset that tears its task down loses nothing", async () => {
+    const run = new Run({
+      chooser: replayChooser({
+        seed: 1,
+        faults: [
+          { invocation: "i#1", ordinal: 1, fault: "crash_before", target: "Fetch:api", op: "GET" },
+        ],
+      }),
+      bounds: bounds(1),
+    });
+    run.install();
+    try {
+      const inv = run.startInvocation("i#1");
+      const seenAtReset: string[] = [];
+      const result = await runInvocation(run, inv, () =>
+        run.effect(
+          {
+            invocation: "i#1",
+            target: "DO:X",
+            op: "call",
+            args: null,
+            allowed: [],
+            hostsEffects: true,
+          },
+          () =>
+            run.hostedCode(HOST, () => {
+              // A timer of the object's (another call's sleep, a heartbeat) pending when the crash comes.
+              setTimeout(() => {}, 5_000);
+              return objectFetch(run, run.running(), "GET", ["crash_before"]);
+            }),
+          none,
+          {
+            host: HOST,
+            onAbandon: () => {
+              // What the platform's reset finds: the object's work ended, its timer gone.
+              seenAtReset.push(`afterWork=${run.hasAfterWork()} timerDue=${run.nextTimerDue()}`);
+              throw new Error("the object's task is torn down here");
+            },
+          },
+        ),
+      );
+      expect(result).toEqual({ status: "crashed" });
+      expect(seenAtReset).toEqual(["afterWork=false timerDue=undefined"]);
+      await run.driveAfterWork();
+      expect(run.unsupportedReasons).toEqual([]);
+    } finally {
+      run.uninstall();
+    }
+  });
+
+  test("real work the object starts and does not await (a digest) keeps its work alive, and the effect after it is the object's own", async () => {
+    const run = new Run({ chooser: replayChooser({ seed: 1, faults: [] }), bounds: bounds(1) });
+    run.install();
+    try {
+      const inv = run.startInvocation("i#1");
+      let hashed = false;
+      await runInvocation(run, inv, () =>
+        run.effect(
+          {
+            invocation: "i#1",
+            target: "DO:X",
+            op: "call",
+            args: null,
+            allowed: [],
+            hostsEffects: true,
+          },
+          async () =>
+            run.hostedCode(HOST, () => {
+              const { subtle } = (
+                globalThis as unknown as {
+                  crypto: { subtle: { digest(a: string, d: Uint8Array): Promise<unknown> } };
+                }
+              ).crypto;
+              void subtle.digest("SHA-256", new Uint8Array([1, 2, 3])).then(async () => {
+                hashed = true;
+                await objectFetch(run, run.running());
+              });
+              return "answered";
+            }),
+          none,
+          { host: HOST },
+        ),
+      );
+      expect(run.hasAfterWork()).toBe(true);
+      await run.driveAfterWork();
+      expect(hashed).toBe(true);
+      expect(ops(run.log.entries)).toEqual([
+        "i#1 call call",
+        "i#1 result call",
+        "DO:X/x/after call GET",
+        "DO:X/x/after result GET",
+      ]);
+    } finally {
+      run.uninstall();
+    }
   });
 });

@@ -50,6 +50,8 @@ export class Turns {
   private readonly pending: () => number;
   /** Whether an object's work after an answer may be running: a wake could then come from inside it. */
   private readonly inObjects: () => boolean;
+  /** Whether everything in flight is a hosting effect whose code is idle (see `Frames.idleHosts`). */
+  private readonly idleHosted: () => boolean;
   /** Invocations waiting at an effect for their turn. */
   private parked: Parked[] = [];
   private parkSeq = 0;
@@ -78,6 +80,7 @@ export class Turns {
     reads: () => { count: number } | undefined,
     pending: () => number = () => 0,
     inObjects: () => boolean = () => false,
+    idleHosted: () => boolean = () => false,
   ) {
     this.chooser = chooser;
     this.frames = frames;
@@ -85,6 +88,7 @@ export class Turns {
     this.reads = reads;
     this.pending = pending;
     this.inObjects = inObjects;
+    this.idleHosted = idleHosted;
   }
 
   /** The turns picked so far, as a copy. */
@@ -102,6 +106,17 @@ export class Turns {
     const option = { label: `${inv.id}@${inv.parks++}`, invocation: inv.id, target };
     this.parked.push({ inv, seq: this.parkSeq++, go, option, ...(host ? { host } : {}) });
     this.rested();
+  }
+
+  /**
+   * The hosting effect `host` ended with effects of its hosted code parked:
+   * they are `owner`'s turns now (the host's work after its answer), so the
+   * caller's crash does not drop them and a fault in them is the owner's.
+   */
+  adopt(host: Frame, owner: Turner): void {
+    this.parked = this.parked.map((p) =>
+      p.host === host ? { ...p, inv: owner, option: { ...p.option, invocation: owner.id } } : p,
+    );
   }
 
   /** See `Run.rested`. */
@@ -162,9 +177,16 @@ export class Turns {
   async quiesce(): Promise<void> {
     for (;;) {
       const moved = await this.wait();
-      // Real I/O: its completion wakes the next wait, and hosted code's moves show at its end. A
-      // host's timer fired and not yet run is on its way too.
-      if (this.frames.inFlight > 0 || this.pending() > 0) continue;
+      // A host's timer fired and not yet run is on its way.
+      if (this.pending() > 0) continue;
+      // Real I/O: its completion wakes the next wait, and hosted code's moves show at its end. When
+      // only hosting effects whose code is idle are in flight and a wait saw nothing move, that
+      // code awaits a timer of its own (an object sleeping before it answers): at rest, for the
+      // run to fire it.
+      if (this.frames.inFlight > 0) {
+        if (!moved && this.idleHosted()) return;
+        continue;
+      }
       // An invocation parked or a delivery ended since the step: what the step set off is at rest.
       if (this.rests !== this.restsAtStep) return;
       // Nothing in flight and nothing at rest: code waiting on something Eutaxy cannot see has one

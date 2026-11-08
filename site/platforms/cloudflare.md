@@ -145,7 +145,14 @@ move or a crash resets the object, which ends it with the instance (the
 next instance's work is `/after#2`). A sequential run lets it run to rest
 before the next event; a concurrent run explores the other orders, a second
 call entering the object while the first's work awaits its model among
-them, which is where a lost update in such work hides.
+them, which is where a lost update in such work hides. The timing of the
+work around the answer does not matter to the model: an object that awaits
+a timer of its own before answering is woken by it; an effect it issued
+before its answer and did not await, like a timer it set or real work it
+started (a digest), is the object's once the call has answered, so the
+caller's crash does not end it and a fault in it resets the object, not the
+caller; and a crash injected into an effect the object makes during a call
+crashes the call and resets the object.
 
 **SQLite storage.** For a SQLite-backed class (`new_sqlite_classes` in the
 wrangler migrations, the backend Cloudflare recommends and the Agents SDK

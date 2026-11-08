@@ -271,12 +271,15 @@ An effect's real I/O (a D1 statement, an R2 call) took longer than the
 scenario's time budget. Raise `budgetMs` (or `--budget-ms`) if the
 machine is slow; if it never completes, the code is waiting on itself.
 
-**`DO:<binding>/<object>/after: the object's work after its answer fired its timers <n> times and does not settle (an interval or a timer that re-arms itself); the model waits for such work only up to 100 firings per run`**
+**`DO:<binding>/<object>/after: the object's work after its answer fired its timers <n> times and does not settle (an interval or a timer that re-arms itself); the model waits for such work only up to 100 firings without it settling`**
 Work a Durable Object goes on with after answering runs as the object's
 own invocation until nothing of it can move. A heartbeat never settles:
 an interval, or a timeout that sets itself again. The runtime would run
 it until the object is evicted, which a run cannot wait for, so the run
-stops waiting after 100 firings and the object's work ends. Give the
+stops waiting after 100 firings without the work settling, whichever
+wait fired them, and the object's work ends (the count starts over each
+time the work settles, so an object that sleeps once per call is not a
+heartbeat). Give the
 heartbeat an end the scenario reaches, or move it to an alarm, which the
 model fires a bounded number of times (`alarmsPerObject`).
 

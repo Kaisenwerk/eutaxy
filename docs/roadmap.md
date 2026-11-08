@@ -172,10 +172,13 @@ as non-SQLite while `check` treated it as SQLite: a bug, fixed first with
 a test). Each is one copy now, with the byte-identical traces as the
 oracle that nothing else changed, before the new turns are added. Gate: an
 object's unawaited work and a timed-out step attempt each run as turns of
-their own; a planted bug in each is caught (a lost update in work started
-after the answer, a late attempt racing its recovery), each has a
-differential entry where the local runtime implements it, and every
-example and the v0.14 gate stay green.
+their own, and the object's timings around its answer (a timer awaited
+before it, an effect issued before it and not awaited, real work after it)
+each end in a verdict under every fault placement; a planted bug in each
+feature is caught (a lost update in work started after the answer, a late
+attempt racing its recovery), each has a differential entry where the
+local runtime implements it, and every example and the v0.14 gate stay
+green.
 
 ### Candidates: the larger gaps in the model
 

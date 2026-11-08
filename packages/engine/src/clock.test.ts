@@ -293,6 +293,43 @@ describe("settleOn", () => {
   });
 });
 
+describe("settleOn on a crashed invocation", () => {
+  test("rejects with the crash error the context gives, seen on its own tick, rather than hanging", async () => {
+    const clock = new VirtualClock();
+    let crashed = false;
+    const stuck: string[] = [];
+    const wait = settleOn(new Promise<never>(() => {}), {
+      clock,
+      inFlight: () => 0,
+      crashed: () => crashed,
+      stuck: () => stuck.push("stuck"),
+      crashError: () => new Error("crashed here"),
+    });
+    // Crashed before the wait's first tick looks: the flag, not a promise, is what the tick reads.
+    crashed = true;
+    await expect(wait).rejects.toThrow("crashed here");
+    expect(stuck).toEqual([]);
+  });
+});
+
+describe("restoring the globals", () => {
+  test("stops the clock: no timer stays pending, so a poller armed for one ends", () => {
+    const patched = patchGlobals("seed");
+    try {
+      setTimeout(() => {}, 1000);
+      setInterval(() => {}, 10);
+      expect(patched.clock.pendingTimers()).toBe(2);
+    } finally {
+      patched.restore();
+    }
+    expect(patched.clock.pendingTimers()).toBe(0);
+    expect(patched.clock.firedPending()).toBe(0);
+    // A timer set on the stopped clock is not kept either.
+    patched.clock.setTimeout(() => {}, 5);
+    expect(patched.clock.pendingTimers()).toBe(0);
+  });
+});
+
 describe("realDeadline", () => {
   test("a deadline past the host's timer limit waits rather than firing at once", async () => {
     // Hosts fire a timeout above 2^31 - 1 ms after 1 ms; a budget that large must still mean "not yet".

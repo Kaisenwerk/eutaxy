@@ -741,9 +741,10 @@ shares the reading of the limit and none of the proxy code.
   ends it with the instance; the object's next instance's work is a new
   invocation (`/after#2`). Work that never settles (a heartbeat: an
   interval, a timer that re-arms itself), which the runtime would run until
-  the object is evicted, is waited for up to 100 timer firings per run
-  (`afterWorkTimerLimit`); past that the run is `UNSUPPORTED` and names the
-  object. In a sequential run that work runs to rest
+  the object is evicted, is waited for up to 100 timer firings without
+  settling (`afterWorkTimerLimit`, counted from the last time the work
+  settled, whichever wait fired them); past that the run is `UNSUPPORTED`
+  and names the object. In a sequential run that work runs to rest
   before the next event, one of the orders the runtime allows; a
   concurrent run explores the others, the second call entering the object
   while the first's work awaits its model among them. The runtime carries
@@ -762,14 +763,26 @@ shares the reading of the limit and none of the proxy code.
   not the caller's, and in workerd are run by a poller armed inside the
   object, as are its waits for a turn after its answer: a real timer the
   object's code armed after its request completed would keep the object
-  referenced. Current limits: an object that awaits one of its own timers
-  before answering a call is not supported yet (the call's effect is in
-  flight, so no timer fires, and the call runs into the effect budget:
-  `UNSUPPORTED`); an effect the object issued before its answer is the
-  call's, so a crash of the caller after the answer ends it with the call,
-  where the runtime would let the object finish it; real work other than
-  effects and timers that the object starts and does not await (a Web
-  Crypto digest) is not waited for after the answer; storage operations are not
+  referenced. An object that awaits a timer of its own before it answers
+  is woken by it: while everything in flight is a call whose object's code
+  is still running and idle (it has not returned; no effect of it
+  performing or waiting, nothing hosted in it, no real work tracked) and
+  one such object has a timer pending, the run fires those objects'
+  timers, after a tick for work it cannot see (a call crossing into the
+  object, storage I/O); the caller's own timers stay the caller's and do
+  not fire while its call is in flight, and once the object's code has
+  returned its call is in flight until the answer has crossed, so a timer
+  it set and did not await fires after the answer. Work the object's
+  code has outstanding when the call answers (an effect it issued and did
+  not await, performing or waiting for its turn; a timer; real work such as
+  a Web Crypto digest) is the object's from then on: the run waits for it,
+  the caller's crash does not end it, an effect of it that opens after the
+  answer is recorded as the object's, and a fault in it resets the object,
+  not the caller. A crash injected into an effect the object makes during a
+  call crashes the call and resets the object; the run sees a crash on its
+  own ticks (a wait on a crashed invocation ends with its `CrashSignal`),
+  since the reset tears down the object's task, with whatever that task
+  had settled. Current limits: storage operations are not
   turns (the input gate holds them, so this is the runtime's behaviour);
   the object's own binding calls are not recorded, and an object reached
   only through another object's binding makes the run `UNSUPPORTED`, as do

@@ -141,9 +141,12 @@ export interface RunHooks {
   snapshot(invocation: string, target: string, payload: JsonValue): void;
   /**
    * Wait for user code under the engine's virtual clock: real I/O completes,
-   * timers fire while the invocation is idle, and a crashed invocation's
-   * promise is abandoned. Platforms await handler and background promises
-   * through this, never directly.
+   * timers fire while the invocation is idle, and once the invocation has
+   * crashed the wait rejects with the engine's crash signal, seen on the
+   * run's own tick (whatever the crash itself settled may never wake its
+   * waiters: a Durable Object's reset tears down the task it happened in).
+   * Platforms await handler and background promises through this, never
+   * directly, and treat the crash signal as the invocation's end.
    */
   settle<T>(promise: Promise<T>, invocation: string): Promise<T>;
 }
