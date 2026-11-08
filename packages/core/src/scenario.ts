@@ -104,10 +104,10 @@ export function validateScenario(spec: ScenarioSpec): readonly string[] {
   const errors: string[] = [];
   if (spec.version !== 1) errors.push(`version must be 1, got ${String(spec.version)}`);
   if (!spec.name.trim()) errors.push("name must not be empty");
+  else if (!/^[a-z0-9][a-z0-9-]*$/.test(spec.name))
+    errors.push(`name must be lowercase letters, digits and dashes: ${JSON.stringify(spec.name)}`);
   if (spec.platform !== undefined && !spec.platform)
     errors.push("platform must not be empty when given");
-  if (!/^[a-z0-9][a-z0-9-]*$/.test(spec.name))
-    errors.push(`name must be lowercase letters, digits and dashes: ${JSON.stringify(spec.name)}`);
   if (!spec.worker.entry) errors.push("worker.entry must not be empty");
   if (!spec.worker.config) errors.push("worker.config must not be empty");
   if (!spec.drive.kind) errors.push("drive.kind must not be empty");
@@ -131,7 +131,7 @@ export function validateScenario(spec: ScenarioSpec): readonly string[] {
   const ext = new Set<string>();
   for (const e of spec.externals) {
     if (!e.name) errors.push("every external needs a name");
-    if (ext.has(e.name)) errors.push(`duplicate external ${JSON.stringify(e.name)}`);
+    else if (ext.has(e.name)) errors.push(`duplicate external ${JSON.stringify(e.name)}`);
     ext.add(e.name);
     if (!e.host) errors.push(`external ${JSON.stringify(e.name)} needs a host`);
     (e.responses ?? []).forEach((r, i) => {

@@ -74,6 +74,20 @@ describe("validateScenario", () => {
     );
   });
 
+  test("reports an empty name once, and two unnamed externals as unnamed, not as duplicates", () => {
+    const errors = validateScenario({
+      ...good,
+      name: "",
+      externals: [
+        { name: "", host: "a", guarantees: {} },
+        { name: "", host: "b", guarantees: {} },
+      ],
+    });
+    expect(errors.filter((e) => e.startsWith("name "))).toEqual(["name must not be empty"]);
+    expect(errors.filter((e) => e.startsWith("duplicate external"))).toEqual([]);
+    expect(errors.filter((e) => e === "every external needs a name")).toHaveLength(2);
+  });
+
   test("requires at least one invariant", () => {
     expect(validateScenario({ ...good, invariants: [] })).toContain(
       "at least one invariant is required",
