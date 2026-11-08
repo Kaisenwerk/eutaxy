@@ -20,7 +20,6 @@ import { alarmSource, deliverAlarm } from "./alarms.ts";
 import { type CalleeModule, CalleeState, calleeEnv, proxyCallee } from "./callees.ts";
 import { isD1, type ProxyContext, proxyD1, resetD1, snapshotD1 } from "./d1.ts";
 import {
-  alarmRunner,
   BindingState,
   type DurableObjectTestHelpers,
   evictObject,
@@ -30,6 +29,7 @@ import {
   runInObject,
   snapshotNamespace,
 } from "./durable-objects.ts";
+import type { ObjectAccess } from "./object-access.ts";
 import { isR2, proxyR2, resetR2, snapshotR2, VersionBook } from "./r2.ts";
 import {
   type CalleeSetup,
@@ -172,19 +172,6 @@ export interface DurableObjectDeps {
   readonly real: (name: string) => unknown;
 }
 
-/** What the WebSocket delivery needs of a namespace's objects: to run code inside one, and the crash semantics an alarm has. */
-export interface ObjectAccess {
-  run<T>(
-    binding: string,
-    id: string,
-    object: string,
-    fn: (instance: unknown, live: DurableObjectState) => Promise<T>,
-  ): Promise<T | undefined>;
-  abort(binding: string, id: string): void;
-  mayPark(binding: string, id: string): boolean;
-  evict(binding: string, id: string): Promise<void>;
-}
-
 /**
  * A Durable Object namespace: the real objects workerd runs, cleared, seeded
  * and evicted before each run, their storage snapshotted after it, and their
@@ -281,10 +268,7 @@ export function durableObjectBinding(
         binding,
         book: stateFor(binding).alarms,
         limit: alarmLimits.get(binding) ?? defaultAlarmsPerObject,
-        runAlarm: alarmRunner(namespace(binding), binding, ctx, helpers, stateFor(binding)),
-        abort: (id) => stateFor(binding).abort(id),
-        mayPark: (id) => stateFor(binding).mayPark(id),
-        evict: (id) => evictObject(namespace(binding), helpers, id),
+        objects,
         bookkeep: (op, args) =>
           note(hooks, {
             invocation: hooks.bookkeeping(),

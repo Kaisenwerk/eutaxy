@@ -8,7 +8,8 @@
 import type { EffectLog, FaultDecision, RunHooks, ScenarioSpec } from "@eutaxy/core";
 import { Run, replayChooser, runOnce, virtualEpoch } from "@eutaxy/engine";
 import { describe, expect, test } from "vitest";
-import { alarmRunner, BindingState } from "./durable-objects.ts";
+import { runAlarm } from "./alarms.ts";
+import { BindingState, runInObject } from "./durable-objects.ts";
 import { Backing, FakeStorage } from "./fake-durable-objects.ts";
 import { createCloudflarePlatform, type WorkerHandler } from "./platform.ts";
 import { durableObject, http } from "./scenario.ts";
@@ -510,14 +511,21 @@ describe("Durable Object alarms", () => {
     // The alarm being delivered is generation 1; a later setAlarm made it generation 2.
     state.alarms.entry("id-r").gen = 2;
     const hooks = { enqueue: () => {}, unsupported: () => {} } as unknown as RunHooks;
-    const run = alarmRunner(
-      namespace as unknown as DurableObjectNamespace,
-      "REMINDER",
-      { hooks, currentInvocation: () => "i" },
-      helpers,
-      state,
-    );
-    await run("id-r", "r", { retryCount: 0, isRetry: false }, 1);
+    const ctx = { hooks, currentInvocation: () => "i" };
+    const real = namespace as unknown as DurableObjectNamespace;
+    const objects = {
+      run: <T>(
+        binding: string,
+        id: string,
+        object: string,
+        fn: (instance: unknown, live: DurableObjectState) => Promise<T>,
+      ) => runInObject(real, binding, ctx, helpers, state, id, object, fn),
+      abort: () => {},
+      mayPark: () => true,
+      evict: async () => {},
+    };
+    const d = { binding: "REMINDER", book: state.alarms, objects };
+    await runAlarm(hooks, d, "id-r", "r", { retryCount: 0, isRetry: false }, 1);
     expect(backings.get("id-r")?.data.get("fired")).toBeUndefined();
   });
 

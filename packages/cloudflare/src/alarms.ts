@@ -23,7 +23,7 @@ import {
   readFaults,
   redelivery,
 } from "@eutaxy/core";
-import { runInvocation } from "@eutaxy/engine";
+import { hostedInObject, type ObjectAccess } from "./object-access.ts";
 
 /** `EventRef.source` of an alarm event. */
 export const alarmSource = "durable_object_alarm";
@@ -251,21 +251,39 @@ export interface AlarmDelivery {
   readonly book: AlarmBook;
   /** Alarm firings allowed per object per run; later ones are recorded and not fired. */
   readonly limit: number;
-  /** Run the handler inside the object, after taking over its alarms. */
-  readonly runAlarm: (
-    id: string,
-    object: string,
-    info: { readonly retryCount: number; readonly isRetry: boolean },
-    gen: number,
-  ) => Promise<void>;
+  /** The namespace's objects: the handler runs inside one, with an alarm's crash semantics. */
+  readonly objects: ObjectAccess;
   /** Record a platform action (an alarm not fired, a handler given up on). */
   readonly bookkeep: (op: string, args: JsonValue) => void;
-  /** Reset the object, when the alarm's invocation crashes inside its handler. */
-  readonly abort: (id: string) => void;
-  /** Whether an effect the handler makes may wait for a turn (not inside blockConcurrencyWhile). */
-  readonly mayPark: (id: string) => boolean;
-  /** Drop the object's instance, when its alarm invocation crashed around the handler. */
-  readonly evict: (id: string) => Promise<void>;
+}
+
+/**
+ * Run an object's `alarm()` handler inside it, after taking over its alarms
+ * (the instance may be new since the alarm was set).
+ */
+export async function runAlarm(
+  hooks: RunHooks,
+  d: Pick<AlarmDelivery, "binding" | "book" | "objects">,
+  id: string,
+  object: string,
+  info: { readonly retryCount: number; readonly isRetry: boolean },
+  gen: number,
+): Promise<void> {
+  await d.objects.run(d.binding, id, object, async (instance) => {
+    // Superseded while the effect waited for its turn: the handler of a cancelled alarm never runs.
+    const entry = d.book.entry(id);
+    if (entry.gen !== gen) return;
+    // The alarm is consumed as its handler starts: from here getAlarm() returns null.
+    entry.time = null;
+    const handler = (instance as { alarm?: (info: unknown) => unknown }).alarm;
+    if (typeof handler !== "function") {
+      hooks.unsupported(
+        `Durable Object ${d.binding} ${object} set an alarm but has no alarm() handler`,
+      );
+      return;
+    }
+    await handler.call(instance, info);
+  });
 }
 
 /**
@@ -296,27 +314,27 @@ export async function deliverAlarm(
   const invocation = invocationOf(event);
   const inv = hooks.startInvocation(invocation);
   const info = { retryCount: a.retryCount, isRetry: a.retryCount > 0 };
-  const { status } = await runInvocation(hooks, inv, () =>
-    hooks.effect(
-      {
-        invocation,
-        target: `DO:${d.binding}`,
-        op: "alarm",
-        args: { object: a.object, retryCount: a.retryCount },
-        // Crash before: the handler never ran. Crash after: it ran and committed, but counts as failed.
-        allowed: readFaults,
-        hostsEffects: true,
-      },
-      async () => {
-        await d.runAlarm(a.id, a.object, info, a.gen);
-        return null;
-      },
-      () => null,
-      { onAbandon: () => d.abort(a.id), mayPark: () => d.mayPark(a.id) },
-    ),
-  );
   // A crash is the object's: its in-memory state goes with the instance, whatever the handler did.
-  if (status === "crashed") await d.evict(a.id);
+  const status = await hostedInObject(
+    hooks,
+    inv,
+    d.objects,
+    d.binding,
+    a.id,
+    {
+      invocation,
+      target: `DO:${d.binding}`,
+      op: "alarm",
+      args: { object: a.object, retryCount: a.retryCount },
+      // Crash before: the handler never ran. Crash after: it ran and committed, but counts as failed.
+      allowed: readFaults,
+    },
+    async () => {
+      await runAlarm(hooks, d, a.id, a.object, info, a.gen);
+      return null;
+    },
+    () => null,
+  );
   if (status !== "completed") {
     // The retries so far are the attempt less one: retryCount counts them too.
     const next = redelivery(event, maxRetries, { maxRedeliveries });

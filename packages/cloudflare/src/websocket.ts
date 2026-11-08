@@ -42,8 +42,8 @@ import {
 } from "@eutaxy/core";
 import { note, realTick, runInvocation } from "@eutaxy/engine";
 import { drainBackground, executionContext, type RunningWorker } from "./background.ts";
-import type { ObjectAccess } from "./bindings.ts";
 import { requestOrigin } from "./http.ts";
+import { hostedInObject, type ObjectAccess } from "./object-access.ts";
 import type { WebSocketConnectionSpec, WebSocketDrive, WebSocketEventData } from "./scenario.ts";
 
 /** The object a connection reached, as the stub proxy saw its 101: the invocation whose stub call it was, and the client end. */
@@ -565,59 +565,57 @@ async function deliverMessage(
     return { status: "completed", followUps: [] };
   }
   const { binding, id, object } = conn.upgrade;
-  const { status } = await runInvocation(hooks, inv, () =>
-    hooks.effect(
-      { invocation, target, op: "send", args, allowed: readFaults, hostsEffects: true },
-      async () => {
-        await deps.objects.run(binding, id, object, async (instance, live) => {
-          // A dropped instance left the connection's server end under a new identity: find it again.
-          const { lost } = deps.connections.rebind(conn.upgrade, live);
-          if (lost.includes(conn)) {
-            hooks.unsupported(
-              `WebSocket ${c.id}: the connections ${lost.map((l) => l.spec.id).join(", ")} of ${object} cannot be told apart after its instance was dropped; give each socket an attachment or a tag`,
-            );
-            return;
-          }
-          // The runtime would answer these without waking the object; delivering to the handler would not.
-          if (live.getWebSocketAutoResponse()) {
-            hooks.unsupported(
-              `Durable Object ${binding} ${object} uses setWebSocketAutoResponse, which is not modelled`,
-            );
-            return;
-          }
-          const handler = (instance as { webSocketMessage?: unknown }).webSocketMessage;
-          if (typeof handler !== "function") {
-            hooks.unsupported(
-              `Durable Object ${binding} ${object} has no webSocketMessage handler; only the Hibernation API is modelled`,
-            );
-            return;
-          }
-          const end = conn.server ?? server;
-          await (handler as (ws: WebSocket, m: string) => Promise<unknown>).call(
-            instance,
-            end,
-            frameText(data.data),
+  // A crash is the object's: its in-memory state goes with the instance; the connection stays.
+  const status = await hostedInObject(
+    hooks,
+    inv,
+    deps.objects,
+    binding,
+    id,
+    { invocation, target, op: "send", args, allowed: readFaults },
+    async () => {
+      await deps.objects.run(binding, id, object, async (instance, live) => {
+        // A dropped instance left the connection's server end under a new identity: find it again.
+        const { lost } = deps.connections.rebind(conn.upgrade, live);
+        if (lost.includes(conn)) {
+          hooks.unsupported(
+            `WebSocket ${c.id}: the connections ${lost.map((l) => l.spec.id).join(", ")} of ${object} cannot be told apart after its instance was dropped; give each socket an attachment or a tag`,
           );
-          // The handler may have rewritten the attachment: keep what identifies the end current.
-          conn.identity = identityOf(end, live);
-        });
-        // The frames the object sent back, or its close, cross to the client end now.
-        await settleFrames();
-        return { delivered: true };
-      },
-      (v) => v,
-      {
-        onAbandon: () => deps.objects.abort(binding, id),
-        mayPark: () => deps.objects.mayPark(binding, id),
-      },
-    ),
+          return;
+        }
+        // The runtime would answer these without waking the object; delivering to the handler would not.
+        if (live.getWebSocketAutoResponse()) {
+          hooks.unsupported(
+            `Durable Object ${binding} ${object} uses setWebSocketAutoResponse, which is not modelled`,
+          );
+          return;
+        }
+        const handler = (instance as { webSocketMessage?: unknown }).webSocketMessage;
+        if (typeof handler !== "function") {
+          hooks.unsupported(
+            `Durable Object ${binding} ${object} has no webSocketMessage handler; only the Hibernation API is modelled`,
+          );
+          return;
+        }
+        const end = conn.server ?? server;
+        await (handler as (ws: WebSocket, m: string) => Promise<unknown>).call(
+          instance,
+          end,
+          frameText(data.data),
+        );
+        // The handler may have rewritten the attachment: keep what identifies the end current.
+        conn.identity = identityOf(end, live);
+      });
+      // The frames the object sent back, or its close, cross to the client end now.
+      await settleFrames();
+      return { delivered: true };
+    },
+    (v) => v,
   );
-  // A crash is the object's: its in-memory state goes with the instance; the connection stays. No
-  // retry follows a message, so the instance is rebuilt here, within the run, where its constructor
-  // is observed (an alarm's retry does that for an alarm); an object rebuilt only for the snapshot
-  // would make the run UNSUPPORTED.
+  // No retry follows a message, so the instance is rebuilt here, within the run, where its
+  // constructor is observed (an alarm's retry does that for an alarm); an object rebuilt only for
+  // the snapshot would make the run UNSUPPORTED.
   if (status === "crashed") {
-    await deps.objects.evict(binding, id);
     // An effect of a run of its own (the crashed invocation is over), so the scheduler sees the
     // wait and the constructor's effects have an invocation.
     const rebuild = hooks.startInvocation(`${invocation}/rebuild`);

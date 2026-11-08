@@ -503,41 +503,6 @@ export async function runInObject<T>(
   );
 }
 
-/**
- * Run an object's `alarm()` handler inside it, after taking over its alarms
- * (the instance may be new since the alarm was set).
- */
-export function alarmRunner(
-  real: DurableObjectNamespace,
-  binding: string,
-  ctx: ProxyContext,
-  helpers: DurableObjectTestHelpers | undefined,
-  state: BindingState,
-): (
-  id: string,
-  object: string,
-  info: { readonly retryCount: number; readonly isRetry: boolean },
-  gen: number,
-) => Promise<void> {
-  return async (id, object, info, gen) => {
-    await runInObject(real, binding, ctx, helpers, state, id, object, async (instance) => {
-      // Superseded while the effect waited for its turn: the handler of a cancelled alarm never runs.
-      const entry = state.alarms.entry(id);
-      if (entry.gen !== gen) return;
-      // The alarm is consumed as its handler starts: from here getAlarm() returns null.
-      entry.time = null;
-      const handler = (instance as { alarm?: (info: unknown) => unknown }).alarm;
-      if (typeof handler !== "function") {
-        ctx.hooks.unsupported(
-          `Durable Object ${binding} ${object} set an alarm but has no alarm() handler`,
-        );
-        return;
-      }
-      await handler.call(instance, info);
-    });
-  };
-}
-
 /** The objects to reset: every id the namespace has created, plus the setup's named ones. */
 async function objectIds(
   real: DurableObjectNamespace,
