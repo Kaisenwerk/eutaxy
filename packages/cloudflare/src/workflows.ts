@@ -827,6 +827,11 @@ export async function deliverWorkflow(
   if (suspending !== undefined && ran.status !== "crashed")
     result = { status: "completed", value: undefined };
   let status = result.status;
+  // The engine restarts a crashed instance from the start of `run`; crashes come from faults, so few.
+  const restart = (): EventRef[] =>
+    status === "crashed" && instance.status === "running" && event.attempt <= d.maxFaultsPerRun
+      ? [{ ...event, attempt: event.attempt + 1 }]
+      : [];
   if (suspending !== undefined && result.status === "completed") {
     instance.status = "waiting";
     const suspended = suspending;
@@ -838,9 +843,7 @@ export async function deliverWorkflow(
     }
     const followUps: EventRef[] =
       status === "crashed"
-        ? instance.status === "running" && event.attempt <= d.maxFaultsPerRun
-          ? [{ ...event, attempt: event.attempt + 1 }]
-          : []
+        ? restart()
         : [
             // The timeout wake, due at the deadline; an event sent earlier wakes the instance first.
             {
@@ -879,12 +882,7 @@ export async function deliverWorkflow(
     });
   }
   if (await drainBackground(hooks, inv, invocation, target, background)) status = "crashed";
-  // The engine restarts a crashed instance from the start of `run`; crashes come from faults, so few.
-  const followUps =
-    status === "crashed" && instance.status === "running" && event.attempt <= d.maxFaultsPerRun
-      ? [{ ...event, attempt: event.attempt + 1 }]
-      : [];
-  return { status, followUps };
+  return { status, followUps: restart() };
 }
 
 /** The delay before the next attempt (Workflows, Sleeping and retrying; a delay function is called). */
