@@ -1,6 +1,6 @@
 import { type AtMostOncePerKey, digestLog, type ScenarioSpec } from "@eutaxy/core";
 import { describe, expect, test, vi } from "vitest";
-import { replayChooser } from "./chooser.ts";
+import { replayChooser, seededChooser } from "./chooser.ts";
 import { explore, replayRun, runOnce } from "./explore.ts";
 import { checkThenInsertConsumer, createFakePlatform, type FakeHandler } from "./fake-platform.ts";
 import { Run } from "./run.ts";
@@ -773,5 +773,99 @@ describe("nested effects", () => {
     } finally {
       run.uninstall();
     }
+  });
+});
+
+/**
+ * One message whose handler starts two jobs on timers due at the same
+ * instant and waits for both; each job checks for the row, then inserts
+ * when it saw none. The handler itself has no effect: whether the second
+ * job's check runs while the first job's effect is parked depends only on
+ * whether a timer already due is a turn of its own.
+ */
+/** The jobs' effects in log order, without the handler's ack. */
+const jobCalls = (entries: Parameters<typeof calls>[0]) =>
+  calls(entries).filter((c) => !c.endsWith(" ack"));
+
+const timerJobs: FakeHandler = async (message, env) => {
+  const body = message.body as { orderId: string };
+  const job = async () => {
+    if ((await env.count(body.orderId)) === 0) await env.insert(body.orderId);
+  };
+  await new Promise<void>((resolve) => {
+    let left = 2;
+    const done = () => {
+      if (--left === 0) resolve();
+    };
+    setTimeout(() => void job().then(done), 10);
+    setTimeout(() => void job().then(done), 10);
+  });
+  message.ack();
+};
+
+function timerJobsSpec(): ScenarioSpec {
+  const spec = raceSpec(2);
+  return {
+    ...spec,
+    name: "fake-timer-jobs",
+    drive: { ...spec.drive, messages: [{ id: "m1", body: { orderId: "o-1" } }] },
+  };
+}
+
+describe("timers already due are turns", () => {
+  test("the second of two timers due together fires while the first's effect is parked on some seeds, not on others, and replays", async () => {
+    const platform = createFakePlatform(timerJobs, { concurrent: true });
+    const spec = timerJobsSpec();
+    const bySeed = new Map<string, number>();
+    for (let seed = 1; seed <= 20; seed++) {
+      const run = new Run({
+        bounds: spec.bounds,
+        chooser: seededChooser(seed, { faultProbability: 0, maxFaultsPerRun: 0 }),
+      });
+      await runOnce(spec, platform, run);
+      const order = jobCalls(run.log.entries).join(", ");
+      if (!bySeed.has(order)) bySeed.set(order, seed);
+    }
+    // Interleaved: both checks before an insert, so both insert. In turn: the second check sees the row.
+    const interleaved = "m1#1 first, m1#1 first, m1#1 run, m1#1 run";
+    const inTurn = "m1#1 first, m1#1 run, m1#1 first";
+    expect([...bySeed.keys()].sort()).toEqual([interleaved, inTurn]);
+    for (const seed of bySeed.values()) {
+      const schedule = { seed, faults: [] };
+      const once = await replayRun(spec, platform, schedule);
+      const twice = await replayRun(spec, platform, schedule);
+      expect(digestLog(once.log)).toBe(digestLog(twice.log));
+      expect(jobCalls(once.log.entries).join(", ")).toBe(
+        [...bySeed.entries()].find(([, s]) => s === seed)?.[0],
+      );
+    }
+  });
+
+  test("a lost update between two timer-started jobs that read before an awaited effect is found", async () => {
+    const platform = createFakePlatform(timerJobs, { concurrent: true });
+    const seeded = await explore(timerJobsSpec(), platform, {
+      seed: "timers",
+      now: fixedClock,
+      maxRuns: 20,
+    });
+    expect(seeded.kind).toBe("VIOLATED");
+    if (seeded.kind !== "VIOLATED") return;
+    expect(seeded.violation.invariant).toBe("recorded-once");
+    expect(seeded.schedule.faults).toEqual([]);
+    // Every schedule, each once: the order is one of the model's, not a race the run won.
+    const exhaustive = await explore(timerJobsSpec(), platform, {
+      seed: "timers",
+      now: fixedClock,
+      exhaustive: true,
+    });
+    expect(exhaustive.kind).toBe("VIOLATED");
+    if (exhaustive.kind !== "VIOLATED") return;
+    expect(exhaustive.schedule.turns?.length).toBeGreaterThan(0);
+    expect(jobCalls(exhaustive.trace.entries)).toEqual([
+      "m1#1 first",
+      "m1#1 first",
+      "m1#1 run",
+      "m1#1 run",
+    ]);
   });
 });

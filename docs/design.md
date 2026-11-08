@@ -1047,8 +1047,10 @@ faults of f kinds on kn points are placed in sum_{j<=m} C(kn, j) f^j ways,
 and with both the count is the product. Partial-order reduction is on by
 default: sleep sets (Godefroid, 1996) skip an order of two turns once the
 other order has run when they belong to different invocations and their
-effects have different targets; starting an event is dependent on
-everything. This assumes code between an invocation's effects shares no
+effects have different targets; starting an event, and firing a timer
+already due, are dependent on everything (a timer's callback may do
+anything, and whether it is due depends on virtual time), so what they
+run is never reordered and does not count against the reduction. This assumes code between an invocation's effects shares no
 state with other invocations except through effects and the virtual
 globals, which the verdict states. A turn is known by its parked effect's
 target before it runs, but it may do more: perform a synchronous or nested
@@ -1084,8 +1086,17 @@ Each
 asynchronous effect is a turn: the invocation parks there, and once every
 invocation in flight has parked, finished or gone idle, the engine lets
 one parked invocation perform its effect and run to its next one, or,
-while a slot is free, starts the next event; timers fire only when nothing
-else can move; an invocation that waits
+while a slot is free, starts the next event, or fires the earliest virtual
+timer already due (at or before the virtual now, which every effect
+advances). A due timer is ready work like a parked effect: two jobs an
+object starts on timers due at the same instant can each reach their
+first effect before either's is performed, an order the runtime allows
+and a lost update between such jobs needs. Timers keep their due order
+among themselves (an event loop runs timers in deadline order, equal
+timeouts in the order they were set: HTML Standard, timer initialization
+steps), so one timer option per decision is enough. A timer not yet
+due fires, and virtual time passes to it, only when nothing else can
+move; an invocation that waits
 on nothing Eutaxy can see makes the run `UNSUPPORTED`. The engine learns
 that an invocation has parked, finished or gone idle from the run itself,
 not from real time: a park, a delivery's end and real I/O completing wake
@@ -1131,9 +1142,10 @@ replaces `Date`, `Math.random`, `crypto.randomUUID`,
 `crypto.getRandomValues`, `performance.now` and the timer functions with
 deterministic versions derived from the run's seed. Time starts at
 2026-01-01T00:00:00Z and advances one millisecond per completed effect and
-to each timer's due time when it fires. Timers fire only while the
-invocation is idle, meaning no effect is in flight, in due order, so they
-never race real I/O. Platforms wait for handler and background promises
+to each timer's due time when it fires. Timers fire in due order and
+never race real I/O: one invocation at a time, only while the invocation
+is idle, meaning no effect is in flight; with several in flight, a timer
+already due is a turn (see Concurrent invocations above). Platforms wait for handler and background promises
 through the engine's `settle`, which lets real I/O complete, fires due
 timers, abandons a crashed invocation, and marks the run `UNSUPPORTED` when
 user code waits on something Eutaxy cannot see. Web Crypto calls

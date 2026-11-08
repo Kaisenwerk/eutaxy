@@ -4,8 +4,10 @@
  * functions are replaced by deterministic versions driven by the run's seed
  * and by a clock that starts at a fixed epoch and advances only when the
  * engine says so: one millisecond per effect, and to each timer's due time
- * when the timer fires. Timers fire only while the invocation is idle (no
- * effect in flight), in due order, so they never race real I/O.
+ * when the timer fires. Timers fire in due order and never race real I/O:
+ * in a sequential run only while the invocation is idle (no effect in
+ * flight); in a concurrent run one already due is a turn like a parked
+ * effect, and one not yet due fires only when nothing else can move.
  */
 
 import { nextFloat, nextU32, type PrngState, seedPrng } from "@eutaxy/core";

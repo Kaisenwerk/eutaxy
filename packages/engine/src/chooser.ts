@@ -43,7 +43,8 @@ export interface Chooser {
    * The index of the option taken. A fault decision offers "none" first,
    * then the faults the point allows, each option naming the point. A turn
    * decision offers the parked invocations in start order, then starting the
-   * next event while a slot is free; it is put to the chooser even with one
+   * next event while a slot is free, then firing the earliest timer already
+   * due when one may fire; it is put to the chooser even with one
    * option (an enumerated run can repeat an explored order there), and the
    * run records the pick only when there was more than one.
    */

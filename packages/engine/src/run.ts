@@ -45,7 +45,7 @@ import { effectScope, Frame, Frames } from "./frames.ts";
 /** The host's own timer, captured before any patching: a host poller's ticks are real. */
 const realSetTimeout = globalThis.setTimeout.bind(globalThis);
 
-import { Turns } from "./turns.ts";
+import { type DueTimer, Turns } from "./turns.ts";
 
 /** Thrown into user code by a synchronous effect that crashes the invocation. */
 export class CrashSignal extends Error {
@@ -208,6 +208,8 @@ export class Run implements RunHooks {
   private readonly afterWork = new Set<InvocationState>();
   /** Per continuation, timers of its fired since its work last settled (see `afterWorkTimerLimit`). */
   private readonly afterWorkTimers = new Map<string, number>();
+  /** Per owner, timers fired so far (any path): names a timer turn (see `dueTimer`). */
+  private readonly timersFired = new Map<string | null, number>();
   /** Per host, real work its code started and the run tracks (Web Crypto) still running; see `leftHost`. */
   private readonly hostIo = new Map<string, number>();
   /**
@@ -327,6 +329,7 @@ export class Run implements RunHooks {
       clock.scopeNow = () => hostScope?.getStore()?.host;
       // Whichever path fires a timer of an object's work counts it against the heartbeat bound.
       clock.afterFire = (owner) => {
+        this.timersFired.set(owner, (this.timersFired.get(owner) ?? 0) + 1);
         if (owner !== null) this.timerFired(owner);
       };
       // A timer's callback, and everything it goes on to run, belongs to the invocation that set it:
@@ -1236,13 +1239,38 @@ export class Run implements RunHooks {
   }
 
   /**
-   * Concurrent runs: pick the next turn among the parked invocations and,
-   * when `canStart`, starting the next event. Parked invocations are ordered
-   * by start, then by when they parked, so the pick does not depend on
-   * real-time arrival. Returns what was picked; "turn" has already released it.
+   * Concurrent runs: pick the next turn among the parked invocations, when
+   * `canStart` starting the next event, and the earliest virtual timer
+   * already due that may fire now (`timersAllowed`; with `afterWorkOnly`,
+   * only an object's work after its answer's, as `fireAfterWorkTimer`).
+   * Parked invocations are ordered by start, then by when they parked, so
+   * the pick does not depend on real-time arrival; timers keep their due
+   * order among themselves. Returns what was picked; "turn" has already
+   * released it and "timer" fired it.
    */
-  takeTurn(canStart: boolean): "turn" | "start" | "none" {
-    return this.turns.takeTurn(canStart);
+  takeTurn(canStart: boolean, afterWorkOnly = false): "turn" | "start" | "timer" | "none" {
+    return this.turns.takeTurn(canStart, this.dueTimer(afterWorkOnly));
+  }
+
+  /** The earliest timer already due (at or before the virtual now) that may fire now, as a turn. */
+  private dueTimer(afterWorkOnly: boolean): DueTimer | undefined {
+    const clock = this.patched?.clock;
+    const allowed = this.timersAllowed();
+    if (!clock || !allowed) return undefined;
+    const alive = afterWorkOnly ? this.aliveAfterWork() : null;
+    const owned = alive
+      ? (owner: string | null) => owner !== null && alive.has(owner) && allowed(owner)
+      : allowed;
+    const due = clock.nextDueOwned(owned);
+    if (due === undefined || due > clock.now()) return undefined;
+    const owner = clock.nextOwnerOwned(owned) ?? null;
+    return {
+      owner,
+      fired: this.timersFired.get(owner) ?? 0,
+      fire: () => {
+        this.fireOwned(owned);
+      },
+    };
   }
 
   /**

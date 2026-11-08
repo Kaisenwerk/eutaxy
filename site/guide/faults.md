@@ -76,7 +76,9 @@ With `maxConcurrentInvocations` above 1, invocations interleave at their
 I/O, as concurrent requests do in one isolate. Each asynchronous effect is a
 turn: the invocation parks there, and once every invocation in flight has
 parked, finished or gone idle, one of them performs its effect and runs to
-the next. The pick comes from a stream seeded by the run's seed, separate
+the next, a new event starts, or a timer already due fires: two jobs
+started on timers due at the same instant can each reach their first
+effect before either's is performed. The pick comes from a stream seeded by the run's seed, separate
 from the fault decisions, so a replay makes the same picks. An invocation
 waiting on nothing Eutaxy can see makes the run `UNSUPPORTED`.
 
@@ -86,8 +88,9 @@ For the duration of a run, `Date`, `Math.random`, `crypto.randomUUID`,
 `crypto.getRandomValues`, `performance.now` and the timer functions are
 replaced with deterministic versions derived from the run's seed. Time
 starts at 2026-01-01T00:00:00Z, advances one millisecond per completed
-effect, and jumps to each timer's due time when it fires. Timers fire only
-while nothing else can move, in due order, so they never race real I/O.
+effect, and jumps to each timer's due time when it fires. Timers fire in
+due order and never race real I/O; a timer not yet due fires only while
+nothing else can move.
 Web Crypto (`crypto.subtle`) is real work the engine waits for, never
 faulted. Everything is restored after the run, including on failure.
 

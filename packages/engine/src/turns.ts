@@ -1,10 +1,12 @@
 /**
  * The concurrent scheduler. Each asynchronous effect of a concurrent run is
  * a turn: the invocation parks there, and once every invocation has parked,
- * finished or gone idle the run's chooser picks which parked one goes next
- * (or whether a new event starts). It also tracks whether turns told apart
- * by their parked effects' targets may not commute, which partial-order
- * reduction needs.
+ * finished or gone idle the run's chooser picks which parked one goes next,
+ * whether a new event starts, or whether a virtual timer already due fires
+ * (ready work like a parked effect; timers not yet due fire only when
+ * nothing else can move). It also tracks whether turns told apart by their
+ * parked effects' targets may not commute, which partial-order reduction
+ * needs.
  *
  * Between turns the run waits for the code it released to come to rest
  * (`quiesce`): progress (a park, a delivery's end, real I/O completing)
@@ -27,6 +29,16 @@ export interface Turner {
   /** Times it has parked for a turn; names its next turn the same in every run. */
   parks: number;
   isCrashed(): boolean;
+}
+
+/** A virtual timer already due that may fire now, offered as a turn (see `Run.takeTurn`). */
+export interface DueTimer {
+  /** The invocation that set it, which its callback runs as. */
+  readonly owner: string | null;
+  /** Timers of that owner fired so far: names the turn the same in every run. */
+  readonly fired: number;
+  /** Fire it: the earliest due timer the run allows, as its owner. */
+  readonly fire: () => void;
 }
 
 interface Parked {
@@ -227,12 +239,13 @@ export class Turns {
   }
 
   /** See `Run.takeTurn`. */
-  takeTurn(canStart: boolean): "turn" | "start" | "none" {
+  takeTurn(canStart: boolean, timer?: DueTimer): "turn" | "start" | "timer" | "none" {
     const order = (inv: Turner) => this.startOrder.get(inv.id) ?? 0;
     this.parked = this.parked
       .filter((p) => !p.inv.isCrashed())
       .sort((a, b) => order(a.inv) - order(b.inv) || a.seq - b.seq);
-    const options = this.parked.length + (canStart ? 1 : 0);
+    const offered = this.turnOptions(canStart, timer);
+    const options = offered.length;
     this.endSegment();
     this.turnTarget = null;
     this.step();
@@ -240,11 +253,18 @@ export class Turns {
     // Put to the chooser even with one option (the enumerator sees it: a single turn can still
     // repeat an explored order); recorded only when it was a choice. An answer past the options
     // (a recorded turn from a run that had more) means the first.
-    const answer = this.chooser.choose("turn", this.turnOptions(canStart));
+    const answer = this.chooser.choose("turn", offered);
     const pick = answer < options ? answer : 0;
     if (options > 1) this.picked.push(pick);
     const [chosen] = pick < this.parked.length ? this.parked.splice(pick, 1) : [];
     if (!chosen) {
+      // Past the parked turns: the due timer is the last option when there is one, else the start.
+      if (timer && pick === options - 1) {
+        // Like a start, a timer turn is ordered against every other (its option has no target), so
+        // what its callback does is not a turn's own effect: turnTarget stays null.
+        timer.fire();
+        return "timer";
+      }
       this.starts++;
       return "start";
     }
@@ -257,11 +277,26 @@ export class Turns {
     return "turn";
   }
 
-  /** The turns on offer, as choices: the parked invocations in order, then starting the next event. */
-  private turnOptions(canStart: boolean): ChoiceOption[] {
+  /**
+   * The turns on offer, as choices: the parked invocations in order, then
+   * starting the next event, then the due timer (last, so a recorded pick
+   * of the others means the same with or without it). A timer's option names its
+   * owner and how many of that owner's timers have fired, and has no target:
+   * the callback may do anything, and firing it reads virtual time, so it
+   * commutes with nothing.
+   */
+  private turnOptions(canStart: boolean, timer?: DueTimer): ChoiceOption[] {
     return [
       ...this.parked.map((p) => p.option),
       ...(canStart ? [{ label: `start:${this.starts}` }] : []),
+      ...(timer
+        ? [
+            {
+              label: `timer:${timer.owner ?? ""}@${timer.fired}`,
+              ...(timer.owner !== null ? { invocation: timer.owner } : {}),
+            },
+          ]
+        : []),
     ];
   }
 }

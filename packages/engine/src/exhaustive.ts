@@ -10,8 +10,9 @@
  * Reduction, when on, uses sleep sets (Godefroid, Partial-Order Methods for
  * the Verification of Concurrent Systems, 1996): two turns of different
  * invocations whose effects have different targets commute, so after one
- * order of them has been explored the other is not. Starting an event is
- * dependent on everything. A run whose every option is asleep repeats an
+ * order of them has been explored the other is not. Starting an event and
+ * firing a timer already due are dependent on everything (their options
+ * have no target), so what they run is never reordered. A run whose every option is asleep repeats an
  * explored order; it still runs (the choices are forced up to it) but is not
  * counted as a schedule and nothing below it is explored.
  */

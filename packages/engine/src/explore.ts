@@ -74,7 +74,7 @@ const engineAssumptions: readonly string[] = [
   "schedule points are effect boundaries: proxied bindings, patched timers and fetch; other awaits run in program order",
   "faults: crash_before, crash_after, ambiguous, error at any effect point; redelivery per the platform's queue model",
   "Date, Math.random, crypto.randomUUID, crypto.getRandomValues, performance.now and timers are virtualised per run from the seed; time starts at 2026-01-01T00:00:00Z and advances 1 ms per effect and to each timer's due time",
-  "timers fire only while the invocation is idle (no effect in flight), in due order; an invocation waiting on something outside Eutaxy makes the run UNSUPPORTED",
+  "timers fire in due order; one at a time, only while the invocation is idle (no effect in flight); with several in flight, as the concurrency assumption says; an invocation waiting on something outside Eutaxy makes the run UNSUPPORTED",
   "an effect whose real I/O takes longer than the time budget (the scenario's budgetMs, or the budgetMs option replacing it) is treated as hung: the run is UNSUPPORTED and names the effect",
   "while an effect performs real I/O, timers the library schedules inside that I/O are real (backoff, timeouts) and timers the handler schedules meanwhile stay virtual, told apart by async context; without async context support every timer stays virtual",
   "module-level state cannot be reset between runs; before BOUNDED the first runs are replayed in reverse order and any difference makes the run UNSUPPORTED (module_state_leak)",
@@ -85,7 +85,7 @@ const engineAssumptions: readonly string[] = [
 function concurrencyAssumption(bounds: Bounds): string {
   if (bounds.maxConcurrentInvocations === 1)
     return "one invocation at a time (maxConcurrentInvocations = 1)";
-  return `up to ${bounds.maxConcurrentInvocations} invocations in flight, interleaved only at asynchronous effects (proxied bindings, fetch): code between two such effects runs without interruption (except continuations of a promise it settles for another invocation, which run then and are still attributed to their own invocation), Web Crypto calls are waited for like I/O, other non-effect awaits (body reads included) settle within one turn of the event loop, synchronous effects are not interleaving points, an effect made by code another effect hosts (an object calling out during a call) is a turn of its own unless that code cannot be interrupted (an object inside blockConcurrencyWhile), when it runs within the hosting effect's turn, the next turn is a seeded pick among parked invocations, whether a new event starts while a slot is free is a seeded pick too, and timers fire only when no invocation can take a turn`;
+  return `up to ${bounds.maxConcurrentInvocations} invocations in flight, interleaved only at asynchronous effects (proxied bindings, fetch): code between two such effects runs without interruption (except continuations of a promise it settles for another invocation, which run then and are still attributed to their own invocation), Web Crypto calls are waited for like I/O, other non-effect awaits (body reads included) settle within one turn of the event loop, synchronous effects are not interleaving points, an effect made by code another effect hosts (an object calling out during a call) is a turn of its own unless that code cannot be interrupted (an object inside blockConcurrencyWhile), when it runs within the hosting effect's turn, the next turn is a seeded pick among parked invocations, starting a new event while a slot is free, and firing the earliest timer already due (at or before the virtual now, which effects advance), timers firing in due order among themselves, and a timer not yet due fires (virtual time passing to it) only when nothing else can move`;
 }
 
 /** The first record a replay recorded differently from the run, or how their lengths differ; null when the logs match. */
@@ -146,8 +146,9 @@ interface Delivery {
 /**
  * Deliver events with up to `maxConcurrentInvocations` in flight. Each turn
  * is a seeded pick: one parked invocation performs its effect and runs to
- * its next one, or, while a slot is free, the next event starts. When
- * nothing is parked and no event can start a timer fires, and when nothing
+ * its next one, while a slot is free the next event starts, or a timer
+ * already due fires. When nothing is parked, no event can start and no
+ * timer is due, the next timer fires (time passes to it), and when nothing
  * can move the remaining invocations are abandoned.
  */
 async function deliverConcurrently(
@@ -172,7 +173,8 @@ async function deliverConcurrently(
     const next = pending.length > 0 ? earliestEvent(pending) : -1;
     const due = next >= 0 && (pending[next]?.at ?? 0) <= run.now();
     const canStart = active.length < spec.bounds.maxConcurrentInvocations && due;
-    const turn = run.takeTurn(canStart);
+    // While only objects' work after their answers is alive, only its timers are ready work (see below).
+    const turn = run.takeTurn(canStart, active.length === 0 && run.hasAfterWork());
     if (turn === "start") {
       const [event] = pending.splice(next, 1) as [EventRef];
       const d: Delivery = {
