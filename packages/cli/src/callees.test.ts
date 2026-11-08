@@ -15,12 +15,11 @@ import {
   mentionsCallee,
   miniflareOptionsSource,
   neverCalled,
-  parseJsonc,
   qualified,
   readCalleeConfig,
   readCallerResources,
-  workerName,
 } from "./callees.ts";
+import { parseJsonc, workerName } from "./wrangler.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "eutaxy-callees-"));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -344,8 +343,13 @@ describe("what the caller's binding carries", () => {
     );
     const caller = readCallerResources(config);
     expect(caller?.services).toEqual([
-      { binding: "ORDERS", entrypoint: "OrdersEntrypoint", props: { caller: "storefront" } },
-      { binding: "BILLING" },
+      {
+        binding: "ORDERS",
+        service: "orders",
+        entrypoint: "OrdersEntrypoint",
+        props: { caller: "storefront" },
+      },
+      { binding: "BILLING", service: "billing" },
     ]);
     expect(bindingCarries(caller, "ORDERS")).toEqual({
       entrypoint: "OrdersEntrypoint",

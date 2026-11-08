@@ -12,11 +12,11 @@
  */
 
 import { fork } from "node:child_process";
-import { readFileSync } from "node:fs";
-import { basename, extname, relative, resolve } from "node:path";
+import { basename, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { JsonValue, ScenarioSpec } from "@eutaxy/core";
 import { resolveAsTypeScript } from "./resolve.ts";
+import { readBindings, readWranglerConfig } from "./wrangler.ts";
 
 /** A `callee` setup step as the scenario holds it. */
 export interface CalleeStep {
@@ -180,79 +180,6 @@ export function isolateBindings(callees: readonly CalleeConfig[]): string[] {
   return names;
 }
 
-/**
- * JSON with comments and trailing commas, as wrangler.jsonc allows: comments
- * are removed outside strings, a comma before `}` or `]` dropped, and the
- * rest is JSON.
- */
-export function parseJsonc(text: string): unknown {
-  let out = "";
-  let i = 0;
-  /** The index of the next character that is neither whitespace nor inside a comment, from `from`. */
-  const nextToken = (from: number): number => {
-    let k = from;
-    for (;;) {
-      while (k < text.length && /\s/.test(text[k] as string)) k++;
-      if (text[k] === "/" && text[k + 1] === "/") {
-        while (k < text.length && text[k] !== "\n") k++;
-      } else if (text[k] === "/" && text[k + 1] === "*") {
-        const end = text.indexOf("*/", k + 2);
-        k = end < 0 ? text.length : end + 2;
-      } else return k;
-    }
-  };
-  while (i < text.length) {
-    const c = text[i] as string;
-    if (c === '"') {
-      let j = i + 1;
-      while (j < text.length && text[j] !== '"') j += text[j] === "\\" ? 2 : 1;
-      out += text.slice(i, j + 1);
-      i = j + 1;
-    } else if (c === "/" && text[i + 1] === "/") {
-      while (i < text.length && text[i] !== "\n") i++;
-    } else if (c === "/" && text[i + 1] === "*") {
-      const end = text.indexOf("*/", i + 2);
-      i = end < 0 ? text.length : end + 2;
-    } else if (c === ",") {
-      // A trailing comma, outside strings only: dropped.
-      const next = text[nextToken(i + 1)];
-      if (next !== "}" && next !== "]") out += c;
-      i++;
-    } else {
-      out += c;
-      i++;
-    }
-  }
-  return JSON.parse(out);
-}
-
-/** Read a wrangler config as an object; only JSON and JSONC are read here. */
-export function readWranglerConfig(path: string): Record<string, unknown> {
-  const ext = extname(path);
-  if (ext !== ".json" && ext !== ".jsonc")
-    throw new Error(
-      `${basename(path)}: eutaxy check reads a callee's wrangler config as JSON or JSONC; a TOML config is not read`,
-    );
-  const parsed = parseJsonc(readFileSync(path, "utf8"));
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
-    throw new Error(`${basename(path)}: not a wrangler config object`);
-  return parsed as Record<string, unknown>;
-}
-
-/** The `name` of a wrangler config, when the config can be read and names one. */
-export function workerName(path: string): string | undefined {
-  try {
-    const name = readWranglerConfig(path)["name"];
-    return typeof name === "string" && name ? name : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-const list = (v: unknown): Record<string, unknown>[] =>
-  Array.isArray(v) ? v.filter((x): x is Record<string, unknown> => typeof x === "object" && x) : [];
-const str = (v: unknown, fallback = ""): string => (typeof v === "string" ? v : fallback);
-
 /** The keys of a wrangler config whose bindings the command carries into the isolate. */
 const carried = new Set([
   "name",
@@ -286,74 +213,25 @@ const carried = new Set([
 /** Read a callee's wrangler config into what the isolate needs; `scenarioDir` resolves the step's paths. */
 export function readCalleeConfig(step: CalleeStep, scenarioDir: string): CalleeConfig {
   const path = resolve(scenarioDir, step.config);
-  const config = readWranglerConfig(path);
-  const name = str(config["name"]);
-  if (!name)
+  const bindings = readBindings(readWranglerConfig(path));
+  if (bindings.name === undefined)
     throw new Error(
       `${basename(path)}: the callee's wrangler config has no name, which qualifies its bindings`,
     );
-  const notAdded: string[] = [];
-  // The migrations in order, as wrangler applies them: a class is SQLite-backed from the migration
-  // that created it so, through renames, until one deletes it.
-  const sqlite = new Set<string>();
-  const strings = (v: unknown): string[] =>
-    Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
-  for (const m of list(config["migrations"])) {
-    for (const c of strings(m["new_sqlite_classes"])) sqlite.add(c);
-    for (const r of list(m["renamed_classes"])) {
-      const from = str(r["from"]);
-      if (sqlite.delete(from)) sqlite.add(str(r["to"]));
-    }
-    for (const c of strings(m["deleted_classes"])) sqlite.delete(c);
-  }
-  const durableObjects: CalleeConfig["durableObjects"][number][] = [];
-  const dos = config["durable_objects"] as { bindings?: unknown } | undefined;
-  for (const b of list(dos?.bindings)) {
-    const className = str(b["class_name"]);
-    const scriptName = b["script_name"] === undefined ? undefined : str(b["script_name"]);
-    durableObjects.push({
-      binding: str(b["name"]),
-      className,
-      sqlite: sqlite.has(className),
-      ...(scriptName === undefined ? {} : { scriptName }),
-    });
-  }
-  const queues = config["queues"] as { producers?: unknown } | undefined;
-  for (const key of Object.keys(config)) if (!carried.has(key)) notAdded.push(key);
-  const vars: Record<string, JsonValue> = {};
-  const rawVars = config["vars"];
-  if (typeof rawVars === "object" && rawVars !== null)
-    for (const [k, v] of Object.entries(rawVars as Record<string, JsonValue>)) vars[k] = v;
   return {
     binding: step.binding,
-    name,
+    name: bindings.name,
     entry: resolve(scenarioDir, step.entry),
-    d1: list(config["d1_databases"]).map((d) => ({
-      binding: str(d["binding"]),
-      id: str(d["database_id"], str(d["database_name"], str(d["binding"]))),
-    })),
-    r2: list(config["r2_buckets"]).map((b) => ({
-      binding: str(b["binding"]),
-      bucket: str(b["bucket_name"], str(b["binding"])),
-    })),
-    kv: list(config["kv_namespaces"]).map((k) => ({
-      binding: str(k["binding"]),
-      id: str(k["id"], str(k["binding"])),
-    })),
-    durableObjects,
-    workflows: list(config["workflows"]).map((w) => ({
-      binding: str(w["binding"]),
-      className: str(w["class_name"]),
-      name: str(w["name"], str(w["binding"])),
-    })),
-    services: list(config["services"]).map((s) => str(s["binding"])),
-    queues: list(queues?.producers).map((p) => ({
-      binding: str(p["binding"]),
-      queue: str(p["queue"]),
-    })),
-    vars,
-    sqliteClasses: [...sqlite],
-    notAdded,
+    d1: bindings.d1,
+    r2: bindings.r2,
+    kv: bindings.kv,
+    durableObjects: bindings.durableObjects,
+    workflows: bindings.workflows,
+    services: bindings.services.map((s) => s.binding),
+    queues: bindings.queues,
+    vars: bindings.vars,
+    sqliteClasses: bindings.sqliteClasses,
+    notAdded: bindings.keys.filter((key) => !carried.has(key)),
   };
 }
 
@@ -524,9 +402,10 @@ export interface CallerResources {
     readonly className: string;
     readonly scriptName?: string;
   }[];
-  /** The caller's service bindings: the entrypoint each reaches and the props it carries, when set. */
+  /** The caller's service bindings: the Worker each names, the entrypoint it reaches and the props it carries, when set. */
   readonly services: readonly {
     readonly binding: string;
+    readonly service: string;
     readonly entrypoint?: string;
     readonly props?: Readonly<Record<string, JsonValue>>;
   }[];
@@ -535,34 +414,14 @@ export interface CallerResources {
 /** The caller's resources from its wrangler config, when the config can be read (JSON or JSONC); none otherwise. */
 export function readCallerResources(wranglerPath: string): CallerResources | undefined {
   try {
-    const config = readWranglerConfig(wranglerPath);
-    const dos = config["durable_objects"] as { bindings?: unknown } | undefined;
+    const bindings = readBindings(readWranglerConfig(wranglerPath));
     return {
-      name: str(config["name"]) || undefined,
-      d1: list(config["d1_databases"]).map((d) => ({
-        binding: str(d["binding"]),
-        id: str(d["database_id"], str(d["database_name"], str(d["binding"]))),
-      })),
-      r2: list(config["r2_buckets"]).map((b) => ({
-        binding: str(b["binding"]),
-        bucket: str(b["bucket_name"], str(b["binding"])),
-      })),
-      kv: list(config["kv_namespaces"]).map((k) => ({
-        binding: str(k["binding"]),
-        id: str(k["id"], str(k["binding"])),
-      })),
-      durableObjects: list(dos?.bindings).map((b) => ({
-        binding: str(b["name"]),
-        className: str(b["class_name"]),
-        ...(b["script_name"] === undefined ? {} : { scriptName: str(b["script_name"]) }),
-      })),
-      services: list(config["services"]).map((b) => ({
-        binding: str(b["binding"]),
-        ...(typeof b["entrypoint"] === "string" ? { entrypoint: b["entrypoint"] } : {}),
-        ...(typeof b["props"] === "object" && b["props"] !== null
-          ? { props: b["props"] as Record<string, JsonValue> }
-          : {}),
-      })),
+      name: bindings.name,
+      d1: bindings.d1,
+      r2: bindings.r2,
+      kv: bindings.kv,
+      durableObjects: bindings.durableObjects,
+      services: bindings.services,
     };
   } catch {
     return undefined;

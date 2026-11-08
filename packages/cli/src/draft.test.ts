@@ -258,6 +258,35 @@ describe("draftScenario", () => {
     expect(renderDraft(d)).toContain('workflow("back/CLEANUP", "Cleanup", { name: "cleanup" }),');
   });
 
+  test("a class renamed in a later migration stays SQLite-backed, as check reads it", () => {
+    const dir = project("renamed", {
+      "wrangler.json": {
+        name: "renamed",
+        main: "w.ts",
+        durable_objects: {
+          bindings: [
+            { name: "LOCKS", class_name: "Lock2" },
+            { name: "GONE", class_name: "Gone" },
+          ],
+        },
+        migrations: [
+          { tag: "v1", new_sqlite_classes: ["Lock", "Gone"] },
+          {
+            tag: "v2",
+            renamed_classes: [{ from: "Lock", to: "Lock2" }],
+            deleted_classes: ["Gone"],
+          },
+        ],
+      },
+      "w.ts": "export default { fetch: () => new Response('ok') };\n",
+    });
+    const d = draftScenario({ config: join(dir, "wrangler.json") });
+    expect(d.setup).toEqual([
+      { kind: "durable_object", binding: "LOCKS", sqlite: true },
+      { kind: "durable_object", binding: "GONE", sqlite: false },
+    ]);
+  });
+
   test("refuses a TOML config, a config with no main, and a module that does not exist", () => {
     const dir = project("refusals", {
       "wrangler.toml": 'name = "t"\n',

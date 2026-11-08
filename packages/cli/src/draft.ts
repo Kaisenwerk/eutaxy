@@ -10,7 +10,7 @@
 
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, extname, join, relative, resolve } from "node:path";
-import { readWranglerConfig } from "./callees.ts";
+import { d1Id, list, r2Bucket, readWranglerConfig, sqliteClasses, workerName } from "./wrangler.ts";
 
 /** The drive a draft chooses, with what names its target; the events themselves are left to fill in. */
 export type DraftDrive =
@@ -49,8 +49,6 @@ export interface Draft {
   readonly notes: readonly string[];
 }
 
-const list = (v: unknown): Record<string, unknown>[] =>
-  Array.isArray(v) ? v.filter((x): x is Record<string, unknown> => typeof x === "object" && x) : [];
 const text = (v: unknown): string => (typeof v === "string" ? v : "");
 const record = (v: unknown): Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
@@ -59,15 +57,6 @@ const record = (v: unknown): Record<string, unknown> =>
 function ref(from: string, to: string): string {
   const p = relative(from, to).split("\\").join("/");
   return p.startsWith(".") ? p : `./${p}`;
-}
-
-/** Read a wrangler config as JSON or JSONC; TOML is not read. */
-function readConfig(path: string): Record<string, unknown> {
-  if (extname(path) !== ".json" && extname(path) !== ".jsonc")
-    throw new Error(
-      `${basename(path)}: eutaxy draft reads a wrangler config as JSON or JSONC; a TOML config is not read`,
-    );
-  return readWranglerConfig(path);
 }
 
 /** Binding kinds the simulation does not proxy: a run that touches one is UNSUPPORTED. */
@@ -86,15 +75,6 @@ const unmodelled: Readonly<Record<string, string>> = {
   version_metadata: "version metadata",
   pipelines: "pipeline",
 };
-
-/** The SQLite-backed classes of a config's migrations (the ones created so, as wrangler applies them). */
-function sqliteClasses(config: Record<string, unknown>): Set<string> {
-  const out = new Set<string>();
-  for (const m of list(config["migrations"]))
-    for (const c of Array.isArray(m["new_sqlite_classes"]) ? m["new_sqlite_classes"] : [])
-      if (typeof c === "string") out.add(c);
-  return out;
-}
 
 /**
  * The schema file of a D1 binding, beside its config: `schema.sql`, else `<database_name>.sql`, else the
@@ -153,12 +133,8 @@ function configsByName(root: string, depth = 3): Map<string, string> {
       if (e.isDirectory()) {
         if (left > 0 && e.name !== "node_modules" && !e.name.startsWith(".")) walk(path, left - 1);
       } else if (e.name === "wrangler.jsonc" || e.name === "wrangler.json") {
-        try {
-          const name = text(readConfig(path)["name"]);
-          if (name && !out.has(name)) out.set(name, path);
-        } catch {
-          // An unreadable config names nothing.
-        }
+        const name = workerName(path); // an unreadable config names nothing
+        if (name !== undefined && !out.has(name)) out.set(name, path);
       }
     }
   };
@@ -233,7 +209,7 @@ export interface DraftInput {
 }
 
 export function draftScenario(input: DraftInput): Draft {
-  const config = readConfig(input.config);
+  const config = readWranglerConfig(input.config);
   const configDir = dirname(input.config);
   const scenarioDir = input.scenarioDir ?? configDir;
   const name = text(config["name"]) || basename(configDir);
@@ -257,16 +233,11 @@ export function draftScenario(input: DraftInput): Draft {
     if (found !== undefined) callees.set(service, found);
   }
   // The caller's databases and buckets: a callee binding the same one reads it under the caller's name.
-  const d1Id = (db: Record<string, unknown>): string =>
-    text(db["database_id"]) || text(db["database_name"]) || text(db["binding"]);
   const callerDatabases = new Map(
     list(config["d1_databases"]).map((db) => [d1Id(db), text(db["binding"])]),
   );
   const callerBuckets = new Map(
-    list(config["r2_buckets"]).map((b) => [
-      text(b["bucket_name"]) || text(b["binding"]),
-      text(b["binding"]),
-    ]),
+    list(config["r2_buckets"]).map((b) => [r2Bucket(b), text(b["binding"])]),
   );
   /** Classes of a callee's script the caller binds itself: one namespace, set up under the caller's name. */
   const sharedClasses = new Set(
@@ -335,7 +306,7 @@ export function draftScenario(input: DraftInput): Draft {
           setup.push({
             kind: "durable_object",
             binding,
-            sqlite: sqliteClasses(readConfig(callees.get(script) as string)).has(className),
+            sqlite: sqliteClasses(readWranglerConfig(callees.get(script) as string)).has(className),
           });
         else
           notes.push(
@@ -358,7 +329,7 @@ export function draftScenario(input: DraftInput): Draft {
     for (const b of list(cfg["r2_buckets"])) {
       const binding = text(b["binding"]);
       if (!binding) continue;
-      const shared = prefix ? callerBuckets.get(text(b["bucket_name"]) || binding) : undefined;
+      const shared = prefix ? callerBuckets.get(r2Bucket(b)) : undefined;
       if (shared !== undefined) {
         notes.push(
           `R2 ${prefix}${binding} is the caller's bucket ${shared}: set it up and read it as ${shared}`,
@@ -415,7 +386,7 @@ export function draftScenario(input: DraftInput): Draft {
       );
       continue;
     }
-    const callee = readConfig(calleeConfig);
+    const callee = readWranglerConfig(calleeConfig);
     const calleeDir = dirname(calleeConfig);
     const calleeMain = resolve(calleeDir, text(callee["main"]));
     setup.push({
