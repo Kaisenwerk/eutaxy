@@ -261,7 +261,7 @@ export function proxyNamespace(
   isReset: () => boolean,
 ): DurableObjectNamespace {
   const target = `DO:${binding}`;
-  const { names, touched, alarms: book } = state;
+  const { names } = state;
   const nameOf = (id: DurableObjectId) => names.get(id.toString()) ?? id.toString();
 
   function stubFor(stub: DurableObjectStub, id: string, object: string): DurableObjectStub {
@@ -276,15 +276,7 @@ export function proxyNamespace(
           `Durable Object binding ${binding} has no durableObject setup, so its objects are not reset between runs; add durableObject(${JSON.stringify(binding)}) to the scenario's setup`,
         );
       } else {
-        touched.add(id);
-        await typed(helpers).runInDurableObject(real, (_instance, live) => {
-          watchGate(live);
-          state.states.set(id, live);
-          return takeOverAlarms(
-            live.storage,
-            alarmControl(book, binding, id, object, () => ctx.hooks),
-          );
-        });
+        await enterObject(real, binding, ctx, helpers, state, id, object, async () => undefined);
       }
     }
 
@@ -488,19 +480,34 @@ export async function runInObject<T>(
     ctx.hooks.unsupported(`Durable Object binding ${binding} needs the Cloudflare test helpers`);
     return undefined;
   }
+  return enterObject(real.get(real.idFromString(id)), binding, ctx, helpers, state, id, object, fn);
+}
+
+/**
+ * Enter an object through a stub for a call or an event of its own: the
+ * object is marked reached, its gate watched, its state kept for the run,
+ * its alarms taken over, then `fn` runs with the instance and its state.
+ */
+function enterObject<T>(
+  stub: DurableObjectStub,
+  binding: string,
+  ctx: ProxyContext,
+  helpers: DurableObjectTestHelpers,
+  state: BindingState,
+  id: string,
+  object: string,
+  fn: (instance: unknown, live: DurableObjectState) => Promise<T>,
+): Promise<T> {
   state.touched.add(id);
-  return typed(helpers).runInDurableObject(
-    real.get(real.idFromString(id)),
-    async (instance, live) => {
-      watchGate(live);
-      state.states.set(id, live);
-      await takeOverAlarms(
-        live.storage,
-        alarmControl(state.alarms, binding, id, object, () => ctx.hooks),
-      );
-      return fn(instance, live);
-    },
-  );
+  return typed(helpers).runInDurableObject(stub, async (instance, live) => {
+    watchGate(live);
+    state.states.set(id, live);
+    await takeOverAlarms(
+      live.storage,
+      alarmControl(state.alarms, binding, id, object, () => ctx.hooks),
+    );
+    return fn(instance, live);
+  });
 }
 
 /** The objects to reset: every id the namespace has created, plus the setup's named ones. */
