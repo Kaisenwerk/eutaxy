@@ -55,6 +55,20 @@ export interface EffectOptions {
    */
   readonly onAbandon?: () => void;
   /**
+   * The hosted code is `host`'s: an object's that stays alive after this
+   * effect ends (a Durable Object, named `<target>/<object>`). The platform
+   * enters that code through `RunHooks.hostedCode`, so an effect it makes is
+   * this effect's while one of `host`'s effects is being performed and, once
+   * none is, is work of `host`'s own after its answer (a promise it did not
+   * await, a timer it set): an invocation `<host>/after`, whose effects are
+   * turns of their own and take faults by their position in it, alive until
+   * nothing of it can move and revived by work woken later; a crash in it
+   * resets the object (`onAbandon`). Timers `host`'s code sets are its too.
+   * Without `host`, what hosted code leaves running is the hosting
+   * invocation's and ends with it.
+   */
+  readonly host?: string;
+  /**
    * Whether an effect the hosted code makes may wait for its turn now. False
    * while the hosted code holds every other event out (a Durable Object
    * inside blockConcurrencyWhile): nothing else could enter it then, and it
@@ -104,6 +118,18 @@ export interface RunHooks {
    * invocations only one runs at a time, so this is always the caller.
    */
   running(): string;
+  /**
+   * Run `code` as `host`'s own (see `EffectOptions.host`), where the runtime
+   * does not carry async context into it: an object's method about to be
+   * called, its alarm or WebSocket handler. `op` names the call the code is
+   * (a stub call's method or property), so the code is matched to the
+   * effect of the host's with that `op` whose call has not started. Timers
+   * inside are virtual, as for handler code. Code already running as the
+   * host's that enters again (a method calling another) stays what it was.
+   */
+  hostedCode<T>(host: string, code: () => T, op?: string): T;
+  /** The platform dropped `host`'s instance (an eviction after a crash): work of its after an answer is gone with it. */
+  hostReset(host: string): void;
   /**
    * Queue an event now, before the current delivery finishes, e.g. a resend
    * the caller makes as soon as it gives up while the handler's background

@@ -131,6 +131,9 @@ async function deliverInOrder(spec: ScenarioSpec, platform: Platform, run: Run):
     const [event] = pending.splice(earliestEvent(pending), 1) as [EventRef];
     if (event.at !== undefined) await run.advanceTo(event.at);
     const result = await platform.deliver(event, run, spec);
+    // An object's work after its answer runs to rest before the next event, one of the orders the
+    // runtime allows (a concurrent run explores the others).
+    await run.driveAfterWork();
     pending.push(...run.takeQueued(), ...result.followUps);
   }
 }
@@ -165,7 +168,7 @@ async function deliverConcurrently(
     active = active.filter((d) => !d.outcome);
     pending.push(...run.takeQueued());
     if (pending.length > queuedBefore) run.queuedEvents();
-    if (active.length === 0 && pending.length === 0) return;
+    if (active.length === 0 && pending.length === 0 && !run.hasAfterWork()) return;
     const next = pending.length > 0 ? earliestEvent(pending) : -1;
     const due = next >= 0 && (pending[next]?.at ?? 0) <= run.now();
     const canStart = active.length < spec.bounds.maxConcurrentInvocations && due;
@@ -192,12 +195,20 @@ async function deliverConcurrently(
       next >= 0 &&
       !due &&
       active.length < spec.bounds.maxConcurrentInvocations &&
-      (run.nextTimerDue() ?? Number.POSITIVE_INFINITY) > (pending[next]?.at ?? 0)
+      (run.nextTimerDue(active.length === 0 && run.hasAfterWork()) ?? Number.POSITIVE_INFINITY) >
+        (pending[next]?.at ?? 0)
     ) {
       // Nothing can move before the next delayed event is due: let time pass until then. With no
       // timer fired on the way, nothing was set off that a wait could settle.
       if (!(await run.advanceTo(pending[next]?.at ?? 0))) continue;
-    } else if (turn === "none" && !run.fireTimer()) {
+    } else if (
+      turn === "none" &&
+      !(active.length > 0 || !run.hasAfterWork() ? run.fireTimer() : run.fireAfterWorkTimer()) &&
+      run.settleAfterWork() === 0
+    ) {
+      // Nothing can move: objects' work after their answers has settled; anything else is stuck. While
+      // only such work is alive its own timers fire, not a finished handler's stray one, which would
+      // keep it alive; with no such work, timers fire as before (a stray one until the next event is due).
       const stuck = active.flatMap((d) => d.started.invocation() ?? []);
       if (run.abandon(stuck) === 0)
         throw new Error(

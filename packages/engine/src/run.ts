@@ -42,6 +42,10 @@ import {
 import { asyncScope } from "./context.ts";
 import { installScriptedFetch } from "./fetch.ts";
 import { effectScope, Frame, Frames } from "./frames.ts";
+
+/** The host's own timer, captured before any patching: a host poller's ticks are real. */
+const realSetTimeout = globalThis.setTimeout.bind(globalThis);
+
 import { Turns } from "./turns.ts";
 
 /** Thrown into user code by a synchronous effect that crashes the invocation. */
@@ -116,6 +120,17 @@ interface DeliveryCell {
 
 const deliveryScope = asyncScope<DeliveryCell>();
 
+/**
+ * The host (`EffectOptions.host`) whose code is running, set by `hostedCode`:
+ * an object's, which the runtime enters without async context, and the
+ * effect of the host's whose call that code is, when it is known.
+ */
+interface HostContext {
+  readonly host: string;
+  readonly frame: Frame | undefined;
+}
+const hostScope = asyncScope<HostContext | undefined>();
+
 /** The run whose globals are installed, if any: where code observed from outside records into. */
 let installed: Run | null = null;
 
@@ -143,6 +158,14 @@ function waitingUnseen(invocation: string): string {
   return `invocation ${invocation} is waiting on something Eutaxy cannot see (no effect in flight, no timer due)`;
 }
 
+/**
+ * Timers an object's work after an answer may fire in one run before the run
+ * is called UNSUPPORTED: a heartbeat (`setInterval`, a timeout that re-arms
+ * itself) never settles, and the runtime would run it until the object is
+ * evicted, which a run cannot wait for.
+ */
+export const afterWorkTimerLimit = 100;
+
 /** Delivered invocations are `<event>#<attempt>`, so this id is never one of theirs. */
 const bookkeepingId = "platform";
 
@@ -167,6 +190,18 @@ export class Run implements RunHooks {
    * `hosted`.
    */
   private readonly hosts = new Map<string, Frame>();
+  /** Per host (`EffectOptions.host`), the invocation its work after an answer runs as; see `continuationOf`. */
+  private readonly continuations = new Map<string, InvocationState>();
+  /** Per host, how many such invocations it has had: one more after each reset of the object. */
+  private readonly continuationCounts = new Map<string, number>();
+  /** Per host, the last of its effects performed: its `onAbandon` resets the object when its later work crashes. */
+  private readonly hostFrames = new Map<string, Frame>();
+  /** Continuations with work that may still move: the run does not end while one is alive. */
+  private readonly afterWork = new Set<InvocationState>();
+  /** Per continuation, timers of its fired this run (see `afterWorkTimerLimit`). */
+  private readonly afterWorkTimers = new Map<string, number>();
+  /** Per host, its poller (concurrent runs; see `pollHost`). */
+  private readonly hostPollers = new Map<string, { waiters: (() => void)[] }>();
   private patched: Patched | null = null;
   private restoreFetch: (() => void) | null = null;
   /** The invocation whose code is running (one at a time); outbound fetches are attributed to it. */
@@ -188,6 +223,8 @@ export class Run implements RunHooks {
       this.frames,
       (id) => this.runAs(id),
       () => this.patched?.reads,
+      () => this.firedPending(),
+      () => this.hasAfterWork(),
     );
     this.concurrent = options.bounds.maxConcurrentInvocations > 1;
   }
@@ -257,7 +294,10 @@ export class Run implements RunHooks {
       // Timers belong to the invocation running when they are set, hosted code's included (its
       // context is a cell of its own in either mode); in a sequential run that is `current` otherwise.
       const clock = this.patched.clock;
-      clock.ownerNow = () => this.running();
+      clock.ownerNow = () => this.timerOwner();
+      // Whose code set a timer: a host's timers are the host's, pending work of its own once its effect ends.
+      clock.scopeNow = () => hostScope?.getStore()?.host;
+      clock.afterFire = (owner) => this.timerFired(owner);
       // A timer's callback, and everything it goes on to run, belongs to the invocation that set it:
       // its delivery's or hosted cell where it has one, else a cell naming the invocation running now,
       // so a sequential caller's timer fired while a hosted callee waits is still the caller's.
@@ -265,7 +305,13 @@ export class Run implements RunHooks {
         if (!deliveryScope) return callback;
         const scope = deliveryScope;
         const cell = scope.getStore() ?? { id: this.running() };
-        return (...args) => scope.run(cell, () => callback(...args));
+        // A host's code's timer runs as the host's code too (the runtime does that where it runs it).
+        const inHostCtx = hostScope?.getStore();
+        const inHost = (fn: () => void): void => {
+          if (hostScope && inHostCtx !== undefined) hostScope.run(inHostCtx, fn);
+          else fn();
+        };
+        return (...args) => scope.run(cell, () => inHost(() => callback(...args)));
       };
     }
     if (!this.restoreFetch) {
@@ -321,8 +367,213 @@ export class Run implements RunHooks {
   }
 
   running(): string {
+    // A host's code running while none of its effects is performed: its work after an answer, its continuation's.
+    const host = this.afterWorkHost();
+    if (host !== undefined) return this.continuationOf(host).id;
     // A delivery's cell in a concurrent run, a hosted invocation's cell in either; else the one run as.
     return deliveryScope?.getStore()?.id ?? this.current;
+  }
+
+  hostedCode<T>(host: string, code: () => T, op?: string): T {
+    // The host's code entering again (a method calling another of the object's): the same call.
+    if (hostScope?.getStore()?.host === host) return code();
+    if (this.concurrent) this.pollHost(host);
+    // The call this code is: the host's effect being performed around it (an alarm, a WebSocket
+    // message, run by the platform inside the effect), else the oldest of the host's effects with
+    // this op whose call has not started (a stub call: the object's input gate delivers them in
+    // arrival order).
+    const current = this.frames.current();
+    const frame =
+      current?.host === host && current.active ? current : this.frames.claimHost(host, op);
+    // An object's code is handler code: its timers are virtual, inside a call's I/O or not.
+    const run = (): T => (this.patched ? this.patched.handlerCode(code) : code());
+    return hostScope ? hostScope.run({ host, frame }, run) : run();
+  }
+
+  /**
+   * Concurrent runs: the host's poller, a real zero timer armed here, inside
+   * the host's code during its request, and re-armed from its own ticks while
+   * the host may still move (an effect of its being performed, work of its
+   * own alive, a wait pending). Each tick wakes the host's waits (`hostTick`):
+   * the host's work after an answer waits for its turns on them, since a
+   * timer that work armed itself, after its request completed, would keep the
+   * object referenced in workerd.
+   */
+  private pollHost(host: string): void {
+    if (this.hostPollers.has(host)) return;
+    const poller = { waiters: [] as (() => void)[] };
+    this.hostPollers.set(host, poller);
+    const tick = (): void => {
+      const waiters = poller.waiters;
+      poller.waiters = [];
+      for (const wake of waiters) wake();
+      if (poller.waiters.length > 0 || this.hostMayMove(host)) realSetTimeout(tick, 0);
+      else this.hostPollers.delete(host);
+    };
+    realSetTimeout(tick, 0);
+  }
+
+  private hostMayMove(host: string): boolean {
+    const cont = this.continuations.get(host);
+    const alive = cont !== undefined && !cont.isCrashed() && this.afterWork.has(cont);
+    return alive || this.frames.liveHost(host) !== undefined;
+  }
+
+  /** One tick of the host's poller, from inside the host's code; a real tick where no poller is armed. */
+  private hostTick(host: string): Promise<void> {
+    const poller = this.hostPollers.get(host);
+    if (!poller) return realTick();
+    return new Promise((resolve) => poller.waiters.push(resolve));
+  }
+
+  /**
+   * The invocation a timer set now belongs to: a host's timers are the
+   * host's, its continuation's, inside a call or after it, so the caller's
+   * crash does not cancel them and a crash of the host's work does.
+   */
+  private timerOwner(): string {
+    const ctx = hostScope?.getStore();
+    if (ctx !== undefined) return this.continuationOf(ctx.host).id;
+    return this.running();
+  }
+
+  /**
+   * The host whose code is running after the effect it was entered by has
+   * ended (or, where that effect is not known, while none of its effects is
+   * being performed), if any: work after an answer.
+   */
+  private afterWorkHost(): string | undefined {
+    const ctx = hostScope?.getStore();
+    if (ctx === undefined) return undefined;
+    const inside = ctx.frame ? ctx.frame.active : this.frames.liveHost(ctx.host) !== undefined;
+    return inside ? undefined : ctx.host;
+  }
+
+  /**
+   * The invocation a host's work after an answer runs as, `<host>/after`
+   * (`#<n>` once the object was reset: a new instance's work is a new
+   * invocation's), started on first use and alive until `settleAfterWork`;
+   * work woken later revives it.
+   */
+  private continuationOf(host: string): InvocationState {
+    let cont = this.continuations.get(host);
+    if (!cont) {
+      const n = (this.continuationCounts.get(host) ?? 0) + 1;
+      this.continuationCounts.set(host, n);
+      cont = this.track(`${host}/after${n > 1 ? `#${n}` : ""}`);
+      this.continuations.set(host, cont);
+      if (this.concurrent) this.turns.started(cont.id);
+    }
+    if (!cont.isCrashed()) this.afterWork.add(cont);
+    return cont;
+  }
+
+  hostReset(host: string): void {
+    this.hostAbandoned(host);
+  }
+
+  /**
+   * The host was reset (`onAbandon` ran: a crash inside its code, an effect
+   * of its that hung; or the platform dropped the instance, `hostReset`): its
+   * work after an answer is gone with the instance, timers included, and its
+   * poller with it.
+   */
+  private hostAbandoned(host: string): void {
+    this.hostPollers.delete(host);
+    const cont = this.continuations.get(host);
+    if (!cont) return;
+    this.continuations.delete(host);
+    this.afterWork.delete(cont);
+    cont.crash();
+  }
+
+  /** A host's effect ended: work its code left outstanding (effects parked or performing, timers pending) is the host's own now. */
+  private leftHost(frame: Frame): void {
+    if (frame.host === undefined) return;
+    this.hostFrames.set(frame.host, frame);
+    if (frame.children > 0 || frame.performing > 0 || this.patched?.clock.hasTimerIn(frame.host))
+      this.continuationOf(frame.host);
+  }
+
+  /**
+   * A timer fired: a continuation's count against `afterWorkTimerLimit`; past
+   * it the object's work does not settle, so the run is UNSUPPORTED and the
+   * work ends (its timers with it).
+   */
+  private timerFired(owner: string | null): void {
+    if (owner === null) return;
+    let cont: InvocationState | undefined;
+    for (const c of this.continuations.values()) if (c.id === owner) cont = c;
+    if (!cont || cont.isCrashed()) return;
+    const n = (this.afterWorkTimers.get(owner) ?? 0) + 1;
+    this.afterWorkTimers.set(owner, n);
+    if (n <= afterWorkTimerLimit) return;
+    this.unsupported(
+      `${owner}: the object's work after its answer fired its timers ${n} times and does not settle (an interval or a timer that re-arms itself); the model waits for such work only up to ${afterWorkTimerLimit} firings per run`,
+    );
+    this.afterWork.delete(cont);
+    cont.crash();
+  }
+
+  /** A host's timers fired and not yet run by their pollers inside it: work on its way. */
+  private firedPending(): number {
+    return this.patched?.clock.firedPending() ?? 0;
+  }
+
+  /** Whether an object's work after an answer may still move; the run does not end while it may. */
+  hasAfterWork(): boolean {
+    for (const cont of this.afterWork) if (!cont.isCrashed()) return true;
+    return false;
+  }
+
+  /**
+   * Nothing can move (no effect in flight, no turn to take, no timer due):
+   * every continuation alive has settled, as an object with nothing pending
+   * goes idle. How many did; work of theirs woken later revives them.
+   */
+  settleAfterWork(): number {
+    const n = this.afterWork.size;
+    this.afterWork.clear();
+    return n;
+  }
+
+  /**
+   * Sequential runs: between deliveries, let objects' work after their
+   * answers run to rest, as it does in the runtime while nothing else comes
+   * in: real I/O completes, timers fire in due order, and once nothing of it
+   * can move it has settled.
+   */
+  async driveAfterWork(): Promise<void> {
+    while (this.hasAfterWork()) {
+      if (this.frames.inFlight > 0 || this.firedPending() > 0) {
+        await realTick();
+        continue;
+      }
+      // Only the work's own timers: a finished handler's stray timer is not the object's to run.
+      if (this.fireAfterWorkTimer()) {
+        await eventLoopTurn();
+        continue;
+      }
+      // One turn of the event loop for code that what just completed resumed; then it is at rest.
+      await realTick();
+      if (this.frames.inFlight > 0 || this.firedPending() > 0 || this.fireAfterWorkTimer())
+        continue;
+      this.settleAfterWork();
+    }
+  }
+
+  /** Fire the next due timer of an object's work after an answer, as that work. False when none is pending. */
+  fireAfterWorkTimer(): boolean {
+    const clock = this.patched?.clock;
+    if (!clock) return false;
+    const alive = this.aliveAfterWork();
+    if (alive.size === 0) return false;
+    if (this.concurrent) this.turns.step();
+    return clock.fireNextOwned((owner) => {
+      if (owner === null || !alive.has(owner)) return false;
+      this.runAs(owner);
+      return true;
+    });
   }
 
   private runAs(id: string | null): void {
@@ -406,6 +657,50 @@ export class Run implements RunHooks {
     summarize: (value: T) => JsonValue,
     options: EffectOptions = {},
   ): Promise<T> {
+    const ctx = hostScope?.getStore();
+    if (ctx !== undefined) {
+      const { host } = ctx;
+      // The call this code is, while its effect is being performed; where the call is not known, the
+      // innermost of the host's effects being performed.
+      const live = ctx.frame
+        ? ctx.frame.active
+          ? ctx.frame
+          : undefined
+        : this.frames.liveHost(host);
+      if (live) {
+        // A host's code inside one of its effects: the effect is that one's, whatever invocation the
+        // platform named (the runtime carries no context of the caller's into the host's code).
+        if (live.invocation !== point.invocation)
+          return this.effect(
+            { ...point, invocation: live.invocation },
+            perform,
+            summarize,
+            options,
+          );
+      } else {
+        // The host's work after its answer: an effect of its continuation, a turn of its own, waited
+        // for by polling as hosted code's effects are (the code runs inside the object); a crash in
+        // it resets the object through the ended effect's onAbandon and ends the continuation.
+        const cont = this.continuationOf(host);
+        const own = { ...point, invocation: cont.id };
+        if (cont.isCrashed()) return hang();
+        const ended = ctx.frame ?? this.hostFrames.get(host);
+        // Inside blockConcurrencyWhile nothing else enters the object and nothing it waits for gets
+        // in, its poller's ticks included: the effect runs at once, as a call's would.
+        if (this.concurrent && (ended?.mayPark() ?? true)) {
+          let released = false;
+          this.turns.park(cont, own.target, () => {
+            released = true;
+          });
+          // Waited for on the host's poller's ticks: a real timer the host's code armed here, after
+          // its request completed, would keep the object referenced (workerd), as the poller, armed
+          // inside the request and re-armed from its own ticks, does not.
+          while (!released && !cont.isCrashed()) await this.hostTick(host);
+          if (!released) return hang();
+        }
+        return this.performEffect(own, perform, summarize, options, cont, ended);
+      }
+    }
     const inv = this.invocation(point.invocation);
     if (inv.isCrashed()) return hang();
     // An effect made inside another's perform (an object calling out during a call) is part of
@@ -528,9 +823,11 @@ export class Run implements RunHooks {
       | "nested_crash";
     // Real I/O that outlasts the scenario's whole budget is treated as hung, so the run ends.
     const deadline = realDeadline(this.options.bounds.budgetMs);
-    const frame = new Frame(point.invocation, point.hostsEffects === true, options);
+    const frame = new Frame(point, options);
+    frame.onHostAbandoned = (h) => this.hostAbandoned(h);
     frame.parent = host;
     this.frames.enter(frame);
+    if (enclosing) enclosing.performing++;
     try {
       const inside = (): Promise<T> => (effectScope ? effectScope.run(frame, perform) : perform());
       // The library's own timers inside the I/O are real; the handler's stay virtual.
@@ -548,7 +845,9 @@ export class Run implements RunHooks {
       settled = { ok: false, error: err };
     } finally {
       deadline.cancel();
+      if (enclosing) enclosing.performing--;
       this.frames.leave(frame);
+      this.leftHost(frame);
       this.patched?.clock.advance(effectLatencyMs);
       if (this.concurrent) this.progressed();
     }
@@ -662,7 +961,7 @@ export class Run implements RunHooks {
       clock: patched.clock,
       // An invocation hosted inside one of this one's effects is work of this one's, which its own
       // settle drives: not a timer to fire here, nor a reason to call this one stuck.
-      inFlight: () => this.frames.inFlight + this.hostedBy(invocation),
+      inFlight: () => this.frames.inFlight + this.hostedBy(invocation) + this.firedPending(),
       crashed: () => inv.isCrashed(),
       stuck: () => {
         // Nothing can make progress: report it and abandon the invocation so the run can end.
@@ -705,7 +1004,10 @@ export class Run implements RunHooks {
     // Inside an effect's perform the library's timers are real; the hosted code is handler code, so
     // its timers are virtual again, and it runs in a delivery context of its own in either mode.
     const asHandler = (): Promise<T> => (this.patched ? this.patched.handlerCode(run) : run());
-    return deliveryScope.run({ id }, asHandler);
+    // A called Worker's code is its own, not the object's that may have called it.
+    const unhosted = (): Promise<T> =>
+      hostScope ? hostScope.run(undefined, asHandler) : asHandler();
+    return deliveryScope.run({ id }, unhosted);
   }
 
   /** How many invocations are hosted inside effects of `invocation` now. */
@@ -773,15 +1075,30 @@ export class Run implements RunHooks {
       fired = true;
       // What the timer set off runs at its own time, before the clock moves on.
       do await eventLoopTurn();
-      while (this.frames.inFlight > 0);
+      while (this.frames.inFlight > 0 || this.firedPending() > 0);
     }
     clock.advance(at - clock.now());
     return fired;
   }
 
-  /** When the next virtual timer is due, or undefined when none is pending. */
-  nextTimerDue(): number | undefined {
-    return this.patched?.clock.nextDue();
+  /**
+   * When the next virtual timer is due, or undefined when none is pending;
+   * `afterWorkOnly` counts the timers of objects' work after answers alone,
+   * the ones that fire while only such work is alive.
+   */
+  nextTimerDue(afterWorkOnly = false): number | undefined {
+    const clock = this.patched?.clock;
+    if (!clock) return undefined;
+    if (!afterWorkOnly) return clock.nextDue();
+    const alive = this.aliveAfterWork();
+    return clock.nextDueOwned((owner) => owner !== null && alive.has(owner));
+  }
+
+  /** The ids of continuations alive now. */
+  private aliveAfterWork(): Set<string> {
+    const alive = new Set<string>();
+    for (const cont of this.afterWork) if (!cont.isCrashed()) alive.add(cont.id);
+    return alive;
   }
 
   /** Concurrent runs: fire the next due timer as the invocation that set it. False when none is pending. */

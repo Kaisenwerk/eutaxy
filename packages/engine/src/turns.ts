@@ -46,6 +46,10 @@ export class Turns {
   private readonly runAs: (id: string | null) => void;
   /** The virtual globals' read counter, when they are installed. */
   private readonly reads: () => { count: number } | undefined;
+  /** Work on its way that no frame counts: a host's timer fired and not yet run by its poller. */
+  private readonly pending: () => number;
+  /** Whether an object's work after an answer may be running: a wake could then come from inside it. */
+  private readonly inObjects: () => boolean;
   /** Invocations waiting at an effect for their turn. */
   private parked: Parked[] = [];
   private parkSeq = 0;
@@ -72,11 +76,15 @@ export class Turns {
     frames: Frames,
     runAs: (id: string | null) => void,
     reads: () => { count: number } | undefined,
+    pending: () => number = () => 0,
+    inObjects: () => boolean = () => false,
   ) {
     this.chooser = chooser;
     this.frames = frames;
     this.runAs = runAs;
     this.reads = reads;
+    this.pending = pending;
+    this.inObjects = inObjects;
   }
 
   /** The turns picked so far, as a copy. */
@@ -139,11 +147,12 @@ export class Turns {
   /** See `Run.progressed`. */
   progressed(): void {
     this.moves++;
-    // While hosted code runs (a Durable Object call), a wake could come from inside it, and the
-    // scheduler would resume in that object's I/O context, where workerd refuses other calls
-    // ("Cannot perform I/O on behalf of a different Durable Object"). The scheduler's own zero
-    // timer polls for the move then instead (see quiesce).
-    if (this.frames.hostingNow > 0) return;
+    // While hosted code runs (a Durable Object call, or an object's work after its answer), a wake
+    // could come from inside it (a park, an event queued), and the scheduler would resume in that
+    // object's I/O context, where workerd refuses other calls ("Cannot perform I/O on behalf of a
+    // different Durable Object") and counts what it then does against the object. The scheduler's
+    // own zero timer polls for the move then instead (see quiesce).
+    if (this.frames.hostingNow > 0 || this.inObjects()) return;
     const waiters = this.progressWaiters;
     this.progressWaiters = [];
     for (const wake of waiters) wake();
@@ -153,8 +162,9 @@ export class Turns {
   async quiesce(): Promise<void> {
     for (;;) {
       const moved = await this.wait();
-      // Real I/O: its completion wakes the next wait, and hosted code's moves show at its end.
-      if (this.frames.inFlight > 0) continue;
+      // Real I/O: its completion wakes the next wait, and hosted code's moves show at its end. A
+      // host's timer fired and not yet run is on its way too.
+      if (this.frames.inFlight > 0 || this.pending() > 0) continue;
       // An invocation parked or a delivery ended since the step: what the step set off is at rest.
       if (this.rests !== this.restsAtStep) return;
       // Nothing in flight and nothing at rest: code waiting on something Eutaxy cannot see has one

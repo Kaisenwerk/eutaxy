@@ -42,16 +42,31 @@ interface Timer {
   readonly interval: number | null;
   /** The invocation that scheduled it; cancelled with that invocation when it crashes. */
   readonly owner: string | null;
+  /** The host (`EffectOptions.host`) whose code scheduled it, when the run tells (`scopeNow`): whose work it is once its effect has ended. */
+  readonly scope: unknown;
+  /**
+   * Run by a poller armed where it was scheduled, inside the host's code, not
+   * by `fireNext`: workerd refuses to settle a Durable Object's promise from
+   * outside it. How many times it has fired and not yet run.
+   */
+  readonly deferred: boolean;
+  fired: number;
 }
 
 export class VirtualClock {
   private time = virtualEpoch;
   private timers: Timer[] = [];
+  /** Deferred timers fired and not yet run by their pollers: work on its way, inside a host. */
+  private readonly unrun = new Set<Timer>();
   private nextId = 1;
   /** The invocation whose code is running; timers scheduled now belong to it. */
   owner: string | null = null;
   /** Set by a concurrent run: who is running, asked when a timer is scheduled (overrides `owner`). */
   ownerNow: (() => string | null) | null = null;
+  /** Set by the run: the effect being performed by the code scheduling a timer, kept on the timer. */
+  scopeNow: (() => unknown) | null = null;
+  /** Set by the run: told whose timer `fireNext` fired (or marked fired), after it did. */
+  afterFire: ((owner: string | null) => void) | null = null;
   /** Set by a concurrent run: binds a callback to the async context it was scheduled in. */
   bind: ((callback: (...args: unknown[]) => void) => (...args: unknown[]) => void) | null = null;
 
@@ -77,9 +92,38 @@ export class VirtualClock {
       args,
       interval,
       owner: this.ownerNow ? this.ownerNow() : this.owner,
+      scope: this.scopeNow?.(),
+      deferred: false,
+      fired: 0,
     };
+    // Inside a host's code in workerd, the timer must be run from inside it too: a poller armed here.
+    if (timer.scope !== undefined && inWorkerd) {
+      (timer as { deferred: boolean }).deferred = true;
+      this.pollDeferred(timer);
+    }
     this.timers.push(timer);
     return timer.id;
+  }
+
+  /**
+   * Run a deferred timer's callback from where it was scheduled: a real zero
+   * timer made here, inside the host's code, polls until `fireNext` has
+   * fired it (as often as it fired, for an interval) or it was cleared.
+   */
+  private pollDeferred(timer: Timer): void {
+    const tick = (): void => {
+      while (timer.fired > 0) {
+        timer.fired--;
+        if (timer.fired === 0) this.unrun.delete(timer);
+        try {
+          timer.callback(...timer.args);
+        } catch {
+          // As for a timer `fireNext` runs: an exception in the callback does not stop the run.
+        }
+      }
+      if (timer.fired > 0 || this.timers.includes(timer)) realSetTimeout(tick, 0);
+    };
+    realSetTimeout(tick, 0);
   }
 
   setTimeout(callback: (...args: unknown[]) => void, delay = 0, ...args: unknown[]): number {
@@ -105,9 +149,24 @@ export class VirtualClock {
     return this.timers.length;
   }
 
+  /** Deferred timers fired and not yet run: what waits on nothing visible is still about to move. */
+  firedPending(): number {
+    return this.unrun.size;
+  }
+
+  /** Whether a timer scheduled inside the effect `scope` is still pending. */
+  hasTimerIn(scope: unknown): boolean {
+    return scope !== undefined && this.timers.some((t) => t.scope === scope);
+  }
+
   /** Drop every timer an invocation scheduled: a crashed invocation's code must never run again. */
   cancelOwner(owner: string): void {
     this.timers = this.timers.filter((t) => t.owner !== owner);
+    for (const t of this.unrun)
+      if (t.owner === owner) {
+        t.fired = 0;
+        this.unrun.delete(t);
+      }
   }
 
   private earliest(): Timer | undefined {
@@ -123,6 +182,29 @@ export class VirtualClock {
     return this.earliest()?.due;
   }
 
+  /** Advance to the earliest due timer whose owner `owned` accepts and run it. False when none is pending. */
+  fireNextOwned(owned: (owner: string | null) => boolean): boolean {
+    const earliest = this.earliestOwned(owned);
+    if (!earliest) return false;
+    return this.fire(earliest);
+  }
+
+  /** When the earliest timer whose owner `owned` accepts is due, or undefined when none is pending. */
+  nextDueOwned(owned: (owner: string | null) => boolean): number | undefined {
+    return this.earliestOwned(owned)?.due;
+  }
+
+  private earliestOwned(owned: (owner: string | null) => boolean): Timer | undefined {
+    let earliest: Timer | undefined;
+    for (const t of this.timers)
+      if (
+        owned(t.owner) &&
+        (!earliest || t.due < earliest.due || (t.due === earliest.due && t.id < earliest.id))
+      )
+        earliest = t;
+    return earliest;
+  }
+
   /** Who set the timer `fireNext` would run: an invocation, null for none, undefined when no timer is pending. */
   nextOwner(): string | null | undefined {
     return this.earliest()?.owner;
@@ -132,14 +214,25 @@ export class VirtualClock {
   fireNext(): boolean {
     const earliest = this.earliest();
     if (!earliest) return false;
+    return this.fire(earliest);
+  }
+
+  private fire(earliest: Timer): boolean {
     if (earliest.due > this.time) this.time = earliest.due;
     if (earliest.interval === null) this.timers = this.timers.filter((t) => t !== earliest);
     else earliest.due = this.time + earliest.interval;
-    try {
-      earliest.callback(...earliest.args);
-    } catch {
-      // An exception in a timer callback is uncaught in the real runtime too; it does not stop the run.
+    if (earliest.deferred) {
+      // Its poller, inside the host's code, runs it on the next real tick: until then it is on its way.
+      earliest.fired++;
+      this.unrun.add(earliest);
+    } else {
+      try {
+        earliest.callback(...earliest.args);
+      } catch {
+        // An exception in a timer callback is uncaught in the real runtime too; it does not stop the run.
+      }
     }
+    this.afterFire?.(earliest.owner);
     return true;
   }
 }
@@ -201,7 +294,7 @@ export interface Patched {
    */
   libraryIo<T>(perform: () => Promise<T>): Promise<T>;
   /** Run handler code inside an effect's I/O (a called Worker's code inside the call): its timers are virtual again. */
-  handlerCode<T>(work: () => Promise<T>): Promise<T>;
+  handlerCode<T>(work: () => T): T;
 }
 
 type Global = Record<string, unknown>;
@@ -328,7 +421,7 @@ export function patchGlobals(seed: number | string, options: PatchOptions = {}):
     libraryIo<T>(perform: () => Promise<T>): Promise<T> {
       return libraryScope ? libraryScope.run(true, perform) : perform();
     },
-    handlerCode<T>(work: () => Promise<T>): Promise<T> {
+    handlerCode<T>(work: () => T): T {
       return libraryScope ? libraryScope.run(false, work) : work();
     },
     restore() {

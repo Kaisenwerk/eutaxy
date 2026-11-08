@@ -7,7 +7,7 @@
  * waiting on parked effects of their own.
  */
 
-import type { EffectOptions } from "@eutaxy/core";
+import type { EffectOptions, EffectPoint } from "@eutaxy/core";
 import { asyncScope } from "./context.ts";
 
 /**
@@ -19,18 +19,28 @@ import { asyncScope } from "./context.ts";
 export class Frame {
   /** The invocation whose effect this is. */
   readonly invocation: string;
+  readonly target: string;
+  readonly op: string;
   /** Whether the effect hosts user code that makes effects of its own (`hostsEffects`). */
   readonly hosts: boolean;
+  /** Whose code the effect hosts, when it stays alive after the effect (`EffectOptions.host`). */
+  readonly host: string | undefined;
   /** False once the effect's perform has ended. */
   active = true;
   /** The effect's `onAbandon`, called where the crash happens (inside the hosted code's context). */
   private readonly onAbandon: (() => void) | undefined;
+  /** Set by the run: told, after `onAbandon` reset the host, which host it was. */
+  onHostAbandoned: ((host: string) => void) | undefined;
   /** The effect's `mayPark`: whether an effect its hosted code makes may wait for a turn now. */
   readonly mayPark: () => boolean;
   /** The hosting effect this one was made inside of and waited for a turn under, if any. */
   parent: Frame | undefined;
   /** Effects the hosted code made that are parked or running now. */
   children = 0;
+  /** Effects nested in this one (made inside its perform, not as turns) being performed now. */
+  performing = 0;
+  /** A host's effect whose call the host's code has started (`Frames.claimHost`). */
+  claimed = false;
   /** Of those, the ones parked, or running but only waiting on parked effects of their own. */
   waitingChildren = 0;
   private abandoned = false;
@@ -38,9 +48,15 @@ export class Frame {
   readonly crashed = new Promise<"nested_crash">((resolve) => {
     this.wake = () => resolve("nested_crash");
   });
-  constructor(invocation: string, hosts: boolean, options: EffectOptions) {
-    this.invocation = invocation;
-    this.hosts = hosts;
+  constructor(
+    point: Pick<EffectPoint, "invocation" | "target" | "op" | "hostsEffects">,
+    options: EffectOptions,
+  ) {
+    this.invocation = point.invocation;
+    this.target = point.target;
+    this.op = point.op;
+    this.hosts = point.hostsEffects === true;
+    this.host = options.host;
     this.onAbandon = options.onAbandon;
     this.mayPark = options.mayPark ?? (() => true);
   }
@@ -59,6 +75,7 @@ export class Frame {
     if (this.abandoned) return;
     this.abandoned = true;
     this.onAbandon?.();
+    if (this.host !== undefined) this.onHostAbandoned?.(this.host);
   }
 }
 
@@ -75,10 +92,32 @@ export class Frames {
   private readonly hosting = new Map<string, Frame[]>();
   /** Effects with `hostsEffects` being performed now, across invocations. */
   private hostingCount = 0;
+  /** Per host (`EffectOptions.host`), its effects being performed, innermost last. */
+  private readonly byHost = new Map<string, Frame[]>();
 
   /** How many effects with `hostsEffects` are being performed now: above 0, hosted code may be running. */
   get hostingNow(): number {
     return this.hostingCount;
+  }
+
+  /** The innermost effect of `host`'s being performed now, if any: code of the host's runs inside it. */
+  liveHost(host: string): Frame | undefined {
+    return this.byHost.get(host)?.at(-1);
+  }
+
+  /**
+   * The oldest effect of `host`'s being performed, with `op` when given, whose
+   * call the host's code has not started yet, now claimed: an object's input
+   * gate delivers calls in the order they arrived, which is the order their
+   * effects entered. Without one of that op, the oldest unclaimed of any.
+   */
+  claimHost(host: string, op?: string): Frame | undefined {
+    const live = this.byHost.get(host) ?? [];
+    const frame =
+      (op === undefined ? undefined : live.find((f) => !f.claimed && f.op === op)) ??
+      live.find((f) => !f.claimed);
+    if (frame) frame.claimed = true;
+    return frame;
   }
 
   /**
@@ -115,6 +154,11 @@ export class Frames {
       this.hostingFrames(frame.invocation).push(frame);
       this.hostingCount++;
     }
+    if (frame.host !== undefined) {
+      const frames = this.byHost.get(frame.host) ?? [];
+      frames.push(frame);
+      this.byHost.set(frame.host, frames);
+    }
   }
 
   /** An effect's perform has ended. */
@@ -125,6 +169,10 @@ export class Frames {
       this.hostingCount--;
     }
     this.stack.splice(this.stack.lastIndexOf(frame), 1);
+    if (frame.host !== undefined) {
+      const frames = this.byHost.get(frame.host);
+      frames?.splice(frames.lastIndexOf(frame), 1);
+    }
     // A frame only waiting on parked effects already counts as not in flight, and as waiting for
     // its parent: undo both as it ends.
     if (!frame.isWaiting()) this.inFlight--;
