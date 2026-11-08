@@ -1,9 +1,9 @@
 /** Inbound HTTP delivery: one invocation per attempt of a request the drive's caller sends. */
 
 import type { DeliveryResult, EventRef, JsonValue, RunHooks, ScenarioSpec } from "@eutaxy/core";
-import { CrashSignal, InjectedEffectError, runInvocation } from "@eutaxy/engine";
+import { runInvocation } from "@eutaxy/engine";
 import { drainBackground, executionContext, type RunningWorker } from "./background.ts";
-import { startCaller } from "./caller.ts";
+import { type Answer, startCaller } from "./caller.ts";
 import type { HttpDrive, HttpRequestSpec } from "./scenario.ts";
 
 /** The URL inbound requests are addressed to; handlers read only the path. */
@@ -72,54 +72,25 @@ export async function deliverRequest(
       throw new TypeError("the fetch handler returned something that is not a Response");
     return value;
   });
-  const response = handled.status === "completed" ? handled.value : undefined;
   let status: DeliveryResult["status"] = handled.status;
-
-  let summary: { status: number; ok: boolean } | null = null;
-  let read: { status: number; ok: boolean; body: JsonValue } | "crashed" | "errored" = "errored";
-  if (status === "completed" && response) {
+  let answer: Answer = { kind: "none" };
+  if (handled.status === "completed") {
     // The body is read before the point so the record is complete; the point itself is the send.
     // Streaming bodies run handler code: a crash inside it abandons the read, an error fails the delivery.
-    const body = await runInvocation(hooks, inv, () => summarizeResponse(response));
-    read =
-      body.status === "completed"
-        ? (body.value as { status: number; ok: boolean; body: JsonValue })
-        : body.status;
-    if (read === "crashed" || read === "errored") status = read;
+    const body = await runInvocation(hooks, inv, () => summarizeResponse(handled.value));
+    if (body.status === "completed") {
+      const sent = body.value as { status: number; ok: boolean; body: JsonValue };
+      answer = {
+        kind: "answered",
+        value: sent,
+        accepted: drive.retryOn === "5xx" ? sent.status < 500 : sent.ok,
+      };
+    } else status = body.status;
   }
-  let late = caller.isLate();
-  const allowed = caller.responseFaults;
-  if (status === "completed" && typeof read === "object") {
-    const s = read;
-    try {
-      hooks.effectSync(
-        { invocation, target, op: "response", args, allowed },
-        () => s,
-        (v) => v,
-      );
-      summary = s;
-    } catch (err) {
-      if (err instanceof CrashSignal) status = "crashed";
-      else if (err instanceof InjectedEffectError) {
-        // Sent, but after the caller's deadline: the handler carries on, the caller resends.
-        summary = s;
-        late = true;
-      } else throw err;
-    }
-  } else if (status === "errored") {
-    // Cloudflare answers an uncaught exception with a 500 (workers runtime behaviour); the caller sees that.
-    const s = { status: 500, ok: false, body: "" };
-    hooks.effectSync(
-      { invocation, target, op: "response", args, allowed: [] },
-      () => s,
-      (v) => v,
-    );
-    summary = s;
-  }
-
-  const accepted =
-    summary !== null && !late && (drive.retryOn === "5xx" ? summary.status < 500 : summary.ok);
-  caller.settle(accepted, late);
+  // Cloudflare answers an uncaught exception with a 500 (workers runtime behaviour); the caller sees that.
+  if (status === "errored")
+    answer = { kind: "errored", value: { status: 500, ok: false, body: "" } };
+  if (caller.respond(invocation, args, answer)) status = "crashed";
 
   if (await drainBackground(hooks, inv, invocation, target, background)) status = "crashed";
   return { status, followUps: [] };

@@ -14,9 +14,9 @@ import {
   type ScenarioSpec,
   toJson,
 } from "@eutaxy/core";
-import { CrashSignal, InjectedEffectError, runInvocation } from "@eutaxy/engine";
+import { runInvocation } from "@eutaxy/engine";
 import { drainBackground, executionContext } from "./background.ts";
-import { startCaller } from "./caller.ts";
+import { type Answer, startCaller } from "./caller.ts";
 import { isPlainData } from "./durable-objects.ts";
 import { constructEntrypoint } from "./entrypoint.ts";
 import { type RpcCallSpec, type RpcDrive, rpcTarget } from "./scenario.ts";
@@ -54,42 +54,19 @@ export async function deliverCall(
     callMethod(cls, call, executionContext(background), env),
   );
   let status: DeliveryResult["status"] = ran.status;
-  let late = caller.isLate();
-  let answer: { readonly ok: boolean } | null = null;
+  let answer: Answer = { kind: "none" };
   if (ran.status === "completed") {
     // Data travels by copy; a stub, a function or a stream would let later calls bypass the run.
     if (!isPlainData(ran.value))
       hooks.unsupported(
         `Rpc ${call.method}: the result is not plain data (a stub, a function or a stream); RPC capabilities are not modelled`,
       );
-    const s = { ok: true, value: toJson(ran.value) };
-    try {
-      hooks.effectSync(
-        { invocation, target, op: "response", args, allowed: caller.responseFaults },
-        () => s,
-        (v) => v,
-      );
-      answer = s;
-    } catch (err) {
-      if (err instanceof CrashSignal) status = "crashed";
-      else if (err instanceof InjectedEffectError) {
-        // Answered, but after the caller's deadline: the handler carries on, the caller resends.
-        answer = s;
-        late = true;
-      } else throw err;
-    }
+    answer = { kind: "answered", value: { ok: true, value: toJson(ran.value) }, accepted: true };
   } else if (ran.status === "errored") {
     // The exception reaches the caller as a new error with its name and message; the caller saw an answer.
-    const s = { ok: false, error: describeError(ran.error) };
-    hooks.effectSync(
-      { invocation, target, op: "response", args, allowed: [] },
-      () => s,
-      (v) => v,
-    );
-    answer = s;
+    answer = { kind: "errored", value: { ok: false, error: describeError(ran.error) } };
   }
-
-  caller.settle(answer !== null && !late && answer.ok, late);
+  if (caller.respond(invocation, args, answer)) status = "crashed";
   if (await drainBackground(hooks, inv, invocation, target, background)) status = "crashed";
   return { status, followUps: [] };
 }

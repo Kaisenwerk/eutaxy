@@ -15,7 +15,7 @@ import {
   redelivery,
   type ScenarioSpec,
 } from "@eutaxy/core";
-import { note } from "@eutaxy/engine";
+import { CrashSignal, InjectedEffectError, note } from "@eutaxy/engine";
 
 /** The response point: a crash before it is a response the caller never saw. */
 const RESPOND: readonly FaultKind[] = ["crash_before"];
@@ -42,18 +42,23 @@ export function retryDelayMs(policy: Pick<CallerPolicy, "delaysMs">, resend: num
   return delays[Math.min(resend, delays.length) - 1] ?? 0;
 }
 
+/** How an attempt ended for its caller: an answer the handler sent, the answer an uncaught error gets, or none. */
+export type Answer =
+  | { readonly kind: "answered"; readonly value: JsonValue; readonly accepted: boolean }
+  | { readonly kind: "errored"; readonly value: JsonValue }
+  | { readonly kind: "none" };
+
 /** One attempt's caller, waiting for its answer. */
 export interface Caller {
-  /** The faults the response point admits: with a deadline, also the answer that comes too late. */
-  readonly responseFaults: readonly FaultKind[];
-  /** Whether the virtual clock is past the caller's deadline now. */
-  isLate(): boolean;
   /**
-   * The caller's decision once the attempt has an answer or none: it accepts
-   * the answer, or gives up, now or at its deadline when the answer was
-   * late, and resends or stops.
+   * The response point: the answer is recorded as the `response` effect under
+   * the caller's faults (an injected crash is the handler's, before the send;
+   * an injected error is an answer sent after the deadline, which the caller
+   * counts as failed while the handler carries on), a synthetic answer for an
+   * uncaught error under none, and the caller settles. Whether the invocation
+   * crashed at the point.
    */
-  settle(accepted: boolean, late: boolean): void;
+  respond(invocation: string, args: JsonValue, answer: Answer): boolean;
 }
 
 /**
@@ -99,14 +104,41 @@ export function startCaller(
   const deadlineTimer =
     lateAt === undefined ? undefined : setTimeout(() => giveUp(lateAt), deadline);
 
+  const responseFaults = deadline === undefined ? RESPOND : RESPOND_WITH_DEADLINE;
+  const isLate = (): boolean => lateAt !== undefined && Date.now() > lateAt;
+  /** The caller decides as soon as it has an answer or gives up, before background work ends. */
+  const settle = (accepted: boolean, late: boolean): void => {
+    if (deadlineTimer !== undefined) clearTimeout(deadlineTimer);
+    if (accepted) decided = true;
+    else giveUp(late && lateAt !== undefined ? lateAt : Date.now());
+  };
+
   return {
-    responseFaults: deadline === undefined ? RESPOND : RESPOND_WITH_DEADLINE,
-    isLate: () => lateAt !== undefined && Date.now() > lateAt,
-    settle(accepted, late) {
-      // The caller decides as soon as it has an answer or gives up, before background work ends.
-      if (deadlineTimer !== undefined) clearTimeout(deadlineTimer);
-      if (accepted) decided = true;
-      else giveUp(late && lateAt !== undefined ? lateAt : Date.now());
+    respond(invocation, args, answer) {
+      let late = isLate();
+      let accepted = false;
+      let crashed = false;
+      const record = (allowed: readonly FaultKind[], value: JsonValue): void => {
+        hooks.effectSync(
+          { invocation, target, op: "response", args, allowed },
+          () => value,
+          (v) => v,
+        );
+      };
+      if (answer.kind === "answered") {
+        try {
+          record(responseFaults, answer.value);
+          accepted = answer.accepted;
+        } catch (err) {
+          if (err instanceof CrashSignal) crashed = true;
+          else if (err instanceof InjectedEffectError) late = true;
+          else throw err;
+        }
+      } else if (answer.kind === "errored") {
+        record([], answer.value);
+      }
+      settle(accepted && !late, late);
+      return crashed;
     },
   };
 }
