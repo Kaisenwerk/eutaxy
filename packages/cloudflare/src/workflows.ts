@@ -20,6 +20,7 @@ import {
 import {
   CrashSignal,
   InjectedEffectError,
+  note,
   type Outcome as RunOutcome,
   runInvocation,
 } from "@eutaxy/engine";
@@ -731,22 +732,14 @@ export async function deliverWorkflow(
         const error = Object.assign(new Error(`Execution timed out after ${timeoutMs}ms`), {
           name: "WorkflowTimeoutError",
         });
-        hooks.effectSync(
-          { invocation, target, op: "wait_timeout", args, allowed: [] },
-          () => null,
-          () => null,
-        );
+        note(hooks, { invocation, target, op: "wait_timeout", args, allowed: [] });
         instance.persisted.set(k, failure(error));
         throw error;
       }
       const deadline = existing ?? Date.now() + timeoutMs;
       if (existing === undefined) {
         instance.deadlines.set(k, deadline);
-        hooks.effectSync(
-          { invocation, target, op: "wait", args: { ...args, timeoutMs }, allowed: [] },
-          () => null,
-          () => null,
-        );
+        note(hooks, { invocation, target, op: "wait", args: { ...args, timeoutMs }, allowed: [] });
       }
       // Nothing to wait on yet: the instance hibernates until the event or the deadline wakes it.
       const gen = ++instance.waitGen;
@@ -780,17 +773,13 @@ export async function deliverWorkflow(
       return;
     }
     instance.deadlines.set(k, Date.now() + ms);
-    hooks.effectSync(
-      {
-        invocation,
-        target,
-        op: "sleep",
-        args: { instance: instance.id, step: name, ms, ...(until === undefined ? {} : { until }) },
-        allowed: [],
-      },
-      () => null,
-      () => null,
-    );
+    note(hooks, {
+      invocation,
+      target,
+      op: "sleep",
+      args: { instance: instance.id, step: name, ms, ...(until === undefined ? {} : { until }) },
+      allowed: [],
+    });
     await sleep(ms);
     instance.persisted.set(k, { ok: true, value: null });
   }
@@ -870,17 +859,13 @@ export async function deliverWorkflow(
   if (result.status === "completed") {
     instance.status = "complete";
     instance.output = result.value;
-    hooks.effectSync(
-      {
-        invocation,
-        target,
-        op: "complete",
-        args: { instance: instance.id, output: toJson(instance.output) },
-        allowed: [],
-      },
-      () => null,
-      () => null,
-    );
+    note(hooks, {
+      invocation,
+      target,
+      op: "complete",
+      args: { instance: instance.id, output: toJson(instance.output) },
+      allowed: [],
+    });
   } else if (result.status === "errored") {
     instance.status = "errored";
     const e = result.error;
@@ -888,17 +873,13 @@ export async function deliverWorkflow(
       e instanceof Error
         ? { name: e.name, message: e.message }
         : { name: "Error", message: String(e) };
-    hooks.effectSync(
-      {
-        invocation,
-        target,
-        op: "errored",
-        args: { instance: instance.id, error: `${instance.error.name}: ${instance.error.message}` },
-        allowed: [],
-      },
-      () => null,
-      () => null,
-    );
+    note(hooks, {
+      invocation,
+      target,
+      op: "errored",
+      args: { instance: instance.id, error: `${instance.error.name}: ${instance.error.message}` },
+      allowed: [],
+    });
   }
   if (await drainBackground(hooks, inv, invocation, target, background)) status = "crashed";
   // The engine restarts a crashed instance from the start of `run`; crashes come from faults, so few.

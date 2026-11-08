@@ -1,7 +1,7 @@
 /** What a delivery hands the Worker besides the event: its `ExecutionContext`, and the background work it collects. */
 
 import type { FaultKind, RunHooks } from "@eutaxy/core";
-import { CrashSignal } from "@eutaxy/engine";
+import { CrashSignal, note } from "@eutaxy/engine";
 import type { WorkerHandler } from "./platform.ts";
 
 const CUT_OFF: readonly FaultKind[] = ["cut_off"];
@@ -54,17 +54,13 @@ export async function drainBackground(
 ): Promise<boolean> {
   if (background.length === 0 || inv.isCrashed()) return false;
   try {
-    hooks.effectSync(
-      {
-        invocation,
-        target,
-        op: "background",
-        args: { pending: background.length },
-        allowed: CUT_OFF,
-      },
-      () => null,
-      () => null,
-    );
+    note(hooks, {
+      invocation,
+      target,
+      op: "background",
+      args: { pending: background.length },
+      allowed: CUT_OFF,
+    });
     await Promise.race([hooks.settle(Promise.all(background), invocation), inv.crashed]);
     // A fault crashing an effect the work makes hangs that effect rather than throwing, so the
     // race ends on `inv.crashed`: the invocation is crashed all the same.

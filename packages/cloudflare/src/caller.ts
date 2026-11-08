@@ -15,6 +15,7 @@ import {
   redelivery,
   type ScenarioSpec,
 } from "@eutaxy/core";
+import { note } from "@eutaxy/engine";
 
 /** The response point: a crash before it is a response the caller never saw. */
 const RESPOND: readonly FaultKind[] = ["crash_before"];
@@ -85,11 +86,13 @@ export function startCaller(
       const resendAt = Math.max(at + retryDelayMs(policy, event.attempt), Date.now());
       hooks.enqueue({ ...next, ...(resendAt > Date.now() ? { at: resendAt } : {}) });
     } else {
-      hooks.effectSync(
-        { invocation: hooks.bookkeeping(), target, op: "gave_up", args: gaveUp, allowed: [] },
-        () => null,
-        () => null,
-      );
+      note(hooks, {
+        invocation: hooks.bookkeeping(),
+        target,
+        op: "gave_up",
+        args: gaveUp,
+        allowed: [],
+      });
     }
   };
   // A virtual timer: at the deadline the caller gives up, whatever the handler is doing.

@@ -40,7 +40,7 @@ import {
   type ScenarioSpec,
   toJson,
 } from "@eutaxy/core";
-import { realTick, runInvocation } from "@eutaxy/engine";
+import { note, realTick, runInvocation } from "@eutaxy/engine";
 import { drainBackground, executionContext, type RunningWorker } from "./background.ts";
 import type { ObjectAccess } from "./bindings.ts";
 import { requestOrigin } from "./http.ts";
@@ -289,29 +289,21 @@ export class Connections {
     const bookkeeping = () => hooks.bookkeeping();
     for (const [connection, c] of this.open) {
       for (const data of this.frames.get(connection) ?? [])
-        hooks.effectSync(
-          {
-            invocation: bookkeeping(),
-            target: `WebSocket:${connection}`,
-            op: "message",
-            args: { connection, data },
-            allowed: [],
-          },
-          () => null,
-          () => null,
-        );
+        note(hooks, {
+          invocation: bookkeeping(),
+          target: `WebSocket:${connection}`,
+          op: "message",
+          args: { connection, data },
+          allowed: [],
+        });
       if (c.closed)
-        hooks.effectSync(
-          {
-            invocation: bookkeeping(),
-            target: `WebSocket:${connection}`,
-            op: "close",
-            args: { connection, code: c.closed.code, reason: c.closed.reason },
-            allowed: [],
-          },
-          () => null,
-          () => null,
-        );
+        note(hooks, {
+          invocation: bookkeeping(),
+          target: `WebSocket:${connection}`,
+          op: "close",
+          args: { connection, code: c.closed.code, reason: c.closed.reason },
+          allowed: [],
+        });
     }
     this.frames.clear();
   }

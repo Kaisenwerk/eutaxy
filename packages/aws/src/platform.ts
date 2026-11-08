@@ -19,7 +19,7 @@ import {
   redelivery,
   type ScenarioSpec,
 } from "@eutaxy/core";
-import { CrashSignal, runInvocation } from "@eutaxy/engine";
+import { decide, note, runInvocation } from "@eutaxy/engine";
 import { resetTables, scenarioTables, snapshotTables } from "./dynamodb.ts";
 import {
   batchFailed,
@@ -144,24 +144,22 @@ export function createAwsPlatform(options: AwsPlatformOptions): Platform {
       let deleted = false;
       const failed = batchFailed(response, event.id, [event.id]);
       if (status === "completed" && !failed) {
-        try {
-          hooks.effectSync(
-            {
-              invocation,
-              target: queueTarget,
-              op: "delete",
-              args: { messageId: event.id, implicit: true } as JsonValue,
-              allowed: decisionFaults,
-            },
-            () => {
-              deleted = true;
-            },
-            () => null,
-          );
-        } catch (err) {
-          if (!(err instanceof CrashSignal)) throw err;
-          status = "crashed";
-        }
+        const point = {
+          invocation,
+          target: queueTarget,
+          op: "delete",
+          args: { messageId: event.id, implicit: true } as JsonValue,
+          allowed: decisionFaults,
+        };
+        const decided = decide(
+          hooks,
+          point,
+          () => {
+            deleted = true;
+          },
+          () => null,
+        );
+        if (decided === "crashed") status = "crashed";
       }
 
       const followUps: EventRef[] = [];
@@ -171,17 +169,13 @@ export function createAwsPlatform(options: AwsPlatformOptions): Platform {
         if (next) {
           followUps.push(next);
         } else {
-          hooks.effectSync(
-            {
-              invocation: hooks.bookkeeping(),
-              target: queueTarget,
-              op: "dead_letter",
-              args: { messageId: event.id, attempts: event.attempt },
-              allowed: [],
-            },
-            () => null,
-            () => null,
-          );
+          note(hooks, {
+            invocation: hooks.bookkeeping(),
+            target: queueTarget,
+            op: "dead_letter",
+            args: { messageId: event.id, attempts: event.attempt },
+            allowed: [],
+          });
         }
       }
       currentInvocation = "";

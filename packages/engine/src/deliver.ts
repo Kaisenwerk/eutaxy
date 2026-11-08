@@ -4,7 +4,7 @@
  * of three outcomes rather than an exception to sort.
  */
 
-import type { Invocation, RunHooks } from "@eutaxy/core";
+import type { EffectPoint, Invocation, JsonValue, RunHooks } from "@eutaxy/core";
 import { CrashSignal, Run } from "./run.ts";
 
 /** How user code run as an invocation ended: it returned, it threw, or an injected fault crashed it. */
@@ -56,4 +56,37 @@ export function hostInvocation<T>(
 ): Promise<T> {
   if (!(hooks instanceof Run)) throw new Error("hostInvocation needs the engine's run");
   return hooks.hosted(id, work);
+}
+
+/**
+ * Record a platform action that performs nothing: a marker in the log (a
+ * message dead-lettered, a caller that gave up, a Workflow step's result).
+ * Under faults it can crash the invocation like any effect; most admit none.
+ */
+export function note(hooks: RunHooks, point: EffectPoint): void {
+  hooks.effectSync(
+    point,
+    () => null,
+    () => null,
+  );
+}
+
+/**
+ * Perform a decision of the platform's own (an implicit ack, a delete)
+ * under the faults around a decision: it stands, or an injected crash
+ * ended the invocation at that point.
+ */
+export function decide<T>(
+  hooks: RunHooks,
+  point: EffectPoint,
+  perform: () => T,
+  summarize: (value: T) => JsonValue,
+): "decided" | "crashed" {
+  try {
+    hooks.effectSync(point, perform, summarize);
+    return "decided";
+  } catch (err) {
+    if (err instanceof CrashSignal) return "crashed";
+    throw err;
+  }
 }

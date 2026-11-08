@@ -15,6 +15,7 @@ import type {
   RunHooks,
   ScenarioSpec,
 } from "@eutaxy/core";
+import { note } from "@eutaxy/engine";
 import { alarmSource, deliverAlarm } from "./alarms.ts";
 import { type CalleeModule, CalleeState, calleeEnv, proxyCallee } from "./callees.ts";
 import { isD1, type ProxyContext, proxyD1, resetD1, snapshotD1 } from "./d1.ts";
@@ -285,17 +286,13 @@ export function durableObjectBinding(
         mayPark: (id) => stateFor(binding).mayPark(id),
         evict: (id) => evictObject(namespace(binding), helpers, id),
         bookkeep: (op, args) =>
-          hooks.effectSync(
-            {
-              invocation: hooks.bookkeeping(),
-              target: `DO:${binding}`,
-              op,
-              args,
-              allowed: [],
-            },
-            () => null,
-            () => null,
-          ),
+          note(hooks, {
+            invocation: hooks.bookkeeping(),
+            target: `DO:${binding}`,
+            op,
+            args,
+            allowed: [],
+          }),
       });
     },
   };

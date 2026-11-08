@@ -3,13 +3,14 @@
 import {
   type DeliveryResult,
   decisionFaults,
+  type EffectPoint,
   type EventRef,
   type JsonValue,
   type RunHooks,
   redelivery,
   type ScenarioSpec,
 } from "@eutaxy/core";
-import { CrashSignal, runInvocation } from "@eutaxy/engine";
+import { decide, note, runInvocation } from "@eutaxy/engine";
 import { drainBackground, executionContext, type RunningWorker } from "./background.ts";
 import type { QueueDrive } from "./scenario.ts";
 
@@ -34,25 +35,31 @@ export async function deliverMessage(
   const state: { decision: "ack" | "retry" | null } = { decision: null };
   const background: Promise<unknown>[] = [];
 
-  /** Records the call; the result says whether it took effect (the first decision wins). */
-  const decide = (op: "ack" | "retry", args: JsonValue): void => {
-    hooks.effectSync(
-      { invocation, target: queueTarget, op, args, allowed: decisionFaults },
-      () => {
-        if (state.decision !== null) return false;
-        state.decision = op;
-        return true;
-      },
-      (effective) => ({ effective }),
-    );
+  const decisionPoint = (op: "ack" | "retry", args: JsonValue): EffectPoint => ({
+    invocation,
+    target: queueTarget,
+    op,
+    args,
+    allowed: decisionFaults,
+  });
+  /** The first decision wins; a later one is recorded as not effective. */
+  const take = (op: "ack" | "retry") => (): boolean => {
+    if (state.decision !== null) return false;
+    state.decision = op;
+    return true;
+  };
+  const effective = (e: boolean): JsonValue => ({ effective: e });
+  /** Records the handler's call; the result says whether it took effect. */
+  const record = (op: "ack" | "retry", args: JsonValue): void => {
+    hooks.effectSync(decisionPoint(op, args), take(op), effective);
   };
   const message: Message<unknown> = {
     id: event.id,
     timestamp: new Date(),
     body: cloneJson(event.data),
     attempts: event.attempt,
-    ack: () => decide("ack", { messageId: event.id, implicit: false, body: event.data }),
-    retry: () => decide("retry", { messageId: event.id, body: event.data }),
+    ack: () => record("ack", { messageId: event.id, implicit: false, body: event.data }),
+    retry: () => record("retry", { messageId: event.id, body: event.data }),
   };
   const batch: MessageBatch<unknown> = {
     queue: drive.queue,
@@ -72,12 +79,12 @@ export async function deliverMessage(
   ).status;
 
   if (status === "completed" && state.decision === null) {
-    try {
-      decide("ack", { messageId: event.id, implicit: true, body: event.data });
-    } catch (err) {
-      if (err instanceof CrashSignal) status = "crashed";
-      else throw err;
-    }
+    const implicit = decisionPoint("ack", {
+      messageId: event.id,
+      implicit: true,
+      body: event.data,
+    });
+    if (decide(hooks, implicit, take("ack"), effective) === "crashed") status = "crashed";
   }
 
   if (await drainBackground(hooks, inv, invocation, queueTarget, background)) status = "crashed";
@@ -88,17 +95,13 @@ export async function deliverMessage(
     if (next) {
       followUps.push(next);
     } else {
-      hooks.effectSync(
-        {
-          invocation: hooks.bookkeeping(),
-          target: queueTarget,
-          op: "dead_letter",
-          args: { messageId: event.id, attempts: event.attempt },
-          allowed: [],
-        },
-        () => null,
-        () => null,
-      );
+      note(hooks, {
+        invocation: hooks.bookkeeping(),
+        target: queueTarget,
+        op: "dead_letter",
+        args: { messageId: event.id, attempts: event.attempt },
+        allowed: [],
+      });
     }
   }
   return { status, followUps };

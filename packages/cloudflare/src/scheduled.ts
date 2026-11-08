@@ -14,7 +14,7 @@ import {
   redelivery,
   type ScenarioSpec,
 } from "@eutaxy/core";
-import { runInvocation } from "@eutaxy/engine";
+import { note, runInvocation } from "@eutaxy/engine";
 import { drainBackground, executionContext, type RunningWorker } from "./background.ts";
 import type { CronDrive } from "./scenario.ts";
 
@@ -71,17 +71,13 @@ export async function deliverTick(
     const next = redelivery(event, drive.retries, spec.bounds);
     if (next) followUps.push(next);
     else
-      hooks.effectSync(
-        {
-          invocation: hooks.bookkeeping(),
-          target,
-          op: "gave_up",
-          args: { tick: event.id, attempts: event.attempt },
-          allowed: [],
-        },
-        () => null,
-        () => null,
-      );
+      note(hooks, {
+        invocation: hooks.bookkeeping(),
+        target,
+        op: "gave_up",
+        args: { tick: event.id, attempts: event.attempt },
+        allowed: [],
+      });
   }
   return { status, followUps };
 }
