@@ -78,10 +78,6 @@ export function compileSelector(sel: EffectSelector): EffectPredicate {
   };
 }
 
-export function matches(record: EffectRecord, sel: EffectSelector): boolean {
-  return compileSelector(sel)(record);
-}
-
 export function selectEffects(log: EffectLog, sel: EffectSelector): readonly EffectRecord[] {
   return log.entries.filter(compileSelector(sel));
 }

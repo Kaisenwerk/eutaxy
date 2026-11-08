@@ -132,16 +132,14 @@ function snapshotSeq(log: EffectLog, target: string): number[] {
   return last === undefined ? [] : [last.seq];
 }
 
+/** The violation a state invariant reports when the target it reads was never snapshotted. */
+function noSnapshot(invariant: string, target: string): Violation {
+  return { invariant, message: `no snapshot of ${target} was recorded`, keys: [], evidence: [] };
+}
+
 export function checkEveryRow(log: EffectLog, inv: EveryRow): Violation | null {
   const rows = queryRows(log, inv.query);
-  if (rows === undefined) {
-    return {
-      invariant: inv.name,
-      message: `no snapshot of ${inv.query.target} was recorded`,
-      keys: [],
-      evidence: [],
-    };
-  }
+  if (rows === undefined) return noSnapshot(inv.name, inv.query.target);
   const failing = rows.filter((r) => !inv.holds.every((c) => rowMatches(r, c)));
   if (failing.length === 0) return null;
   const keys = failing.map((r) => canonicalJson(r));
@@ -156,14 +154,7 @@ export function checkEveryRow(log: EffectLog, inv: EveryRow): Violation | null {
 
 export function checkUnique(log: EffectLog, inv: Unique): Violation | null {
   const rows = queryRows(log, inv.query);
-  if (rows === undefined) {
-    return {
-      invariant: inv.name,
-      message: `no snapshot of ${inv.query.target} was recorded`,
-      keys: [],
-      evidence: [],
-    };
-  }
+  if (rows === undefined) return noSnapshot(inv.name, inv.query.target);
   const counts = new Map<string, number>();
   for (const r of rows) {
     const v = getPath(r as JsonValue, inv.path);
@@ -186,32 +177,25 @@ export function checkUnique(log: EffectLog, inv: Unique): Violation | null {
 
 export function checkImplies(log: EffectLog, inv: Implies): Violation | null {
   const rows = queryRows(log, inv.state);
-  if (rows === undefined) {
-    return {
-      invariant: inv.name,
-      message: `no snapshot of ${inv.state.target} was recorded`,
-      keys: [],
-      evidence: [],
-    };
-  }
+  if (rows === undefined) return noSnapshot(inv.name, inv.state.target);
   const present = new Set<string>();
   for (const r of rows) {
     const v = r[inv.column];
     if (v !== undefined) present.add(canonicalJson(v));
   }
-  const missing: string[] = [];
+  const missing = new Set<string>();
   const evidence: number[] = [];
   for (const e of selectEffects(log, inv.when)) {
     const k = keyOf(e, inv.key);
     if (k === undefined || present.has(k)) continue;
-    if (!missing.includes(k)) missing.push(k);
+    missing.add(k);
     evidence.push(e.seq);
   }
-  if (missing.length === 0) return null;
+  if (missing.size === 0) return null;
   return {
     invariant: inv.name,
-    message: `${inv.when.target} ${inv.when.op ?? "*"} happened for key(s) ${missing.join(", ")} but ${inv.state.table}.${inv.column} in ${inv.state.target} has no such row`,
-    keys: missing,
+    message: `${inv.when.target} ${inv.when.op ?? "*"} happened for key(s) ${[...missing].join(", ")} but ${inv.state.table}.${inv.column} in ${inv.state.target} has no such row`,
+    keys: [...missing],
     evidence,
   };
 }
@@ -223,13 +207,7 @@ export function checkReferences(log: EffectLog, inv: References): Violation | nu
     [inv.query, rows],
     [inv.in, targets],
   ] as const) {
-    if (r === undefined)
-      return {
-        invariant: inv.name,
-        message: `no snapshot of ${q.target} was recorded`,
-        keys: [],
-        evidence: [],
-      };
+    if (r === undefined) return noSnapshot(inv.name, q.target);
   }
   const pointedAt = new Set<string>();
   for (const t of targets ?? []) {

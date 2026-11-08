@@ -156,8 +156,8 @@ describe.concurrent("the self-check", () => {
     {
       bug: "implies reports a missing key once per effect",
       file: "state.ts",
-      from: "if (!missing.includes(k)) missing.push(k);",
-      to: "missing.push(k);",
+      from: "keys: [...missing],",
+      to: "keys: selectEffects(log, inv.when).map((e) => keyOf(e, inv.key)).filter((k) => k !== undefined && missing.has(k)) as string[],",
       refuted: ["impliesMatchesReference"],
     },
     {
