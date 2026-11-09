@@ -47,9 +47,20 @@ interface Parked {
   readonly go: () => void;
   /** For hosted code's effects: the hosting effect, waiting on this one meanwhile. */
   readonly host?: Frame;
+  /**
+   * The attempt whose code parked here, if any, read live: a late attempt's
+   * turn is offered like any other, but holds nothing (see `takeTurn`).
+   */
+  readonly attempt: { readonly late: boolean } | undefined;
   /** The turn as a choice: its label and the target of the effect it performs. */
   readonly option: ChoiceOption;
 }
+
+/**
+ * How often one run may let time pass over late turns before they must run:
+ * a stray interval would otherwise be fired forever while late code waits.
+ */
+export const waitLimit = 100;
 
 export class Turns {
   private readonly chooser: Chooser;
@@ -71,6 +82,8 @@ export class Turns {
   private readonly picked: number[] = [];
   /** Events started so far, to name the next start the same in every run. */
   private starts = 0;
+  /** Times the run let time pass over late turns (see `takeTurn`). */
+  private waits = 0;
   /** The target of the turn running since the last decision; null for an event's start or none. */
   private turnTarget: string | null = null;
   private commuteNot = false;
@@ -114,9 +127,15 @@ export class Turns {
   }
 
   /** Park an invocation at an effect until `takeTurn` releases it with `go`. */
-  park(inv: Turner, target: string, go: () => void, host?: Frame): void {
+  park(
+    inv: Turner,
+    target: string,
+    go: () => void,
+    host?: Frame,
+    attempt?: { readonly late: boolean },
+  ): void {
     const option = { label: `${inv.id}@${inv.parks++}`, invocation: inv.id, target };
-    this.parked.push({ inv, seq: this.parkSeq++, go, option, ...(host ? { host } : {}) });
+    this.parked.push({ inv, seq: this.parkSeq++, go, option, attempt, ...(host ? { host } : {}) });
     this.rested();
   }
 
@@ -238,13 +257,31 @@ export class Turns {
     return this.moves !== before;
   }
 
-  /** See `Run.takeTurn`. */
-  takeTurn(canStart: boolean, timer?: DueTimer): "turn" | "start" | "timer" | "none" {
+  /**
+   * See `Run.takeTurn`. `canWait`: whether, with nothing else to do, the run
+   * could let time pass (a timer is pending or a delayed event is due later).
+   * While every parked turn is late (`RunHooks.attempt`) and nothing else is
+   * on offer, waiting is an option too, so the late code's next move lands
+   * before or after what the time brings; "none" then means the run should
+   * let time pass as when nothing is parked.
+   */
+  takeTurn(
+    canStart: boolean,
+    timer?: DueTimer,
+    canWait = false,
+  ): "turn" | "start" | "timer" | "none" {
     const order = (inv: Turner) => this.startOrder.get(inv.id) ?? 0;
     this.parked = this.parked
       .filter((p) => !p.inv.isCrashed())
       .sort((a, b) => order(a.inv) - order(b.inv) || a.seq - b.seq);
-    const offered = this.turnOptions(canStart, timer);
+    const waiting =
+      canWait &&
+      !canStart &&
+      !timer &&
+      this.waits < waitLimit &&
+      this.parked.length > 0 &&
+      this.parked.every((p) => p.attempt?.late === true);
+    const offered = this.turnOptions(canStart, timer, waiting);
     const options = offered.length;
     this.endSegment();
     this.turnTarget = null;
@@ -258,6 +295,11 @@ export class Turns {
     if (options > 1) this.picked.push(pick);
     const [chosen] = pick < this.parked.length ? this.parked.splice(pick, 1) : [];
     if (!chosen) {
+      // Past the parked turns, which were all late: time passes over them.
+      if (waiting) {
+        this.waits++;
+        return "none";
+      }
       // Past the parked turns: the due timer is the last option when there is one, else the start.
       if (timer && pick === options - 1) {
         // Like a start, a timer turn is ordered against every other (its option has no target), so
@@ -280,12 +322,14 @@ export class Turns {
   /**
    * The turns on offer, as choices: the parked invocations in order, then
    * starting the next event, then the due timer (last, so a recorded pick
-   * of the others means the same with or without it). A timer's option names its
-   * owner and how many of that owner's timers have fired, and has no target:
-   * the callback may do anything, and firing it reads virtual time, so it
-   * commutes with nothing.
+   * of the others means the same with or without it), or, when every parked
+   * turn is late and nothing else is offered, letting time pass. A timer's
+   * option names its owner and how many of that owner's timers have fired,
+   * and has no target: the callback may do anything, and firing it reads
+   * virtual time, so it commutes with nothing; so does waiting, which fires
+   * the next timer.
    */
-  private turnOptions(canStart: boolean, timer?: DueTimer): ChoiceOption[] {
+  private turnOptions(canStart: boolean, timer?: DueTimer, waiting = false): ChoiceOption[] {
     return [
       ...this.parked.map((p) => p.option),
       ...(canStart ? [{ label: `start:${this.starts}` }] : []),
@@ -297,6 +341,7 @@ export class Turns {
             },
           ]
         : []),
+      ...(waiting ? [{ label: `wait:${this.waits}` }] : []),
     ];
   }
 }

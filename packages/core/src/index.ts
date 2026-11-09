@@ -33,6 +33,7 @@ export {
   type Violation,
 } from "./invariants.ts";
 export type {
+  Attempt,
   DeliveryResult,
   EffectOptions,
   EffectPoint,

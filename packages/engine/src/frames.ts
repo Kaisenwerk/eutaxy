@@ -45,6 +45,11 @@ export class Frame {
   entered = false;
   /** The host's code this effect is the call of has returned (`Frames.answered`): its answer is in transit. */
   answered = false;
+  /**
+   * The attempt (`RunHooks.attempt`) whose code made this effect, if any: what
+   * the effect hosts is that attempt's code too, late once the attempt is.
+   */
+  attempt: { readonly late: boolean } | undefined;
   /** Of those, the ones parked, or running but only waiting on parked effects of their own. */
   waitingChildren = 0;
   private abandoned = false;
@@ -129,6 +134,11 @@ export class Frames {
     return this.byHost.get(host)?.at(-1);
   }
 
+  /** The effects of `invocation`'s being performed now that host an object's code (`EffectOptions.host`). */
+  hostingOf(invocation: string): Frame[] {
+    return this.stack.filter((f) => f.invocation === invocation && f.host !== undefined);
+  }
+
   /**
    * The oldest effect of `host`'s being performed, with `op` when given, whose
    * call the host's code has not started yet, now claimed: an object's input
@@ -181,13 +191,20 @@ export class Frames {
    * meanwhile is not. A hosting effect's own effects are attributed to its
    * invocation: only those count as nested. Async context can be stale (code
    * resumed in the context of an effect that has ended, as an object's code
-   * may run in the context it was built in): trust only a live frame of the
-   * same invocation (the innermost), else the invocation's own hosting effect.
+   * may run in the context it was built in) or absent (workerd carries none
+   * into an object's code): trust only a live frame of the same invocation
+   * (the innermost); else, for code in a stale context or hosted code
+   * (`hosted`: an object's, entered by the platform), the invocation's own
+   * hosting effect. Code in no context at all that is not hosted is
+   * outside every effect: a second strand of the invocation (a step
+   * attempt the engine gave up on, see `Run.attempt`) running while a call
+   * of the first strand is in flight.
    */
-  enclosing(invocation: string): Frame | undefined {
-    const store = effectScope?.getStore();
-    const live = store?.active && store.invocation === invocation ? store : undefined;
-    return effectScope ? (live ?? this.hosting.get(invocation)?.at(-1)) : this.stack.at(-1);
+  enclosing(invocation: string, hosted = true): Frame | undefined {
+    if (!effectScope) return this.stack.at(-1);
+    const store = effectScope.getStore();
+    if (store?.active && store.invocation === invocation) return store;
+    return hosted || store !== undefined ? this.hosting.get(invocation)?.at(-1) : undefined;
   }
 
   /**

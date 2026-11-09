@@ -13,6 +13,7 @@
  */
 
 import {
+  type Attempt,
   type Bounds,
   decisionTarget,
   type EffectLog,
@@ -83,7 +84,7 @@ export interface RunOptions {
 
 class InvocationState implements Invocation {
   readonly crashed: Promise<void>;
-  private readonly onCrash: () => void;
+  private readonly onCrash: (inside?: Frame) => void;
   /** Effect points seen so far in this invocation; the next effect's ordinal. */
   ordinal = 0;
   /** Times this invocation has parked for a turn; names its next turn the same in every run. */
@@ -92,7 +93,7 @@ class InvocationState implements Invocation {
   private resolveCrashed: () => void = () => {};
   readonly id: string;
 
-  constructor(id: string, onCrash: () => void) {
+  constructor(id: string, onCrash: (inside?: Frame) => void) {
     this.id = id;
     this.onCrash = onCrash;
     this.crashed = new Promise<void>((resolve) => {
@@ -104,10 +105,11 @@ class InvocationState implements Invocation {
     return this.crashedFlag;
   }
 
-  crash(): void {
+  /** `inside`: the effect the crash happened inside of, when one did (a nested effect's fault). */
+  crash(inside?: Frame): void {
     if (this.crashedFlag) return;
     this.crashedFlag = true;
-    this.onCrash();
+    this.onCrash(inside);
     this.resolveCrashed();
   }
 }
@@ -129,6 +131,12 @@ interface HostContext {
   readonly frame: Frame | undefined;
 }
 const hostScope = asyncScope<HostContext | undefined>();
+
+/** The attempt (`RunHooks.attempt`) whose code is running, and whether the platform has given up on it. */
+interface AttemptCell {
+  late: boolean;
+}
+const attemptScope = asyncScope<AttemptCell>();
 
 /** The run whose globals are installed, if any: where code observed from outside records into. */
 let installed: Run | null = null;
@@ -345,7 +353,13 @@ export class Run implements RunHooks {
           if (hostScope && inHostCtx !== undefined) hostScope.run(inHostCtx, fn);
           else fn();
         };
-        return (...args) => scope.run(cell, () => inHost(() => callback(...args)));
+        // An attempt's timer callback is the attempt's code still (`RunHooks.attempt`).
+        const inAttemptCell = attemptScope?.getStore();
+        const inAttempt = (fn: () => void): void => {
+          if (attemptScope && inAttemptCell !== undefined) attemptScope.run(inAttemptCell, fn);
+          else fn();
+        };
+        return (...args) => scope.run(cell, () => inHost(() => inAttempt(() => callback(...args))));
       };
     }
     if (!this.restoreFetch) {
@@ -686,7 +700,12 @@ export class Run implements RunHooks {
       if (cont) owners.add(cont.id);
     }
     const allowed = (owner: string | null): boolean => owner !== null && owners.has(owner);
-    return clock.nextDueOwned(allowed) === undefined ? null : allowed;
+    // Only a timer of the hosts' own says the idle code is waiting for one; a pending deadline alone
+    // does not (the code may be doing real I/O the run cannot see yet), though once timers may fire
+    // the deadline fires with them.
+    // A known limit: an object napping inside a late attempt's call holds the invocation's own
+    // timers too (its retry waits for the object to wake), though the attempt's work holds nothing.
+    return clock.nextDueOwned(allowed, false) === undefined ? null : allowed;
   }
 
   /**
@@ -738,9 +757,30 @@ export class Run implements RunHooks {
 
   private track(id: string): InvocationState {
     if (this.invocations.has(id)) throw new Error(`invocation ${id} already started`);
-    const inv = new InvocationState(id, () => this.patched?.clock.cancelOwner(id));
+    const inv = new InvocationState(id, (inside) => {
+      this.patched?.clock.cancelOwner(id);
+      this.adoptInFlight(id, inside);
+    });
     this.invocations.set(id, inv);
     return inv;
+  }
+
+  /**
+   * The invocation crashed with calls into objects still in flight (a late
+   * attempt's call while the retry's effect took the fault): the objects go
+   * on, as the runtime's do, so what their code still does is their own work
+   * (`ownerOf`), an answer to a caller that is gone. The call the crash
+   * happened inside (`inside`) is abandoned by the crash instead and resets
+   * its object.
+   */
+  private adoptInFlight(id: string, inside?: Frame): void {
+    for (const frame of this.frames.hostingOf(id)) {
+      if (frame === inside || frame.isAbandoned || frame.host === undefined) continue;
+      if (this.adopted.has(frame)) continue;
+      const cont = this.continuationOf(frame.host);
+      this.adopted.set(frame, cont);
+      if (this.concurrent) this.turns.adopt(frame, cont);
+    }
   }
 
   private invocation(id: string): InvocationState {
@@ -852,10 +892,12 @@ export class Run implements RunHooks {
       }
     }
     const inv = this.invocation(point.invocation);
-    if (inv.isCrashed()) return hang();
     // An effect made inside another's perform (an object calling out during a call) is part of
     // that effect's turn: parking it would wait for the outer one, which waits for it.
-    const enclosing = this.frames.enclosing(point.invocation);
+    const enclosing = this.frames.enclosing(point.invocation, hostScope?.getStore() !== undefined);
+    // Whose effect it is (the object's own once its call was handed over, see `ownerOf`): a crashed
+    // owner's effect hangs.
+    if (this.ownerOf(inv, enclosing).isCrashed()) return hang();
     const nested = enclosing !== undefined;
     if (this.concurrent && !nested) {
       const host = this.hosts.get(point.invocation);
@@ -874,7 +916,9 @@ export class Run implements RunHooks {
           (park) => new Promise<boolean>((go) => park(() => go(true))),
         );
       }
-      await new Promise<void>((go) => this.turns.park(inv, point.target, go));
+      await new Promise<void>((go) =>
+        this.turns.park(inv, point.target, go, undefined, this.attemptNow()),
+      );
       if (inv.isCrashed()) return hang();
     } else if (this.concurrent && enclosing?.hosts && enclosing.mayPark()) {
       // Hosted code calling out (an object's fetch during a call) is a turn too: the object's
@@ -923,9 +967,12 @@ export class Run implements RunHooks {
     wait: (park: (go: () => void) => void, crashed: () => boolean) => Promise<boolean>,
   ): Promise<T> {
     this.childWaits(host);
-    // Whose turn it waits for: the host's work's once the hosting effect has answered (`ownerOf`).
+    // Whose turn it waits for: the host's work's once the hosting effect has answered or its caller
+    // crashed (`ownerOf`); adoption while parked re-points the turn (`Turns.adopt`).
+    const owner = this.ownerOf(inv, enclosing);
     const crashed = (): boolean => this.ownerOf(inv, enclosing).isCrashed();
-    if (!(await wait((go) => this.turns.park(inv, point.target, go, host), crashed))) {
+    const attempt = this.attemptNow(enclosing, host);
+    if (!(await wait((go) => this.turns.park(owner, point.target, go, host, attempt), crashed))) {
       this.childLeaves(host, true);
       return hang();
     }
@@ -975,7 +1022,7 @@ export class Run implements RunHooks {
     const opener = owner();
     const point = opener === inv ? made : { ...made, invocation: opener.id };
     const fault = this.open(point, opener);
-    const before = this.faultBefore(point, opener, fault);
+    const before = this.faultBefore(point, opener, fault, enclosing);
     if (before === "crashed") return dead();
     if (before) throw before;
     let settled:
@@ -988,6 +1035,7 @@ export class Run implements RunHooks {
     const frame = new Frame(point, options);
     frame.onHostAbandoned = (h) => this.hostAbandoned(h);
     frame.parent = host;
+    frame.attempt = this.attemptNow(enclosing, host);
     this.frames.enter(frame);
     if (enclosing) enclosing.performing++;
     try {
@@ -1036,21 +1084,28 @@ export class Run implements RunHooks {
     this.record(point, "result", { args: point.args, result: summarize(value) });
     // The effect committed while its owner was dying: nothing after it runs.
     if (owner().isCrashed()) return hang();
-    const after = this.faultAfter(point, owner(), fault);
+    const after = this.faultAfter(point, owner(), fault, enclosing);
     if (after === "crashed") return dead();
     if (after) throw after;
     return value;
   }
 
   /** A fault decided before the effect performs: the crash it is, the error to throw, or nothing. */
+  /**
+   * A fault decided before the effect performs: the crash it is, the error to
+   * throw, or nothing. The crash names the effect the point is nested in
+   * (an object's call the crash happened inside, which `dead` then abandons,
+   * resetting the object), so it is not handed to the object (`adoptInFlight`).
+   */
   private faultBefore(
     point: EffectPoint,
     inv: InvocationState,
     fault: FaultKind | null,
+    enclosing?: Frame,
   ): "crashed" | InjectedEffectError | null {
     if (fault === "crash_before" || fault === "cut_off") {
       this.recordFault(point, fault);
-      inv.crash();
+      inv.crash(enclosing);
       return "crashed";
     }
     if (fault === "error") {
@@ -1065,10 +1120,11 @@ export class Run implements RunHooks {
     point: EffectPoint,
     inv: InvocationState,
     fault: FaultKind | null,
+    enclosing?: Frame,
   ): "crashed" | InjectedEffectError | null {
     if (fault === "crash_after") {
       this.recordFault(point, fault);
-      inv.crash();
+      inv.crash(enclosing);
       return "crashed";
     }
     if (fault === "ambiguous") {
@@ -1105,6 +1161,40 @@ export class Run implements RunHooks {
 
   unsupported(reason: string): void {
     this.reasons.push(reason);
+  }
+
+  attempt<T>(invocation: string, code: () => T, deadlineMs: number): Attempt<T> {
+    const cell: AttemptCell = { late: deadlineMs <= 0 };
+    let giveUp: () => void = () => {};
+    const late = new Promise<void>((resolve) => {
+      giveUp = () => {
+        cell.late = true;
+        resolve();
+      };
+    });
+    if (cell.late) giveUp();
+    const value = attemptScope ? attemptScope.run(cell, code) : code();
+    // The deadline is a virtual timer of the invocation's set by the run, not through the patched
+    // global: it is no read of the clock by the code (the partial-order reduction stays on), and it
+    // is cleared once the code settles in time. Without a clock installed, the attempt is never late.
+    const clock = this.patched?.clock;
+    if (!cell.late && clock) {
+      const timer = clock.setTimeoutAs(invocation, giveUp, deadlineMs);
+      const clear = (): void => clock.clear(timer);
+      if (isThenable(value)) void Promise.resolve(value).then(clear, clear);
+      else clear();
+    }
+    return { value, late };
+  }
+
+  /**
+   * The attempt whose code is running now, by its async context or, where the
+   * runtime carries none (an object's code), by the effect it runs inside of.
+   * Read live where it is kept: an attempt may become late after its effect
+   * parked or entered an object.
+   */
+  private attemptNow(...frames: (Frame | undefined)[]): AttemptCell | undefined {
+    return attemptScope?.getStore() ?? frames.find((f) => f?.attempt)?.attempt;
   }
 
   settle<T>(promise: Promise<T>, invocation: string): Promise<T> {
@@ -1242,6 +1332,7 @@ export class Run implements RunHooks {
         released.add(w.inv.id);
       } else this.crashWatch.push(w);
     }
+    return released;
   }
 
   /**
@@ -1257,8 +1348,12 @@ export class Run implements RunHooks {
    * released it, "timer" fired it, and "none" leaves the loop to let time
    * pass or give up.
    */
-  takeTurn(canStart: boolean, afterWorkOnly = false): "turn" | "start" | "timer" | "none" {
-    return this.turns.takeTurn(canStart, this.dueTimer(afterWorkOnly));
+  takeTurn(
+    canStart: boolean,
+    afterWorkOnly = false,
+    canWait = false,
+  ): "turn" | "start" | "timer" | "none" {
+    return this.turns.takeTurn(canStart, this.dueTimer(afterWorkOnly), canWait);
   }
 
   /** The earliest timer already due (at or before the virtual now) that may fire now, as a turn. */
@@ -1335,7 +1430,6 @@ export class Run implements RunHooks {
     const allowed = this.timersAllowed();
     return allowed !== null && this.fireOwned(allowed) !== undefined;
   }
-    return released;
 
   /**
    * Concurrent runs: nothing can make progress; abandon these invocations so
@@ -1346,6 +1440,7 @@ export class Run implements RunHooks {
    */
   abandon(ids: readonly string[]): number {
     let abandoned = 0;
+    const released = this.releaseCrashed();
     for (const id of ids) {
       const inv = this.invocations.get(id);
       if (!inv) continue;
@@ -1381,4 +1476,3 @@ export class Run implements RunHooks {
     });
   }
 }
-    const released = this.releaseCrashed();

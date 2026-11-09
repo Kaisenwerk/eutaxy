@@ -171,10 +171,20 @@ async function deliverConcurrently(
     if (pending.length > queuedBefore) run.queuedEvents();
     if (active.length === 0 && pending.length === 0 && !run.hasAfterWork()) return;
     const next = pending.length > 0 ? earliestEvent(pending) : -1;
-    const due = next >= 0 && (pending[next]?.at ?? 0) <= run.now();
+    const eventAt = pending[next]?.at ?? 0;
+    const due = next >= 0 && eventAt <= run.now();
     const canStart = active.length < spec.bounds.maxConcurrentInvocations && due;
     // While only objects' work after their answers is alive, only its timers are ready work (see below).
-    const turn = run.takeTurn(canStart, active.length === 0 && run.hasAfterWork());
+    const afterWorkOnly = active.length === 0 && run.hasAfterWork();
+    // What the loop does when nothing is parked: time passes to the next delayed event when nothing
+    // can move before it, else the next timer fires. Offered as a turn while only late turns are parked.
+    const timerDue = run.nextTimerDue(afterWorkOnly);
+    const untilEvent =
+      next >= 0 &&
+      !due &&
+      active.length < spec.bounds.maxConcurrentInvocations &&
+      (timerDue ?? Number.POSITIVE_INFINITY) > eventAt;
+    const turn = run.takeTurn(canStart, afterWorkOnly, untilEvent || timerDue !== undefined);
     if (turn === "start") {
       const [event] = pending.splice(next, 1) as [EventRef];
       const d: Delivery = {
@@ -192,17 +202,10 @@ async function deliverConcurrently(
         },
       );
       active.push(d);
-    } else if (
-      turn === "none" &&
-      next >= 0 &&
-      !due &&
-      active.length < spec.bounds.maxConcurrentInvocations &&
-      (run.nextTimerDue(active.length === 0 && run.hasAfterWork()) ?? Number.POSITIVE_INFINITY) >
-        (pending[next]?.at ?? 0)
-    ) {
+    } else if (turn === "none" && untilEvent) {
       // Nothing can move before the next delayed event is due: let time pass until then. With no
       // timer fired on the way, nothing was set off that a wait could settle.
-      if (!(await run.advanceTo(pending[next]?.at ?? 0))) continue;
+      if (!(await run.advanceTo(eventAt))) continue;
     } else if (
       turn === "none" &&
       !(active.length > 0 || !run.hasAfterWork() ? run.fireTimer() : run.fireAfterWorkTimer()) &&

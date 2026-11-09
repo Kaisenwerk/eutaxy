@@ -149,6 +149,30 @@ export interface RunHooks {
    * directly, and treat the crash signal as the invocation's end.
    */
   settle<T>(promise: Promise<T>, invocation: string): Promise<T>;
+  /**
+   * Run `code` as an attempt of `invocation`'s that the platform gives up on
+   * once it has outlived `deadlineMs` of virtual time with its result still
+   * pending (a Workflow step attempt past its `timeout`), or at once when
+   * `deadlineMs` is 0 or less (a fault that says the attempt timed out). The
+   * code is not stopped, as the runtime cannot stop it either: from then on
+   * the effects it goes on to make are late turns. In a concurrent run a late
+   * turn is offered at every decision but holds nothing: while only late
+   * turns are parked, time may pass to the next timer or delayed event
+   * instead, so what the late code still does lands before, between or after
+   * what the invocation did since it gave up; once nothing else can move, the
+   * late turns run. In a sequential run the late code runs on as it would,
+   * before timers not yet due. The deadline is the engine's, not a timer of
+   * the code's: it leaves no trace and does not count as reading the clock.
+   */
+  attempt<T>(invocation: string, code: () => T, deadlineMs: number): Attempt<T>;
+}
+
+/** An attempt started with `RunHooks.attempt`. */
+export interface Attempt<T> {
+  /** What the code returned. */
+  readonly value: T;
+  /** Resolves once the attempt is late (the deadline passed with its result pending); never, when it finished in time. */
+  readonly late: Promise<void>;
 }
 
 export interface DeliveryResult {

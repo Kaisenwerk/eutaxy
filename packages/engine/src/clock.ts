@@ -52,6 +52,12 @@ interface Timer {
    * outside it. How many times it has fired and not yet run.
    */
   readonly deferred: boolean;
+  /**
+   * The run's own deadline (`setTimeoutAs`): fires whenever time reaches it,
+   * whoever's timers may fire then, since what it measures (a step attempt's
+   * timeout) runs independently of the work in flight.
+   */
+  readonly deadline: boolean;
   fired: number;
 }
 
@@ -87,6 +93,7 @@ export class VirtualClock {
     delay: number,
     args: readonly unknown[],
     interval: number | null,
+    owner?: string,
   ): number {
     const ms = Number.isFinite(delay) && delay > 0 ? Math.floor(delay) : 0;
     const timer: Timer = {
@@ -95,9 +102,11 @@ export class VirtualClock {
       callback: this.bind ? this.bind(callback) : callback,
       args,
       interval,
-      owner: this.ownerNow ? this.ownerNow() : this.owner,
-      scope: this.scopeNow?.(),
+      owner: owner ?? (this.ownerNow ? this.ownerNow() : this.owner),
+      // The run's own deadline is set from the run loop, outside any effect: never deferred.
+      scope: owner === undefined ? this.scopeNow?.() : undefined,
       deferred: false,
+      deadline: owner !== undefined,
       fired: 0,
     };
     if (this.stopped) return timer.id;
@@ -133,6 +142,16 @@ export class VirtualClock {
 
   setTimeout(callback: (...args: unknown[]) => void, delay = 0, ...args: unknown[]): number {
     return this.schedule(callback, delay, args, null);
+  }
+
+  /**
+   * A timer of `owner`'s set by the run itself, whoever is running (an
+   * attempt's deadline): cancelled with the owner's others, and fired
+   * whenever time reaches it, whoever's timers may fire then (an object
+   * napping inside the attempt's call does not hold the engine's clock).
+   */
+  setTimeoutAs(owner: string, callback: () => void, delay: number): number {
+    return this.schedule(callback, delay, [], null, owner);
   }
 
   setInterval(callback: (...args: unknown[]) => void, delay = 0, ...args: unknown[]): number {
@@ -206,16 +225,24 @@ export class VirtualClock {
     return this.fire(earliest);
   }
 
-  /** When the earliest timer whose owner `owned` accepts is due, or undefined when none is pending. */
-  nextDueOwned(owned: (owner: string | null) => boolean): number | undefined {
-    return this.earliestOwned(owned)?.due;
+  /**
+   * When the earliest timer whose owner `owned` accepts is due, or undefined
+   * when none is pending; a deadline (`setTimeoutAs`) counts, as it fires,
+   * unless `deadlines` is false: whether an owner has a timer of its own to
+   * advance to (an object sleeping before it answers) is asked without them.
+   */
+  nextDueOwned(owned: (owner: string | null) => boolean, deadlines = true): number | undefined {
+    return this.earliestOwned(owned, deadlines)?.due;
   }
 
-  private earliestOwned(owned: (owner: string | null) => boolean): Timer | undefined {
+  private earliestOwned(
+    owned: (owner: string | null) => boolean,
+    deadlines = true,
+  ): Timer | undefined {
     let earliest: Timer | undefined;
     for (const t of this.timers)
       if (
-        owned(t.owner) &&
+        ((deadlines && t.deadline) || owned(t.owner)) &&
         (!earliest || t.due < earliest.due || (t.due === earliest.due && t.id < earliest.id))
       )
         earliest = t;
