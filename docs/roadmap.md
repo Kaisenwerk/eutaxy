@@ -158,10 +158,12 @@ it checks waits on them:
   Durable Objects).
 - **A step attempt that outlives its timeout.** Workflows retries a step
   whose attempt passed its `timeout` while that attempt may still be
-  running; today an attempt runs to its end before the retry, so a race
-  between the late attempt and the retry, or the code that recovers from
-  it, is never explored. The model measures step timeouts and lets the
-  timed-out attempt run on as a concurrent turn.
+  running, so a race between the late attempt and the retry, or the code
+  that recovers from it, is real. The model measures step timeouts (and
+  places a timeout at an attempt's start as a fault) and lets the
+  timed-out attempt run on as the late attempt, whose turns the run need
+  not wait for: they land before, between or after the retry's
+  (`docs/design.md`, Workflows and Concurrent invocations).
 
 The phase opened by paying for the duplication these features would
 otherwise have added to: the Cloudflare delivery paths carried one

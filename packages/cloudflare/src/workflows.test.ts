@@ -64,6 +64,29 @@ class ReplyFlow extends WorkflowEntrypoint {
   }
 }
 
+/** Attempts of LateFlow's step that wait past its timeout before posting. */
+let slowAttempts: number[] = [];
+
+/** A step with a timeout: an attempt that outlives it runs on while the step is retried. */
+class LateFlow extends WorkflowEntrypoint {
+  async run(event: { payload: { messageId: string } }, step: Step) {
+    const sent = await step.do(
+      "post reply",
+      { retries: { limit: 1, delay: "30 seconds", backoff: "constant" }, timeout: "1 minute" },
+      async (ctx: { attempt: number }) => {
+        if (slowAttempts.includes(ctx.attempt)) await new Promise((r) => setTimeout(r, 2 * 60_000));
+        const r = await fetch("https://chat.example/reply", {
+          method: "POST",
+          headers: { "idempotency-key": `${event.payload.messageId}@${ctx.attempt}` },
+          body: JSON.stringify({ messageId: event.payload.messageId, attempt: ctx.attempt }),
+        });
+        return r.status;
+      },
+    );
+    return { sent };
+  }
+}
+
 class SleepyFlow extends WorkflowEntrypoint {
   async run(event: { instanceId: string }, step: Step) {
     outside.push(`${event.instanceId}@${Date.now() - virtualEpoch}`);
@@ -553,6 +576,7 @@ const platform = () =>
     schemas: {},
     exports: {
       ReplyFlow,
+      LateFlow,
       SleepyFlow,
       GiveUpFlow,
       WaitingFlow,
@@ -568,10 +592,10 @@ const platform = () =>
     },
   });
 
-async function run(spec: ScenarioSpec, faults: Run["schedule"]["faults"] = []) {
+async function run(spec: ScenarioSpec, faults: Run["schedule"]["faults"] = [], seed = 1) {
   outside = [];
   const r = new Run({
-    chooser: replayChooser({ seed: 1, faults: [...faults] }),
+    chooser: replayChooser({ seed, faults: [...faults] }),
     bounds: spec.bounds,
   });
   await runOnce(spec, platform(), r);
@@ -704,6 +728,121 @@ describe("a Workflow started from a webhook", () => {
       1, 2,
     ]);
     expect(outside).toEqual(["m1"]);
+  });
+
+  test("an attempt that outlives its timeout from its start (the fault) runs on late while the step is retried", async () => {
+    const r = await run(scenario("LateFlow", { dedupe: true }), [
+      {
+        invocation: "workflow:FLOW:m1#1",
+        ordinal: 0,
+        fault: "ambiguous",
+        target: "Workflow:FLOW",
+        op: "step",
+      },
+    ]);
+    // Both attempts posted: the late one and the retry; the retry's result is the step's.
+    expect(
+      posts(r).map((e) => (e.payload as { args: { dedupeKey: string } }).args.dedupeKey),
+    ).toEqual(["m1@1", "m1@2"]);
+    const ops = r.log.entries
+      .filter((e) => e.target === "Workflow:FLOW" && (e.kind === "result" || e.kind === "fault"))
+      .filter((e) => e.op !== "create")
+      .map((e) => `${e.kind} ${e.op}`);
+    // The late attempt posted within the retry's delay (a sequential run: it runs on at once).
+    expect(ops).toEqual([
+      "result step",
+      "fault step",
+      "result late_result",
+      "result step",
+      "result step_result",
+      "result complete",
+      "result background",
+    ]);
+    const late = of(r, "late_result")[0]?.payload as { args: { attempt: number; outcome: string } };
+    expect(late.args).toMatchObject({ step: "post reply", attempt: 1, outcome: "returned" });
+    expect(instances(r)[0]?.output).toEqual({ sent: 200 });
+    expect(r.unsupportedReasons).toEqual([]);
+  });
+
+  test("the fault makes an attempt late even when its callback is done at once", async () => {
+    // ContextFlow's first step returns ctx.attempt without awaiting anything.
+    const r = await run(scenario("ContextFlow"), [
+      {
+        invocation: "workflow:FLOW:m1#1",
+        ordinal: 0,
+        fault: "ambiguous",
+        target: "Workflow:FLOW",
+        op: "step",
+      },
+    ]);
+    const attempts = of(r, "step")
+      .filter((e) => (e.payload as { args: { step: string } }).args.step === "attempt")
+      .map((e) => (e.payload as { args: { attempt: number } }).args.attempt);
+    expect(attempts).toEqual([1, 2]);
+    expect(of(r, "late_result")).toHaveLength(1);
+    expect(instances(r)[0]?.output).toMatchObject({ attempt: 2 });
+  });
+
+  test("a step timeout is measured in virtual time: the attempt still pending at it is retried and runs on", async () => {
+    slowAttempts = [1];
+    try {
+      const r = await run(scenario("LateFlow", { dedupe: true }));
+      const timeout = of(r, "step_timeout")[0]?.payload as {
+        args: { attempt: number; timeoutMs: number };
+      };
+      expect(timeout.args).toMatchObject({ step: "post reply", attempt: 1, timeoutMs: 60_000 });
+      // The retry posted 30 s after the timeout; the late attempt woke at 2 minutes and posted too.
+      expect(
+        posts(r).map((e) => (e.payload as { args: { dedupeKey: string } }).args.dedupeKey),
+      ).toEqual(["m1@2", "m1@1"]);
+      const ops = r.log.entries
+        .filter((e) => e.target === "Workflow:FLOW" && e.kind === "result" && e.op !== "create")
+        .map((e) => e.op);
+      expect(ops).toEqual([
+        "step",
+        "step_timeout",
+        "step",
+        "step_result",
+        "complete",
+        "background",
+        "late_result",
+      ]);
+      expect(instances(r)[0]?.output).toEqual({ sent: 200 });
+      expect(r.unsupportedReasons).toEqual([]);
+    } finally {
+      slowAttempts = [];
+    }
+  });
+
+  test("an attempt that finishes in time leaves no timeout behind", async () => {
+    const r = await run(scenario("LateFlow", { dedupe: true }));
+    expect(posts(r)).toHaveLength(1);
+    expect(of(r, "step_timeout")).toHaveLength(0);
+    expect(of(r, "late_result")).toHaveLength(0);
+    expect(r.nextTimerDue()).toBeUndefined();
+  });
+
+  test("in a concurrent run the late attempt's post lands before or after the retry's, by the seed", async () => {
+    const base = scenario("LateFlow", { dedupe: true });
+    const spec = { ...base, bounds: { ...base.bounds, maxConcurrentInvocations: 2 } };
+    const fault = {
+      invocation: "workflow:FLOW:m1#1",
+      ordinal: 0,
+      fault: "ambiguous" as const,
+      target: "Workflow:FLOW",
+      op: "step",
+    };
+    const orders = new Set<string>();
+    for (let seed = 1; seed <= 12; seed++) {
+      const r = await run(spec, [fault], seed);
+      expect(r.unsupportedReasons).toEqual([]);
+      orders.add(
+        posts(r)
+          .map((e) => (e.payload as { args: { dedupeKey: string } }).args.dedupeKey)
+          .join(", "),
+      );
+    }
+    expect([...orders].sort()).toEqual(["m1@1, m1@2", "m1@2, m1@1"]);
   });
 
   test("exploration finds the duplicate reply, and an API that dedupes holds", async () => {

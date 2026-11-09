@@ -796,7 +796,17 @@ shares the reading of the limit and none of the proxy code.
   name on `id.name`, where the runtime has none. An object no call
   reached is snapshotted from its seed without being constructed. Reset
   constructs each object outside the simulation, with the network blocked:
-  a constructor that makes a request fails the reset. A stub property can
+  a constructor that makes a request fails the reset; an object reset by
+  the run's last event into it (a crash inside a call nothing follows)
+  would be constructed outside the simulation for the snapshot too, which
+  makes the run `UNSUPPORTED` rather than guessed (a later call into the
+  object, as a flow that reads back what it did makes, keeps the run
+  decidable). A call still in flight when its caller's invocation crashes
+  elsewhere (a fault in a Workflow step's retry while the late attempt's
+  call runs; the object is a separate isolate, so the runtime's call goes
+  on) is handed to the object: what its code still does is the object's
+  own work after an answer, and the answer goes to nobody; the call the
+  crash happened inside resets the object, as before. A stub property can
   be called (a method) or awaited (an RPC getter); either is one effect.
   A result that is not plain data (an RPC capability) makes the run
   `UNSUPPORTED`, since calls on it would bypass the proxy.
@@ -909,12 +919,29 @@ shares the reading of the limit and none of the proxy code.
   callback, which runs as the instance's
   own code (its effects are ordinary effects of the invocation and its
   timers are virtual): `step` before it, where `crash_before` restarts the
-  instance before the step runs, and `step_result` after it, where
+  instance before the step runs and `ambiguous` is an attempt that
+  outlives its `timeout` from its start, and `step_result` after it, where
   `crash_after` restarts it after the step ran and committed but before
   its result was persisted (so it runs again), and `ambiguous` is an
-  attempt that ran but counted as failed (a timeout, which code sees as
-  the engine's `WorkflowTimeoutError`), retried after its
-  delay in virtual time. A callback that throws is retried the same way,
+  attempt that ran but counted as failed just after its work (a timeout,
+  which code sees as the engine's `WorkflowTimeoutError`), retried after
+  its delay in virtual time. Step timeouts are measured: an attempt whose
+  callback is still pending when its `timeout` (default 10 minutes) has
+  passed in virtual time is timed out the same way (`step_timeout`). A
+  timed-out attempt is not stopped, as the engine cannot stop it either
+  (it races the callback against the timeout and discards what the
+  callback later returns): it runs on as the late attempt, its effects
+  the instance's, waited for like `waitUntil` work before the run ends and
+  noted when it settles (`late_result`), and its result dropped. In a
+  concurrent run its remaining effects are late turns (see Concurrent
+  invocations): time may pass over them to the retry's delay, so the late
+  attempt's call lands before, between or after the retry's or the
+  recovery's, which is where a fence against a call still in flight is
+  tested; a sequential run takes one order, the late attempt first unless
+  it waits on a timer of its own. One limit: while the late attempt's call
+  is inside an object napping on a timer of its own, the instance's own
+  timers wait too (the retry's delay passes once the object wakes), as
+  for any call into a napping object. A callback that throws is retried the same way,
   up to its limit and `maxRedeliveries`; a `NonRetryableError` (an `Error` so
   named, or whose message starts so, as the engine checks) is rethrown as
   thrown and neither retried nor persisted, so after a restart its
@@ -957,9 +984,7 @@ shares the reading of the limit and none of the proxy code.
   every restart does, and the wait's result or error is persisted by step
   name and count, so a later restart replays it. `sendEvent` is one effect
   with a stub call's faults (`send_event`), refused for a complete or
-  errored instance or an invalid type. Current limits: step
-  timeouts are not measured (a timed-out attempt is the `ambiguous`
-  fault); a finished `sleepUntil` replayed after its time (Miniflare's
+  errored instance or an invalid type. Current limits: a finished `sleepUntil` replayed after its time (Miniflare's
   engine throws there, and production behaviour is not documented), a step
   returning a stream or more than about 1 MiB (the engine refuses it, and
   Eutaxy cannot measure the stored size exactly), a retry delay function that throws, rollback handlers, `createBatch`
@@ -1047,10 +1072,11 @@ faults of f kinds on kn points are placed in sum_{j<=m} C(kn, j) f^j ways,
 and with both the count is the product. Partial-order reduction is on by
 default: sleep sets (Godefroid, 1996) skip an order of two turns once the
 other order has run when they belong to different invocations and their
-effects have different targets; starting an event, and firing a timer
-already due, are dependent on everything (a timer's callback may do
-anything, and whether it is due depends on virtual time), so what they
-run is never reordered and does not count against the reduction. This assumes code between an invocation's effects shares no
+effects have different targets; starting an event, firing a timer
+already due, and letting time pass over late turns are dependent on
+everything (a timer's callback may do anything, and whether it is due
+depends on virtual time), so what they run is never reordered and does
+not count against the reduction. This assumes code between an invocation's effects shares no
 state with other invocations except through effects and the virtual
 globals, which the verdict states. A turn is known by its parked effect's
 target before it runs, but it may do more: perform a synchronous or nested
@@ -1097,7 +1123,19 @@ timeouts in the order they were set: HTML Standard, timer initialization
 steps), so one timer option per decision is enough. A timer not yet
 due fires, and virtual time passes to it, only when nothing else can
 move; an invocation that waits
-on nothing Eutaxy can see makes the run `UNSUPPORTED`. The engine learns
+on nothing Eutaxy can see makes the run `UNSUPPORTED`. One kind of parked
+turn holds nothing: a late turn, an effect of code the platform has given
+up on (`RunHooks.attempt`: a Workflow step attempt past its timeout,
+which runs on because nothing can stop it) and whose remaining real time
+is therefore unknown. A late turn is offered at every decision like any
+other, but while only late turns are parked and nothing else is on
+offer, letting time pass to the next timer or delayed event is an option
+too, so what the late code still does lands before, between or after what
+the invocation did since it gave up; once nothing else can move, the late
+turns run. A run lets time pass over late turns at most a hundred times,
+so a heartbeat cannot hold them off for good. The deadline that makes an
+attempt late is the engine's own virtual timer, not a timer of the code's: it
+leaves no trace and does not count as a read of the clock. The engine learns
 that an invocation has parked, finished or gone idle from the run itself,
 not from real time: a park, a delivery's end and real I/O completing wake
 it. Before it decides, every continuation that progress set off must have

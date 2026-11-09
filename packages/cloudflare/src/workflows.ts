@@ -31,12 +31,16 @@ import { type ProxyContext, refuse } from "./proxy-context.ts";
 /** The `EventRef.source` of a Workflow instance's run. */
 export const workflowSource = "workflow";
 
-/** Before a step's callback: the engine restarts before the step runs. */
-const STEP_START: readonly FaultKind[] = ["crash_before"];
+/**
+ * Before a step's callback: the engine restarts before the step runs
+ * (`crash_before`), or the attempt outlives its timeout from its start
+ * (`ambiguous`): counted as failed and retried while it runs on late.
+ */
+const STEP_START: readonly FaultKind[] = ["crash_before", "ambiguous"];
 /**
  * After it: the engine restarts after the step ran but before its result
  * was persisted (`crash_after`), or the attempt ran and counted as failed,
- * as a timeout does (`ambiguous`).
+ * as a timeout just after its work does (`ambiguous`).
  */
 const STEP_RESULT: readonly FaultKind[] = ["crash_after", "ambiguous"];
 
@@ -562,21 +566,83 @@ export async function deliverWorkflow(
         const args = { instance: instance.id, step: name, count, attempt };
         // The callback runs as the instance's own code, between two points: its effects are ordinary
         // effects of the invocation, and its timers are virtual. The points are asynchronous, as the
-        // engine's reading and persisting are: other events may run between steps.
-        await hooks.effect(
-          { invocation, target, op: "step", args, allowed: STEP_START },
-          async () => null,
-          () => null,
-        );
+        // engine's reading and persisting are: other events may run between steps. The ambiguous
+        // fault here is an attempt that outlives its timeout from its start.
+        let lateAtStart = false;
+        try {
+          await hooks.effect(
+            { invocation, target, op: "step", args, allowed: STEP_START },
+            async () => null,
+            () => null,
+          );
+        } catch (err) {
+          if (!(err instanceof InjectedEffectError)) throw err;
+          lateAtStart = true;
+        }
         instance.attempts.set(k, attempt);
         // What the attempt threw, kept as thrown (a plain value too), as the engine rethrows it.
         let failed = false;
         let thrown: unknown;
         let value: unknown;
         let returned: { readonly value: unknown } | undefined;
-        try {
-          returned = { value: await fn(stepContext) };
-        } catch (err) {
+        // The callback is an attempt the engine gives up on at the step's timeout, measured in
+        // virtual time (at once, under the fault), as the engine races the callback against its
+        // timeout: the attempt is not stopped, since nothing can stop it, and runs on late, its
+        // result discarded, while the step is counted as failed and retried (Workflows, Sleeping and
+        // retrying: timeout). In a concurrent run what the late attempt still does is a turn the run
+        // need not wait for, so it lands before, between or after the retry's work.
+        const timeoutMs = durationMs(resolved.timeout);
+        const started = hooks.attempt(
+          invocation,
+          () => {
+            try {
+              return Promise.resolve(fn(stepContext));
+            } catch (err) {
+              return Promise.reject(err);
+            }
+          },
+          lateAtStart ? 0 : timeoutMs,
+        );
+        const settled = started.value.then(
+          (v) => ({ ok: true as const, value: v }),
+          (error: unknown) => ({ ok: false as const, error }),
+        );
+        // Under the fault the attempt is late whatever it returns, at once: a callback already done
+        // is still an attempt the engine counted out.
+        const outcome = lateAtStart
+          ? ("late" as const)
+          : await Promise.race([settled, started.late.then(() => "late" as const)]);
+        if (outcome === "late") {
+          if (!lateAtStart)
+            note(hooks, {
+              invocation,
+              target,
+              op: "step_timeout",
+              args: { ...args, timeoutMs },
+              allowed: [],
+            });
+          failed = true;
+          thrown = Object.assign(new Error(`Execution timed out after ${timeoutMs}ms`), {
+            name: "WorkflowTimeoutError",
+          });
+          // The late attempt is waited for as the instance's background work is; what it returns
+          // or throws is noted and dropped, as the engine drops it.
+          background.push(
+            settled.then((o) => {
+              if (inv.isCrashed()) return;
+              note(hooks, {
+                invocation,
+                target,
+                op: "late_result",
+                args: { ...args, outcome: o.ok ? "returned" : "threw" },
+                allowed: [],
+              });
+            }),
+          );
+        } else if (outcome.ok) {
+          returned = { value: outcome.value };
+        } else {
+          const err = outcome.error;
           // A crash ends the attempt and the instance; it is not a failure to retry.
           if (err instanceof CrashSignal || inv.isCrashed()) throw err;
           failed = true;
@@ -622,7 +688,7 @@ export async function deliverWorkflow(
             return structuredClone(value);
           } catch (err) {
             if (err instanceof CrashSignal || !(err instanceof InjectedEffectError)) throw err;
-            // The attempt ran but counted as failed: a timeout, as the engine reports one.
+            // The attempt ran but counted as failed: a timeout just after its work, as the engine reports one.
             thrown = Object.assign(
               new Error(`Execution timed out after ${durationMs(resolved.timeout)}ms`),
               { name: "WorkflowTimeoutError" },
