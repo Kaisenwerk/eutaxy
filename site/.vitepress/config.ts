@@ -118,6 +118,8 @@ export default defineConfig({
   titleTemplate: ":title | Eutaxy",
   description,
   cleanUrls: true,
+  // The package README describes the site's source, not Eutaxy; it is not a page.
+  srcExclude: ["README.md"],
   lastUpdated: true,
   sitemap: { hostname: origin },
   head: [
