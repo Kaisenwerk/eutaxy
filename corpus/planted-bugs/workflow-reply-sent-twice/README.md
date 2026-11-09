@@ -11,7 +11,7 @@ persisted is made again: the user gets the reply twice.
 **Why it matters.** Locally the engine never restarts between a step's
 side effect and the persisting of its result, so every test passes. Here
 the engine is a model that restarts there, and retries an attempt that
-ran but counted as failed.
+ran but counted as failed, or that outlived its timeout and posts late.
 
 **What Eutaxy must report.** `VIOLATED` on `reply-sent-once`, with two
 effective posts for `msg-1`: one before the restart (or the failed

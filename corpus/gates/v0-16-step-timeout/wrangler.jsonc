@@ -1,0 +1,8 @@
+{
+  "name": "gate-v0-16-step-timeout",
+  "main": "worker.ts",
+  "compatibility_date": "2026-10-01",
+  "durable_objects": { "bindings": [{ "name": "CHAT", "class_name": "Conversation" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Conversation"] }],
+  "workflows": [{ "name": "turn-flow", "binding": "TURNS", "class_name": "TurnFlow" }]
+}

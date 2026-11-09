@@ -1,0 +1,13 @@
+{
+  "name": "planted-workflow-late-attempt-fenced-turn",
+  "main": "worker.ts",
+  "compatibility_date": "2026-10-01",
+  "durable_objects": {
+    "bindings": [
+      { "name": "CHAT", "class_name": "Conversation" },
+      { "name": "SAFE_CHAT", "class_name": "FixedConversation" }
+    ]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Conversation", "FixedConversation"] }],
+  "workflows": [{ "name": "turn-flow", "binding": "TURNS", "class_name": "TurnFlow" }]
+}

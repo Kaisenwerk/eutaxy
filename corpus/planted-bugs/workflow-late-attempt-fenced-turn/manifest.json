@@ -1,0 +1,8 @@
+{
+  "expect": {
+    "verdict": "VIOLATED",
+    "invariant": "fenced-turns-never-run"
+  },
+  "fault": "the step's attempt outliving its timeout from its start (ambiguous on the step), so the Workflow abandons the turn while the late start waits for the model, and the start writes its run after the fence was set",
+  "description": "A Workflow starts a chat turn on an object in a step with a timeout and abandons the turn when the step fails. The object checks the fence before asking the model and writes the run after, so a start that outlived the step's timeout runs a turn that was abandoned meanwhile."
+}
