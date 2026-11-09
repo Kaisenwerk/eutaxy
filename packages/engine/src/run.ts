@@ -1227,14 +1227,20 @@ export class Run implements RunHooks {
     return this.turns.quiesce();
   }
 
-  /** Concurrent runs: settles waiting on invocations that have crashed since are released, on the run's own step. */
-  private releaseCrashed(): void {
-    if (this.crashWatch.length === 0) return;
+  /**
+   * Concurrent runs: settles waiting on invocations that have crashed since
+   * are released, on the run's own step. Returns the invocations released.
+   */
+  private releaseCrashed(): Set<string> {
+    const released = new Set<string>();
+    if (this.crashWatch.length === 0) return released;
     const waiting = this.crashWatch;
     this.crashWatch = [];
     for (const w of waiting) {
-      if (w.inv.isCrashed()) w.reject(new CrashSignal(w.inv.id));
-      else this.crashWatch.push(w);
+      if (w.inv.isCrashed()) {
+        w.reject(new CrashSignal(w.inv.id));
+        released.add(w.inv.id);
+      } else this.crashWatch.push(w);
     }
   }
 
@@ -1245,8 +1251,11 @@ export class Run implements RunHooks {
    * only an object's work after its answer's, as `fireAfterWorkTimer`).
    * Parked invocations are ordered by start, then by when they parked, so
    * the pick does not depend on real-time arrival; timers keep their due
-   * order among themselves. Returns what was picked; "turn" has already
-   * released it and "timer" fired it.
+   * order among themselves. `canWait`: whether the loop could let time pass
+   * if nothing were parked; while only late turns are, it is an option
+   * (`Turns.takeTurn`). Returns what was picked; "turn" has already
+   * released it, "timer" fired it, and "none" leaves the loop to let time
+   * pass or give up.
    */
   takeTurn(canStart: boolean, afterWorkOnly = false): "turn" | "start" | "timer" | "none" {
     return this.turns.takeTurn(canStart, this.dueTimer(afterWorkOnly));
@@ -1326,16 +1335,24 @@ export class Run implements RunHooks {
     const allowed = this.timersAllowed();
     return allowed !== null && this.fireOwned(allowed) !== undefined;
   }
+    return released;
 
   /**
    * Concurrent runs: nothing can make progress; abandon these invocations so
-   * the run can end. Returns how many were still alive.
+   * the run can end. Returns how many were still alive, or whose delivery
+   * ends now: one that crashed inside an object (the object's reset tears
+   * down the task the crash settled its promise in, so the delivery never
+   * saw it) has its settle released here, on the run's own step.
    */
   abandon(ids: readonly string[]): number {
     let abandoned = 0;
     for (const id of ids) {
       const inv = this.invocations.get(id);
-      if (!inv || inv.isCrashed()) continue;
+      if (!inv) continue;
+      if (inv.isCrashed()) {
+        if (released.has(id)) abandoned++;
+        continue;
+      }
       this.unsupported(waitingUnseen(id));
       inv.crash();
       abandoned++;
@@ -1364,3 +1381,4 @@ export class Run implements RunHooks {
     });
   }
 }
+    const released = this.releaseCrashed();

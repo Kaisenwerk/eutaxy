@@ -1,9 +1,9 @@
-import { type AtMostOncePerKey, digestLog, type ScenarioSpec } from "@eutaxy/core";
+import { type AtMostOncePerKey, digestLog, type Platform, type ScenarioSpec } from "@eutaxy/core";
 import { describe, expect, test, vi } from "vitest";
 import { replayChooser, seededChooser } from "./chooser.ts";
 import { explore, replayRun, runOnce } from "./explore.ts";
 import { checkThenInsertConsumer, createFakePlatform, type FakeHandler } from "./fake-platform.ts";
-import { Run } from "./run.ts";
+import { CrashSignal, Run } from "./run.ts";
 
 const once: AtMostOncePerKey = {
   kind: "atMostOncePerKey",
@@ -811,6 +811,57 @@ function timerJobsSpec(): ScenarioSpec {
     drive: { ...spec.drive, messages: [{ id: "m1", body: { orderId: "o-1" } }] },
   };
 }
+
+describe("a delivery whose invocation crashed inside an object", () => {
+  test("ends on the run's own step, where nothing else can move, instead of being called stuck", async () => {
+    // The delivery waits under settle alone: the promise the crash settles (`inv.crashed`) may never
+    // wake anything when the crash happened inside an object whose reset tore its task down, as in
+    // workerd. Here that promise is simply not raced.
+    const spec: ScenarioSpec = {
+      ...raceSpec(2),
+      name: "fake-crashed-inside",
+      drive: { kind: "queue", queue: "q", messages: [{ id: "m1", body: null }] },
+      invariants: [],
+    };
+    const platform: Platform = {
+      name: "fake",
+      assumptions: [],
+      concurrent: true,
+      async reset() {},
+      async finish() {},
+      restrictEvents: (s) => s,
+      initialEvents: () => [{ id: "m1", attempt: 1, data: null }],
+      async deliver(event, hooks) {
+        const invocation = `${event.id}#${event.attempt}`;
+        const inv = hooks.startInvocation(invocation);
+        const work = hooks.effect(
+          { invocation, target: "DO:X", op: "call", args: null, allowed: ["crash_before"] },
+          async () => 1,
+          () => null,
+        );
+        try {
+          await hooks.settle(work, invocation);
+          return { status: "completed", followUps: [] };
+        } catch (err) {
+          if (!(err instanceof CrashSignal)) throw err;
+          return { status: inv.isCrashed() ? "crashed" : "errored", followUps: [] };
+        }
+      },
+    };
+    const run = new Run({
+      bounds: spec.bounds,
+      chooser: replayChooser({
+        seed: 1,
+        faults: [
+          { invocation: "m1#1", ordinal: 0, fault: "crash_before", target: "DO:X", op: "call" },
+        ],
+      }),
+    });
+    await runOnce(spec, platform, run);
+    expect(run.log.entries.map((e) => `${e.kind} ${e.op}`)).toEqual(["call call", "fault call"]);
+    expect(run.unsupportedReasons).toEqual([]);
+  });
+});
 
 describe("timers already due are turns", () => {
   test("the second of two timers due together fires while the first's effect is parked on some seeds, not on others, and replays", async () => {
