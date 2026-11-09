@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.16.0](https://github.com/Kaisenwerk/eutaxy/compare/v0.15.1...v0.16.0) (2026-11-09)
+
+
+### Features
+
+* **cloudflare:** a Workflow step attempt that outlives its timeout runs on ([46e1f52](https://github.com/Kaisenwerk/eutaxy/commit/46e1f52a05dda009493b7df3e9ddeefcf550b0c5))
+* **cloudflare:** an object's unawaited work is its own turns after the answer ([fddae36](https://github.com/Kaisenwerk/eutaxy/commit/fddae360dfc20b032ea2d6cf0e179ece15de803a))
+* **engine:** a virtual timer already due is a turn of the concurrent scheduler ([dbc176d](https://github.com/Kaisenwerk/eutaxy/commit/dbc176df88da7414f45def9215b4fbce51a6c025))
+* **engine:** late turns, for an attempt the platform gives up on at a deadline ([8fd68f8](https://github.com/Kaisenwerk/eutaxy/commit/8fd68f8a48fb0d55309778815ca549cf6e07f63e))
+* **engine:** work an object goes on with after its answer runs as its own invocation ([63ff031](https://github.com/Kaisenwerk/eutaxy/commit/63ff0319d6e038b26234aee051cb040cff1e98fa))
+
+
+### Bug Fixes
+
+* **cli:** draft and check read a wrangler config the same way ([8b1a14b](https://github.com/Kaisenwerk/eutaxy/commit/8b1a14b228a5c9d8e24aeded6c031da8c336372f))
+* **core:** an empty scenario name or external name is reported once ([b0804b6](https://github.com/Kaisenwerk/eutaxy/commit/b0804b61b739704e29c7b90988405b4397721c5c))
+* **engine:** a call still crossing into its object is not idle ([8f7d4e4](https://github.com/Kaisenwerk/eutaxy/commit/8f7d4e4b73d73ef29e47767129c1a21ed6d6203a))
+* **engine:** a delivery crashed inside an object ends on the run's own step ([119334b](https://github.com/Kaisenwerk/eutaxy/commit/119334b2fd9c0084ea7299910ad266d764a74a59))
+* **engine:** an object's timers, outstanding effects and real work around its answer ([c4962f3](https://github.com/Kaisenwerk/eutaxy/commit/c4962f32b26d87ed80465fcc62dab924a62c713f))
+* **engine:** scripted fetch bodies are read without a turn of the event loop ([24bde46](https://github.com/Kaisenwerk/eutaxy/commit/24bde469a948e71d9590062c54391827079d23eb))
+
+
+### Tests
+
+* **corpus:** gate and planted bug for a step attempt that outlives its timeout ([56ab178](https://github.com/Kaisenwerk/eutaxy/commit/56ab1787f532a8f8b89a6fdca70e9b1501ab9b12))
+
 ## [0.15.1](https://github.com/Kaisenwerk/eutaxy/compare/v0.15.0...v0.15.1) (2026-11-07)
 
 
