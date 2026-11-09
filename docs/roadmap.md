@@ -11,7 +11,7 @@ can rely on it.
 
 ## As of now
 
-The phases through v0.15 are done; `docs/design.md` describes what they
+The phases through v0.16 are done; `docs/design.md` describes what they
 built, and each phase's gate keeps running in CI on every change.
 - **v0.4, the simulator.** A Worker's queue consumer run under explored
   schedules: faults at every effect, redelivery as Cloudflare Queues
@@ -88,10 +88,31 @@ built, and each phase's gate keeps running in CI on every change.
   example green through the command, each draft matching its example in
   everything the author does not supply, and the site built with a page
   per example and per entry point.
+- **v0.16, work that goes on after the answer.** Two model features a
+  real multi-Worker system reached first. An object that answers a call
+  and goes on with work it did not await (`ctx.waitUntil`, a promise left
+  running) runs that work as its own invocation,
+  `DO:<binding>/<object>/after`, with its effects and faults, until it
+  settles or a crash resets the object. A Workflow step's `timeout` is
+  measured, a timeout at an attempt's start is a fault (`ambiguous` at
+  `step`), and the timed-out attempt runs on as the late attempt, whose
+  turns the run need not wait for: they land before, between or after the
+  retry's or the recovery's. Under them, a virtual timer already due is a
+  turn of the concurrent scheduler, and the Cloudflare delivery paths, the
+  differential runner's raw side and the wrangler config reader are each
+  one copy where they were several. Gate: an object's unawaited work and
+  a timed-out step attempt each run as turns of their own, the object's
+  timings around its answer (a timer awaited before it, an effect issued
+  before it and not awaited, real work after it) each end in a verdict
+  under every fault placement, a planted bug in each feature is caught (a
+  lost update in work started after the answer, a late attempt running a
+  turn abandoned meanwhile), the first has its differential entry (the
+  local runtime models the Workflows engine rather than running it), and
+  every example and the v0.14 gate stay green.
 
 Notes on releases along the way:
-- `0.15.1` closes 0.15 with the fixes and the faster test suite made after
-  `0.15.0`; the work after it opens v0.16, so the next minor is `0.16.0`.
+- `0.16.0` closes v0.16; the patch work after it ships as `0.16.x`, and
+  the next minor opens with v0.17.
 - `0.9.0` needs TypeScript 7.1 in the project (`typescript@7.1.0-beta`
   until the release on 2026-11-24, then the release): the spec reader runs
   the project's compiler. The reader follows the compiler's own releases
@@ -139,48 +160,10 @@ proof cache are v0.17's and wait for it unless a target needs one sooner):
   Workflow rollback handlers. Dynamic partial-order reduction and one
   random stream per invocation are v0.17's.
 
-## After v0.15
+## After v0.16
 
-Each phase's text is made exact, gate included, when it starts. v0.16
-comes first because an adopter's flow waits on it; v0.17 starts on a
-measurement; v0.18 needs both before it.
-
-### v0.16 — Work that goes on after the answer
-
-Two model features a real multi-Worker system reached first, since a flow
-it checks waits on them:
-- **Work an object starts and does not await.** A Durable Object (an
-  Agent in particular) that answers a call and goes on with work it did
-  not await, through `ctx.waitUntil`, a fiber or a promise left running:
-  the model runs it as the object's own turns after the answer, an
-  invocation `DO:<binding>/<object>/after` with its effects and faults,
-  until it settles or a crash resets the object (`docs/design.md`,
-  Durable Objects).
-- **A step attempt that outlives its timeout.** Workflows retries a step
-  whose attempt passed its `timeout` while that attempt may still be
-  running, so a race between the late attempt and the retry, or the code
-  that recovers from it, is real. The model measures step timeouts (and
-  places a timeout at an attempt's start as a fault) and lets the
-  timed-out attempt run on as the late attempt, whose turns the run need
-  not wait for: they land before, between or after the retry's
-  (`docs/design.md`, Workflows and Concurrent invocations).
-
-The phase opened by paying for the duplication these features would
-otherwise have added to: the Cloudflare delivery paths carried one
-contract written several times, the differential runner's raw side was
-written once per platform, and the wrangler config was read in three
-places that disagreed (a class renamed in a later migration was drafted
-as non-SQLite while `check` treated it as SQLite: a bug, fixed first with
-a test). Each is one copy now, with the byte-identical traces as the
-oracle that nothing else changed, before the new turns are added. Gate: an
-object's unawaited work and a timed-out step attempt each run as turns of
-their own, and the object's timings around its answer (a timer awaited
-before it, an effect issued before it and not awaited, real work after it)
-each end in a verdict under every fault placement; a planted bug in each
-feature is caught (a lost update in work started after the answer, a late
-attempt racing its recovery), each has a differential entry where the
-local runtime implements it, and every example and the v0.14 gate stay
-green.
+Each phase's text is made exact, gate included, when it starts. v0.17
+starts on a measurement; v0.18 needs it before it.
 
 ### Candidates: the larger gaps in the model
 
@@ -233,8 +216,8 @@ The first step of the long-term direction: the platform model of queues,
 Durable Objects, D1 and alarms in Lean, validated against the executable
 model as the engine's translation is validated today, so a scenario
 invariant on the shell can be `PROVEN` against the model, not only
-`BOUNDED` by exploration. It waits for v0.16 and v0.17 because it needs
-the semantics stable and the runs fast enough to validate against, and it
+`BOUNDED` by exploration. It waits for v0.17 because it needs the runs
+fast enough to validate against, on the semantics v0.16 settled, and it
 opens by giving the two prover engines the one spine they were written
 beside, with the subset reader split along its seams and its circular
 import gone, so the model's translation has one place to live.
