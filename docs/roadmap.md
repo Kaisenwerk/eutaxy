@@ -210,6 +210,52 @@ The performance items taken on inspection during 0.15.x showed no gain
 when measured, so none is taken that way again. The gate states a ceiling
 on the corpora's check and report time on the CI runner and holds it.
 
+The measurement, taken on `main` at e9de29b (2026-11-09) once v0.16
+closed: `pnpm check` on the CI runner (`ubuntu-latest`, 4 vCPUs) over its
+three green runs that day, and on a development machine (Apple M3, 8
+cores, 16 GB, Node 24.14) three times, medians and spreads. Lint takes
+under a second and the type check about two seconds on either; the rest
+is the test suite, 157 files, run by Vitest in parallel.
+
+|                                            | CI runner           | Development machine |
+| ------------------------------------------ | ------------------- | ------------------- |
+| `pnpm check`, end to end                   | 209 s, 233 s, 279 s | 81 s, 87 s, 87 s    |
+| Test suite, wall clock                     | 206 s, 229 s, 274 s | 80 s, 85 s, 86 s    |
+| Test files, sum of their own times         | 549 s               | 429 s               |
+| of which the command end to end (`tests/`) | 195 s               | 167 s               |
+| the phase gates (`corpus/gates`)           | 159 s               | 134 s               |
+| the planted bugs (`corpus/planted-bugs`)   | 75 s                | 49 s                |
+| the packages' own tests                    | 63 s                | 36 s                |
+| the prover contracts                       | 42 s                | 37 s                |
+| the differential corpus                    | 15 s                | 7 s                 |
+
+The files that dominate, medians over the runs, CI then local:
+
+| File                                      | CI   | Local | What takes the time                                                                                                                                                                                 |
+| ----------------------------------------- | ---- | ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `corpus/gates/v0-16-step-timeout`         | 87 s | 61 s  | Eight `check()` cells, each seeded and exhaustive within a 30 s budget, four of them with a step attempt napping three virtual minutes inside an object, and four replays; the slowest cell is 12 s |
+| `tests/cli-specs.test.ts`                 | 51 s | 46 s  | One test: the refund example's properties `PROVEN` by the Lean engine, 36 s, all of it elaboration                                                                                                  |
+| `tests/cli-check.test.ts`                 | 49 s | 41 s  | Eight `eutaxy check` invocations at 3 s to 9 s each, the isolate build and the workerd start before any exploration                                                                                 |
+| `corpus/prover-contracts/harness.test.ts` | 42 s | 37 s  | The Lean contracts; one of them, module-level constants and `floor`, is 36 s on its own                                                                                                             |
+| `packages/cli/src/report.test.ts`         | 42 s | 15 s  | `eutaxy report` end to end; the byte-identical-output test alone is 10 s                                                                                                                            |
+| `tests/examples.test.ts`                  | 41 s | 41 s  | Twelve `eutaxy check` runs, one per example and its fix: `agent-poll` takes 21 s and 17 s, every other example 3 s to 6 s                                                                           |
+| `corpus/gates/v0-16-object-timing`        | 23 s | 28 s  | Sixteen tests over an object's timers around its answer, six of them `check()` cells of 1 s to 9 s                                                                                                  |
+| `tests/self-check.test.ts`                | 22 s | 20 s  | Twenty refutations of planted invariant bugs, 2 s to 17 s each                                                                                                                                      |
+
+Where the time goes, then, is three places, none of them the exploration
+of an ordinary scenario: the two v0.16 gates and the `agent-poll` example,
+whose runs explore objects with timers and late turns and together hold a
+third of the suite's own time; the fixed cost of an `eutaxy check`
+invocation, about three seconds before the first schedule runs, paid some
+twenty times across the command's tests and the examples; and two Lean
+proofs of 36 s each, which is the prover's elaboration and not Eutaxy's
+code. A planted bug's check in workerd takes 2 s to 11 s, and the one
+adopter number on record, a 300-run seeded check of a real flow across
+two Workers, took 31 s. The gate's ceiling is chosen from these numbers
+when the phase starts; the CI runner's suite spread, 206 s to 274 s on
+one day with no code change between two of the runs, is the noise any
+ceiling has to sit above.
+
 ### v0.18 — The model proven
 
 The first step of the long-term direction: the platform model of queues,
