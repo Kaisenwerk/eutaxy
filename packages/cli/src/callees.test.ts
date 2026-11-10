@@ -6,6 +6,7 @@ import { callee } from "@eutaxy/cloudflare";
 import { afterAll, describe, expect, test } from "vitest";
 import {
   bindingCarries,
+  type CalleeConfig,
   calleeSteps,
   classAlias,
   isolateBindings,
@@ -55,7 +56,7 @@ describe("a callee's config", () => {
       ] },
       "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Lease"] }],
       "workflows": [{ "binding": "FLOW", "name": "fulfilment", "class_name": "Fulfilment" }],
-      "services": [{ "binding": "PARTNER", "service": "partner" }],
+      "services": [{ "binding": "PARTNER", "service": "partner", "entrypoint": "Partner", "props": { "caller": "inventory" } }],
       "queues": { "producers": [{ "binding": "EVENTS", "queue": "inv-events" }] },
       "analytics_engine_datasets": [{ "binding": "AE" }]
     }`,
@@ -75,6 +76,9 @@ describe("a callee's config", () => {
     ]);
     expect(c.workflows).toEqual([{ binding: "FLOW", className: "Fulfilment", name: "fulfilment" }]);
     expect(c.services).toEqual(["PARTNER"]);
+    expect(c.carries).toEqual([
+      { binding: "PARTNER", entrypoint: "Partner", props: { caller: "inventory" } },
+    ]);
     expect(c.queues).toEqual([{ binding: "EVENTS", queue: "inv-events" }]);
     expect(c.vars).toEqual({ REGION: "eu" });
     expect(c.sqliteClasses).toEqual(["Lease"]);
@@ -357,6 +361,17 @@ describe("what the caller's binding carries", () => {
     });
     expect(bindingCarries(caller, "BILLING")).toEqual({});
     expect(bindingCarries(undefined, "X")).toEqual({});
+    // A callee's own callee: the binding is declared in the first callee's config, and so are its props.
+    const desk = {
+      name: "desk",
+      carries: [{ binding: "RUNS", entrypoint: "ProjectRuns", props: { caller: "workspace" } }],
+    } as unknown as CalleeConfig;
+    expect(bindingCarries(caller, "desk/RUNS", [desk])).toEqual({
+      entrypoint: "ProjectRuns",
+      props: { caller: "workspace" },
+    });
+    expect(bindingCarries(caller, "desk/OTHER", [desk])).toEqual({});
+    expect(bindingCarries(caller, "other/RUNS", [desk])).toEqual({});
   });
 });
 

@@ -283,7 +283,7 @@ export async function runCheck(o: CheckOptions): Promise<number> {
                 binding: c.binding,
                 name: c.name,
                 importPath: toPosix(relative(workDir, c.entry)),
-                ...bindingCarries(callerResources, c.binding),
+                ...bindingCarries(callerResources, c.binding, callees),
               })),
             }),
         ...(sqlImports.length === 0 ? {} : { sqlImports }),

@@ -49,6 +49,12 @@ export interface CalleeConfig {
     readonly name: string;
   }[];
   readonly services: readonly string[];
+  /** What each of its service bindings carries in its config (the entrypoint reached, the props), for a callee of its own. */
+  readonly carries: readonly {
+    readonly binding: string;
+    readonly entrypoint?: string;
+    readonly props?: Readonly<Record<string, JsonValue>>;
+  }[];
   readonly queues: readonly { readonly binding: string; readonly queue: string }[];
   readonly vars: Readonly<Record<string, JsonValue>>;
   /** The classes the migrations make SQLite-backed, bound by this Worker or not. */
@@ -228,6 +234,11 @@ export function readCalleeConfig(step: CalleeStep, scenarioDir: string): CalleeC
     durableObjects: bindings.durableObjects,
     workflows: bindings.workflows,
     services: bindings.services.map((s) => s.binding),
+    carries: bindings.services.map(({ binding, entrypoint, props }) => ({
+      binding,
+      ...(entrypoint === undefined ? {} : { entrypoint }),
+      ...(props === undefined ? {} : { props }),
+    })),
     queues: bindings.queues,
     vars: bindings.vars,
     sqliteClasses: bindings.sqliteClasses,
@@ -428,12 +439,21 @@ export function readCallerResources(wranglerPath: string): CallerResources | und
   }
 }
 
-/** What the caller's binding to a callee carries (its entrypoint and props), for the test to pass with the module. */
+/**
+ * What the binding to a callee carries (its entrypoint and props), for the
+ * test to pass with the module: from the caller's config, or for a callee's
+ * own callee (`<callee>/<binding>`) from that callee's config, where the
+ * binding is declared.
+ */
 export function bindingCarries(
   caller: CallerResources | undefined,
   binding: string,
+  callees: readonly CalleeConfig[] = [],
 ): { readonly entrypoint?: string; readonly props?: Readonly<Record<string, JsonValue>> } {
-  const s = caller?.services.find((x) => x.binding === binding);
+  const owner = callees.find((c) => binding.startsWith(`${c.name}/`));
+  const s =
+    caller?.services.find((x) => x.binding === binding) ??
+    owner?.carries.find((x) => qualified(owner.name, x.binding) === binding);
   return {
     ...(s?.entrypoint === undefined ? {} : { entrypoint: s.entrypoint }),
     ...(s?.props === undefined ? {} : { props: s.props }),
