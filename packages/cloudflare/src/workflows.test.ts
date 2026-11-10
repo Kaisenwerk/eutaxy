@@ -633,6 +633,18 @@ describe("constructWorkflow", () => {
   });
 });
 
+describe("the platform's stated assumptions", () => {
+  test("say that step timeouts are measured and that a timed-out attempt runs on", () => {
+    const stated = createCloudflarePlatform({ env: {}, handler: {}, schemas: {} }).assumptions.find(
+      (a) => a.startsWith("Workflows are a model"),
+    );
+    expect(stated).toContain("a step's timeout is measured in virtual time");
+    expect(stated).toContain("runs on as the late attempt");
+    expect(stated).toContain("ambiguous at step: the attempt outlives its timeout from its start");
+    expect(stated).not.toContain("not measured");
+  });
+});
+
 describe("durationMs", () => {
   test("reads milliseconds and Workflows duration strings", () => {
     expect(durationMs(250)).toBe(250);

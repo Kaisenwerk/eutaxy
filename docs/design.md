@@ -1200,7 +1200,12 @@ are restored after every run, including on failure. Code that captured `Date.now
 `Math.random` at module load escapes the patch; that is a documented limit.
 
 Each run resets D1 by dropping every user table and re-applying the
-scenario's schema through the real binding, outside the effect log. Queue
+scenario's schema through the real binding, outside the effect log. SQL
+that reads the time or draws randomness itself (`CURRENT_TIMESTAMP`,
+`strftime(…, 'now')`, `random()`) reads SQLite's own clock and generator,
+which the virtual ones do not reach: a row a schema file stamps that way
+differs from run to run, and the replay check reports it, naming the
+value that differed. Queue
 messages are delivered one at a time; an unacknowledged message is
 redelivered up to `max_retries` (default 3) and within the scenario's
 `maxRedeliveries`, then dead-lettered, which the log records.

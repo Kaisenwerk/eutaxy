@@ -231,9 +231,19 @@ An instance runs your own class. Each `step.do` attempt is two effect
 points around its callback: a crash before the step restarts the instance
 before it runs; a crash after it means the step ran and committed but its
 result was not persisted, so it runs again after the restart; `ambiguous`
-is an attempt that ran but counted as failed, as a timeout does. A failed
+before the step is an attempt that outlives its `timeout` from its start,
+and after it an attempt that ran but counted as failed. A failed
 attempt is retried after its delay in virtual time (by default 5 retries,
-10 s apart, exponential), except a `NonRetryableError`. A restart re-runs
+10 s apart, exponential), except a `NonRetryableError`.
+
+A step's `timeout` is measured in virtual time (10 minutes by default).
+The engine cannot stop an attempt that passes it, and neither does the
+model: the attempt runs on as the late attempt while the step is retried
+or fails for good, and its result is dropped. With two invocations in
+flight (`maxConcurrentInvocations: 2`) the late attempt's remaining calls
+land before, between or after the retry's and the recovery's, which is
+how a fence against a call still in flight is tested; a sequential run
+lets the late attempt run first. A restart re-runs
 `run()` from the start with the persisted step and sleep results, so code
 outside steps repeats. `step.sleep` and `step.sleepUntil` wait in virtual
 time.
