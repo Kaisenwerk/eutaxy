@@ -219,6 +219,83 @@ describe("eutaxy check", () => {
     }
   }, 180_000);
 
+  test("an object calling a scripted service binding through its own env is UNSUPPORTED, not a failure its code absorbs", () => {
+    // The runtime hands an object the Worker's real env, where the binding is not the scenario's script:
+    // the call would fail inside the object, the object's own error handling would take it for the
+    // model's answer, and with no invariant on the outcome the check would be BOUNDED.
+    const dir = join(root, "examples", "payments-queue", `cli-test-object-env-${process.pid}`);
+    mkdirSync(dir, { recursive: true });
+    try {
+      writeFileSync(
+        join(dir, "wrangler.jsonc"),
+        JSON.stringify({
+          name: "cli-test-object-env",
+          main: "worker.ts",
+          compatibility_date: "2026-10-01",
+          durable_objects: { bindings: [{ name: "RUNNER", class_name: "Runner" }] },
+          migrations: [{ tag: "v1", new_sqlite_classes: ["Runner"] }],
+          services: [{ binding: "MODEL", service: "model-worker" }],
+        }),
+      );
+      writeFileSync(
+        join(dir, "worker.ts"),
+        `import { DurableObject } from "cloudflare:workers";
+interface Env {
+  readonly RUNNER: DurableObjectNamespace<Runner>;
+  readonly MODEL: { complete(runId: string): Promise<{ steps: number }> };
+}
+export class Runner extends DurableObject<Env> {
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
+    this.ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS runs (id TEXT PRIMARY KEY, status TEXT NOT NULL)");
+  }
+  async start(runId: string): Promise<{ accepted: true }> {
+    this.ctx.storage.sql.exec("INSERT OR IGNORE INTO runs (id, status) VALUES (?, 'queued')", runId);
+    void this.execute(runId);
+    return { accepted: true };
+  }
+  private async execute(runId: string): Promise<void> {
+    try {
+      const { steps } = await this.env.MODEL.complete(runId);
+      this.ctx.storage.sql.exec("UPDATE runs SET status = ? WHERE id = ?", \`done in \${steps}\`, runId);
+    } catch {
+      this.ctx.storage.sql.exec("UPDATE runs SET status = 'failed' WHERE id = ?", runId);
+    }
+  }
+}
+export default {
+  async fetch(request: Request, env: Env): Promise<Response> {
+    const runId = new URL(request.url).pathname.slice(1);
+    return Response.json(await env.RUNNER.get(env.RUNNER.idFromName("r")).start(runId));
+  },
+};
+`,
+      );
+      writeFileSync(
+        join(dir, "scenario.sim.ts"),
+        `import { defineScenario, durableObject, durableObjectTable, http, service, unique } from "eutaxy/cloudflare";
+export default defineScenario({
+  name: "object-env",
+  worker: { entry: "./worker.ts", config: "./wrangler.jsonc" },
+  setup: [durableObject("RUNNER", { r: {} }), service("MODEL", { methods: { complete: { returns: { steps: 2 } } } })],
+  drive: http([{ id: "run-1", path: "/run-1", method: "POST" }], { retries: 0 }),
+  externals: [],
+  // Nothing here reads how a run ended, as a scenario written before the question came up would not.
+  invariants: [unique("one-row-per-run", durableObjectTable("RUNNER", "r", "runs"), "id")],
+  bounds: { maxFaultsPerRun: 0, maxRedeliveries: 0, budgetMs: 2000 },
+});
+`,
+      );
+      const r = eutaxy(["check", join(dir, "scenario.sim.ts"), "--seed", "cli", "--no-regression"]);
+      expect(r.status, `${r.stdout}\n${r.stderr}`).toBe(2);
+      expect(r.stdout).toContain(
+        "Durable Object RUNNER r called the service binding MODEL through its own env",
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 180_000);
+
   test("fails clearly without a scenario or a wrangler config", () => {
     expect(eutaxy(["check"]).status).toBe(3);
     const bad = eutaxy([

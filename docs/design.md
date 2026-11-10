@@ -785,7 +785,11 @@ shares the reading of the limit and none of the proxy code.
   since the reset tears down the object's task, with whatever that task
   had settled. Current limits: storage operations are not
   turns (the input gate holds them, so this is the runtime's behaviour);
-  the object's own binding calls are not recorded, and an object reached
+  the object's own binding calls are not recorded (the runtime hands it
+  the Worker's real `env`), so a call it makes on a service binding
+  through `this.env` makes the run `UNSUPPORTED`: no script or callee
+  answers there, and the failure would pass for the peer's answer in the
+  object's own error handling; an object reached
   only through another object's binding makes the run `UNSUPPORTED`, as do
   `jurisdiction()` namespaces (and a unique id asked for one) and a
   namespace the scenario does not reset (no `durableObject` setup).

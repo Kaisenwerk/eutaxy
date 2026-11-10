@@ -16,7 +16,7 @@
 import { canonicalJson, type JsonValue, toJson, writeFaults } from "@eutaxy/core";
 import { withoutNetwork } from "@eutaxy/engine";
 import { AlarmBook, alarmControl, takenOver, takeOverAlarms } from "./alarms.ts";
-import { hostMethod, hostOf } from "./object-access.ts";
+import { guardEnv, hostMethod, hostOf } from "./object-access.ts";
 import type { ProxyContext } from "./proxy-context.ts";
 import type { DurableObjectSqlSeed } from "./scenario.ts";
 
@@ -512,6 +512,7 @@ function enterObject<T>(
       live.storage,
       alarmControl(state.alarms, binding, id, object, () => ctx.hooks),
     );
+    guardEnv(ctx.hooks, binding, object, instance);
     return fn(instance, live);
   });
 }

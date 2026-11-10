@@ -9,6 +9,7 @@
 
 import type { EffectPoint, Invocation, JsonValue, RunHooks } from "@eutaxy/core";
 import { type Outcome, runInvocation } from "@eutaxy/engine";
+import { isServiceBinding } from "./services.ts";
 
 /** The host an object's code runs as (`EffectOptions.host`): its namespace's target and its name. */
 export function hostOf(target: string, object: string): string {
@@ -58,6 +59,70 @@ export function hostMethod(hooks: RunHooks, host: string, instance: unknown, met
     hostingWrappers.add(wrapper);
     Object.defineProperty(where, method, { ...descriptor, get: wrapper });
   }
+}
+
+/** Who each guarded instance is and the run it belongs to, set each time a call enters it. */
+const guardOfInstance = new WeakMap<object, { hooks: RunHooks; binding: string; object: string }>();
+
+/**
+ * Keep an object's calls on its own service bindings from passing for the
+ * scenario's. The runtime hands an object the Worker's real `env`, where a
+ * service binding is never the scenario's script or callee: a call through
+ * it would reach whatever the isolate holds under that name and fail or
+ * answer outside the simulation, unseen. So the instance's `env` is put
+ * behind a view under which every call on a service binding ends the run
+ * `UNSUPPORTED` with the reason. Reading the binding does nothing; the
+ * object's other bindings are its own to use, unrecorded, as before. An
+ * `env` the class keeps elsewhere than `this.env` (a private field, a
+ * closure of its constructor) is out of reach.
+ */
+export function guardEnv(
+  hooks: RunHooks,
+  binding: string,
+  object: string,
+  instance: unknown,
+): void {
+  if (instance === null || typeof instance !== "object") return;
+  const guarded = guardOfInstance.has(instance);
+  guardOfInstance.set(instance, { hooks, binding, object });
+  if (guarded) return;
+  const descriptor = Object.getOwnPropertyDescriptor(instance, "env");
+  const env: unknown = descriptor?.value;
+  if (!descriptor?.writable || env === null || typeof env !== "object") return;
+  const refuse = (name: string): never => {
+    const of = guardOfInstance.get(instance) ?? { hooks, binding, object };
+    const reason = `Durable Object ${of.binding} ${of.object} called the service binding ${name} through its own env: an object's own binding calls are outside the simulation, so no service() script or callee() answers them`;
+    of.hooks.unsupported(reason);
+    throw new Error(`eutaxy: ${reason}`);
+  };
+  const stubs = new Map<string, object>();
+  const stubFor = (name: string): object => {
+    let stub = stubs.get(name);
+    if (!stub) {
+      // A method of the binding, `fetch()` and `connect()` among them: called, it is the refused call,
+      // rejecting as an RPC call does; awaited uncalled (an RPC getter, `await env.PEER.enabled`), the same.
+      const refused = Object.assign(async (): Promise<never> => refuse(name), {
+        // biome-ignore lint/suspicious/noThenProperty: an RPC property is awaitable as well as callable
+        then: (onFulfilled?: (v: unknown) => unknown, onRejected?: (e: unknown) => unknown) =>
+          refused().then(onFulfilled, onRejected),
+      });
+      stub = new Proxy(
+        {},
+        {
+          // The binding itself is not a promise.
+          get: (_t, prop) => (prop === "then" || typeof prop === "symbol" ? undefined : refused),
+        },
+      );
+      stubs.set(name, stub);
+    }
+    return stub;
+  };
+  (instance as { env: unknown }).env = new Proxy(env, {
+    get(target, prop) {
+      const value = Reflect.get(target, prop, target) as unknown;
+      return typeof prop === "string" && isServiceBinding(value) ? stubFor(prop) : value;
+    },
+  });
 }
 
 /** What a delivery into an object needs of its namespace: to run code inside one, and the crash semantics. */

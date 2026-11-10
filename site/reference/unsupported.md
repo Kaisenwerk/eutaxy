@@ -105,6 +105,14 @@ One object called another through its own `env`. Calls between objects
 are not effects yet; drive the second object from the Worker in the
 scenario.
 
+**`Durable Object <binding> <object> called the service binding <name> through its own env: an object's own binding calls are outside the simulation, so no service() script or callee() answers them`**
+The runtime hands an object the Worker's real `env`, where a service
+binding is not the scenario's script or callee. The call would fail or
+answer unseen, and an object that catches the error would carry on as if
+the peer had refused. Until an object's own calls are effects, make the
+call from the Worker and pass the answer in, or give the object its
+answers from a subclass in the scenario's entry module.
+
 **`Durable Object <binding> <object> returned something that is not plain data (an RPC capability or an object with methods); calls on it would bypass Eutaxy`**
 A method returned a stub, a function or an object with methods. Return
 plain data, and call the object again for more.
