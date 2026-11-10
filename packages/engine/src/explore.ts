@@ -14,6 +14,7 @@ import {
   type EffectRecord,
   type EventRef,
   earliestEvent,
+  type JsonValue,
   nextU32,
   type Platform,
   type PrngState,
@@ -88,19 +89,71 @@ function concurrencyAssumption(bounds: Bounds): string {
   return `up to ${bounds.maxConcurrentInvocations} invocations in flight, interleaved only at asynchronous effects (proxied bindings, fetch): code between two such effects runs without interruption (except continuations of a promise it settles for another invocation, which run then and are still attributed to their own invocation), Web Crypto calls are waited for like I/O, other non-effect awaits (body reads included) settle within one turn of the event loop, synchronous effects are not interleaving points, an effect made by code another effect hosts (an object calling out during a call) is a turn of its own unless that code cannot be interrupted (an object inside blockConcurrencyWhile), when it runs within the hosting effect's turn, the next turn is a seeded pick among parked invocations, starting a new event while a slot is free, and firing the earliest timer already due (at or before the virtual now, which effects advance), timers firing in due order among themselves, and a timer not yet due fires (virtual time passing to it) only when nothing else can move`;
 }
 
-/** The first record a replay recorded differently from the run, or how their lengths differ; null when the logs match. */
+/** Where two JSON values first differ, as a path into them (`.tables.audit[0].at`), with the two values there. */
+function firstDifference(
+  a: JsonValue | undefined,
+  b: JsonValue | undefined,
+  path = "",
+): { path: string; a: JsonValue | undefined; b: JsonValue | undefined } | null {
+  if (Array.isArray(a) && Array.isArray(b)) {
+    for (let i = 0; i < Math.max(a.length, b.length); i++) {
+      const d = firstDifference(a[i], b[i], `${path}[${i}]`);
+      if (d) return d;
+    }
+    return null;
+  }
+  const record = (v: unknown): v is { readonly [key: string]: JsonValue } =>
+    typeof v === "object" && v !== null && !Array.isArray(v);
+  if (record(a) && record(b)) {
+    for (const key of [...new Set([...Object.keys(a), ...Object.keys(b)])].sort()) {
+      const d = firstDifference(a[key], b[key], `${path}.${key}`);
+      if (d) return d;
+    }
+    return null;
+  }
+  const same = a === undefined || b === undefined ? a === b : canonicalJson(a) === canonicalJson(b);
+  return same ? null : { path, a, b };
+}
+
+/**
+ * The first record a replay recorded differently from the run, or how their
+ * lengths differ; null when the logs match. Two records of the same effect
+ * are told apart by the first value in their payloads that differs, with its
+ * path: a snapshot of many tables that differs in one column says which.
+ */
 function whatDiffered(run: EffectLog, replay: EffectLog): string | null {
-  const show = (e: EffectRecord): string => {
-    const payload = canonicalJson(e.payload);
-    const shown = payload.length > 120 ? `${payload.slice(0, 117)}...` : payload;
-    return `${e.kind} ${e.target} ${e.op} in ${e.invocation} ${shown}`;
+  const short = (v: JsonValue | undefined): string => {
+    if (v === undefined) return "nothing";
+    const text = canonicalJson(v);
+    return text.length > 120 ? `${text.slice(0, 117)}...` : text;
   };
+  /** Two differing values, each cut to the stretch around where their texts part, so the excerpts differ too. */
+  const apart = (x: JsonValue | undefined, y: JsonValue | undefined): [string, string] => {
+    if (x === undefined || y === undefined) return [short(x), short(y)];
+    const [s, t] = [canonicalJson(x), canonicalJson(y)];
+    if (s.length <= 120 && t.length <= 120) return [s, t];
+    let at = 0;
+    while (at < s.length && at < t.length && s[at] === t[at]) at++;
+    const from = Math.max(0, at - 40);
+    const cut = (text: string): string =>
+      `${from > 0 ? "..." : ""}${text.slice(from, from + 110)}${from + 110 < text.length ? "..." : ""}`;
+    return [cut(s), cut(t)];
+  };
+  const head = (e: EffectRecord): string => `${e.kind} ${e.target} ${e.op} in ${e.invocation}`;
   const a = serializeLog(run).split("\n");
   const b = serializeLog(replay).split("\n");
   const n = Math.min(run.entries.length, replay.entries.length);
-  for (let i = 0; i < n; i++)
-    if (a[i] !== b[i])
-      return `at seq ${i} the run recorded ${show(run.entries[i] as EffectRecord)} and the replay ${show(replay.entries[i] as EffectRecord)}`;
+  for (let i = 0; i < n; i++) {
+    if (a[i] === b[i]) continue;
+    const ran = run.entries[i] as EffectRecord;
+    const replayed = replay.entries[i] as EffectRecord;
+    const within = head(ran) === head(replayed) && firstDifference(ran.payload, replayed.payload);
+    if (within) {
+      const [was, is] = apart(within.a, within.b);
+      return `at seq ${i} the run recorded ${head(ran)} with ${was} at payload${within.path} and the replay with ${is}`;
+    }
+    return `at seq ${i} the run recorded ${head(ran)} ${short(ran.payload)} and the replay ${head(replayed)} ${short(replayed.payload)}`;
+  }
   if (run.entries.length === replay.entries.length) return null;
   return `the run recorded ${run.entries.length} entries and the replay ${replay.entries.length}`;
 }

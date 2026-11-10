@@ -345,6 +345,32 @@ describe("module-state leak detection", () => {
     expect(verdict.reason).toContain("-again");
   });
 
+  test("two records of one effect that differ in a value say which value, by its path", async () => {
+    let callsEver = 0;
+    // Each insert carries a stamp that grows with every call ever made, as a row stamped by a clock the
+    // simulation does not own would: the same effect, the same place in the log, one value apart, deep
+    // inside a payload too long to show whole.
+    const stamped = createFakePlatform(async (message, env) => {
+      const body = message.body as { orderId: string };
+      callsEver++;
+      await env.insert(`${body.orderId}-${"x".repeat(200)}-${callsEver > 3 ? "later" : "first"}`);
+      message.ack();
+    });
+    const verdict = await explore({ ...spec, invariants: [once] }, stamped, {
+      seed: "leak",
+      maxRuns: 3,
+      faultProbability: 0,
+      now: fixedClock(),
+    });
+    expect(verdict.kind).toBe("UNSUPPORTED");
+    if (verdict.kind !== "UNSUPPORTED") return;
+    expect(verdict.cause).toBe("module_state_leak");
+    // Both excerpts are cut around where the values part, so they show the difference.
+    expect(verdict.reason).toMatch(
+      /at seq \d+ the run recorded call D1:DB run in \S+ with \.\.\.x+-first\S* at payload\S+ and the replay with \.\.\.x+-later/,
+    );
+  });
+
   test("the pass can be disabled and costs nothing then", async () => {
     const verdict = await explore(
       { ...spec, invariants: [once] },
