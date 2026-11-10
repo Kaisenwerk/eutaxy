@@ -65,9 +65,11 @@ scenario's schema.
 ## Setup and bindings
 
 **`binding <name> is not proxied`**
-The Worker touched a binding of a kind the simulation does not model (KV,
+The Worker called a binding of a kind the simulation does not model (KV,
 Workers AI, Vectorize, Hyperdrive, a Queue producer and others; the
-[Cloudflare page](/platforms/cloudflare) lists what is). Keep that path
+[Cloudflare page](/platforms/cloudflare) lists what is). Reading the
+binding off `env` is not a reason; the first call on it is, and the call
+never reaches the real binding. Keep that path
 out of the scenario, or put the binding behind a service binding the
 scenario scripts with `service()`.
 

@@ -31,7 +31,7 @@ import type { CalleeModule } from "./callees.ts";
 import type { DurableObjectTestHelpers } from "./durable-objects.ts";
 import { entrypointHandler } from "./entrypoint.ts";
 import { deliverRequest } from "./http.ts";
-import type { ProxyContext } from "./proxy-context.ts";
+import { type ProxyContext, refuse } from "./proxy-context.ts";
 import { deliverMessage } from "./queues.ts";
 import { deliverCall, entrypointClass } from "./rpc.ts";
 import { type Drive, driveEvents, restrictDrive } from "./scenario.ts";
@@ -97,11 +97,18 @@ export interface CloudflarePlatformOptions {
   readonly aliases?: Readonly<Record<string, string>>;
 }
 
+/**
+ * Whether an env value is a binding and not a var: something with methods.
+ * A JSON var is plain data, whose only methods are `Object.prototype`'s or
+ * an array's, so those do not count; a test double written as an object
+ * literal counts by the functions it holds itself.
+ */
 function isBindingLike(value: unknown): boolean {
   if (typeof value === "function") return true;
-  if (typeof value !== "object" || value === null) return false;
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
   const proto = Object.getPrototypeOf(value) as object | null;
-  const names = [...Object.getOwnPropertyNames(value), ...Object.getOwnPropertyNames(proto ?? {})];
+  const inherited = proto === null || proto === Object.prototype ? {} : proto;
+  const names = [...Object.getOwnPropertyNames(value), ...Object.getOwnPropertyNames(inherited)];
   return names.some(
     (k) => k !== "constructor" && typeof (value as Record<string, unknown>)[k] === "function",
   );
@@ -111,7 +118,7 @@ const assumptions: readonly string[] = [
   "platform model: Cloudflare Queues at-least-once delivery; the first ack or retry decision per message wins; unacked messages are redelivered up to max_retries then dead-lettered",
   "D1 statements run against Miniflare's SQLite; each run/first/all/raw/batch/exec is one effect; SQL that reads the time or draws randomness itself (CURRENT_TIMESTAMP, strftime('now'), random()) reads SQLite's own clock and generator, not the virtual ones, so a value it stores differs from run to run",
   "message.timestamp is the virtual clock's time at delivery",
-  "only D1, Durable Object, R2, Workflow and scripted service bindings are proxied; touching any other binding makes the run UNSUPPORTED",
+  "only D1, Durable Object, R2, Workflow and scripted service bindings are proxied; a call on any other binding makes the run UNSUPPORTED (reading one off env does not)",
   "service bindings are scripted callees unless the scenario names a callee for them: the Worker behind a scripted binding is never called; each RPC method call or fetch() through it is one effect answered from the scenario's service() setup, where crash_before and error mean the call never reached the callee, ambiguous that it acted and the answer was lost, and crash_after that the caller died after it (developers.cloudflare.com/workers/runtime-apis/bindings/service-bindings/); Cloudflare does not retry such a call",
   "a binding named as an alias of another (the same database, the same Durable Object namespace, in two Workers' configs) is that binding: its effects and snapshot carry the other's name, and a callee's Workflow runs the callee's class with the callee's env",
   "a service binding with a callee() setup runs that Worker's real code in the caller's simulation, in the same isolate, as Cloudflare runs both Workers on one thread (developers.cloudflare.com/workers/runtime-apis/bindings/service-bindings/): each RPC method call or fetch() through it is one effect hosting the callee's invocation (<caller invocation>/<binding>.<method>), which constructs the entrypoint anew with a fresh ExecutionContext and the callee's env (its bindings under <worker name>/<binding>) and answers with the return value, plain data by copy, or the Response as it is; what the callee throws reaches the caller as a new error with its name, message and serializable own properties, a built-in class as itself (developers.cloudflare.com/workers/runtime-apis/rpc/error-handling/); the callee's waitUntil work finishes before its answer crosses; crash_before means the call never reached the callee, ambiguous that it acted and the answer was lost, crash_after that the caller died after it, and a fault that crashes the callee ends its invocation and throws an Error to the caller; Cloudflare retries nothing",
@@ -186,6 +193,43 @@ export function createCloudflarePlatform(options: CloudflarePlatformOptions): Pl
     typeof prop !== "string" || !prop.startsWith("__VITEST_POOL_WORKERS_");
   // An alias is read as the binding it names, so effects and snapshots carry that binding's name.
   const aliasKeys = Object.keys(aliases).filter((a) => canonical(a) in env);
+  /**
+   * What the Worker sees under a binding of a kind the simulation does not
+   * model: the binding with every method refused. Reading it does nothing,
+   * as code that builds its dependencies from `env` on every call does;
+   * the first call on it ends the run `UNSUPPORTED` and is never passed to
+   * the real binding.
+   */
+  const standIns = new Map<string, object>();
+  const unproxied = (name: string, real: object): object => {
+    let p = standIns.get(name);
+    if (!p) {
+      const refuseCall = (): never => refuse(ctx, `binding ${name} is not proxied`);
+      p = new Proxy(typeof real === "function" ? refuseCall : {}, {
+        get(_t, prop) {
+          const value = Reflect.get(real, prop, real) as unknown;
+          return typeof value === "function" ? refuseCall : value;
+        },
+        has: (_t, prop) => Reflect.has(real, prop),
+        // Its keys and data are the binding's own, for code that walks or copies what it was given.
+        ownKeys: () => Reflect.ownKeys(real),
+        getOwnPropertyDescriptor(_t, prop) {
+          const d = Reflect.getOwnPropertyDescriptor(real, prop);
+          if (!d) return undefined;
+          const value = Reflect.get(real, prop, real) as unknown;
+          return {
+            value: typeof value === "function" ? refuseCall : value,
+            enumerable: d.enumerable ?? false,
+            configurable: true,
+            writable: false,
+          };
+        },
+        apply: refuseCall,
+      });
+      standIns.set(name, p);
+    }
+    return p;
+  };
   const proxiedEnv = new Proxy(env, {
     get(target, prop, receiver) {
       if (!own(prop)) return undefined;
@@ -197,8 +241,7 @@ export function createCloudflarePlatform(options: CloudflarePlatformOptions): Pl
         const proxied = binding.proxy(name, value, ctx);
         if (proxied !== undefined) return proxied;
       }
-      if (isBindingLike(value)) ctx.hooks.unsupported(`binding ${name} is not proxied`);
-      return value;
+      return isBindingLike(value) ? unproxied(name, value as object) : value;
     },
     has: (target, prop) =>
       own(prop) &&

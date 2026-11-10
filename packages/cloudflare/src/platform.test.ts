@@ -199,8 +199,9 @@ describe("isolation", () => {
     expect(log.entries[2]?.payload).toEqual({ args: { pending: 2 } });
   });
 
-  test("touching a binding that is not proxied makes the run UNSUPPORTED", async () => {
-    const env = { KV: { get: async () => null } };
+  test("a call on a binding that is not proxied makes the run UNSUPPORTED and never reaches the binding", async () => {
+    let reached = 0;
+    const env = { KV: { get: async () => void reached++ } };
     const verdict = await explore(
       spec(),
       platformFor(async (_batch, e) => {
@@ -209,7 +210,53 @@ describe("isolation", () => {
       { seed: 1, now: () => 0 },
     );
     expect(verdict.kind).toBe("UNSUPPORTED");
-    if (verdict.kind === "UNSUPPORTED") expect(verdict.reason).toContain("KV");
+    if (verdict.kind === "UNSUPPORTED")
+      expect(verdict.reason).toContain("binding KV is not proxied");
+    expect(reached).toBe(0);
+  });
+
+  test("a JSON var is data, not a binding: an object or an array is the Worker's to read, walk and copy", async () => {
+    const env = { CONFIG: { enabled: true, region: "eu" }, REGIONS: ["eu", "us"] };
+    let seen: unknown;
+    const verdict = await explore(
+      spec(),
+      platformFor(async (batch, e) => {
+        const { CONFIG, REGIONS } = e as typeof env;
+        seen = {
+          keys: Object.keys(CONFIG),
+          copy: { ...CONFIG },
+          json: JSON.stringify(CONFIG),
+          REGIONS,
+        };
+        batch.ackAll();
+      }, env),
+      { seed: 1, now: () => 0 },
+    );
+    expect(verdict.kind).toBe("BOUNDED");
+    expect(seen).toEqual({
+      keys: ["enabled", "region"],
+      copy: { enabled: true, region: "eu" },
+      json: '{"enabled":true,"region":"eu"}',
+      REGIONS: ["eu", "us"],
+    });
+  });
+
+  test("reading a binding that is not proxied off env, without calling it, is not a reason", async () => {
+    // A handler that builds its dependencies from env on every call, a queue producer among them,
+    // and sends nothing on this path.
+    const env = { EVENTS: { send: async () => undefined, name: "events" } };
+    let name: unknown;
+    const verdict = await explore(
+      spec(),
+      platformFor(async (batch, e) => {
+        const deps = { events: (e as typeof env).EVENTS };
+        name = [deps.events.name, Object.keys(deps.events)];
+        batch.ackAll();
+      }, env),
+      { seed: 1, now: () => 0 },
+    );
+    expect(verdict.kind).toBe("BOUNDED");
+    expect(name).toEqual(["events", ["send", "name"]]);
   });
 
   test("the Vitest plugin's own bindings are hidden from env, so a handler that walks env never meets them", async () => {
