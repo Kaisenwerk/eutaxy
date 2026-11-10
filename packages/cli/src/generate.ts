@@ -21,6 +21,8 @@ export interface GeneratedCheck {
   readonly exhaustive?: boolean;
   /** Import specifier of the scenario from the generated test (e.g. "../scenario.sim.ts"). */
   readonly scenarioImport: string;
+  /** Import specifier of the Worker's entry when it lies outside the scenario's directory, where the test's glob does not reach. */
+  readonly workerImport?: string;
   /** The callees the scenario names: each one's binding, Worker name and the import specifier of its module. */
   readonly callees?: readonly {
     readonly binding: string;
@@ -55,6 +57,11 @@ export function checkTestSource(g: GeneratedCheck): string {
   const sqlImportLines = sqlImports.map(
     (f, i) => `import sql_${i} from ${JSON.stringify(`${f.importPath}?raw`)};\n`,
   );
+  const workerImportLine =
+    g.workerImport === undefined
+      ? ""
+      : `import * as workerModule from ${JSON.stringify(g.workerImport)};\n`;
+  const workerOption = g.workerImport === undefined ? "" : ", worker: workerModule";
   const calleesOption =
     callees.length === 0
       ? ""
@@ -78,13 +85,13 @@ import { env } from "cloudflare:workers";
 import * as durableObjects from "cloudflare:test";
 import { test } from "vitest";
 import scenario from ${JSON.stringify(g.scenarioImport)};
-${calleeImports.join("")}${sqlImportLines.join("")}import { specEntries } from "./specs.ts";
+${workerImportLine}${calleeImports.join("")}${sqlImportLines.join("")}import { specEntries } from "./specs.ts";
 
 const sqlFiles = import.meta.glob("../**/*.sql", { query: "?raw", import: "default", eager: true }) as Record<string, string>;
 const modules = import.meta.glob(["../**/*.ts", "!../**/*.test.ts", "!../**/*.sim.ts", "!../**/node_modules/**", "!../**/.eutaxy/**"]);
 
 test("eutaxy check", async ({ task }) => {
-  task.meta[${JSON.stringify(metaKey)}] = await checkInWorkerd({ scenario, env, durableObjects, sqlFiles, modules, specEntries${calleesOption}${extraSql}${aliases}, ${options} });
+  task.meta[${JSON.stringify(metaKey)}] = await checkInWorkerd({ scenario, env, durableObjects, sqlFiles, modules, specEntries${workerOption}${calleesOption}${extraSql}${aliases}, ${options} });
 });
 `;
 }

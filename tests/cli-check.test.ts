@@ -120,12 +120,14 @@ describe("eutaxy check", () => {
     expect(r.stdout).toContain("This is not a proof.");
   }, 180_000);
 
-  test("reads the wrangler config the scenario names, which need not sit beside it", () => {
-    // A copy of the payments example whose config lives in deploy/; nothing named wrangler.* sits beside
-    // the scenario. Inside the example, so the copy resolves the example's dependencies.
+  test("reads the wrangler config, the Worker's entry and the schema the scenario names, none of which need sit beside it", () => {
+    // A copy of the payments example whose config lives in deploy/ and whose scenario lives in system/,
+    // apart from the Worker and the schema it names: nothing but the scenario is in its directory.
+    // Inside the example, so the copy resolves the example's dependencies.
     const example = join(root, "examples", "payments-queue");
     const dir = join(example, `cli-test-config-${process.pid}`);
     mkdirSync(join(dir, "deploy"), { recursive: true });
+    mkdirSync(join(dir, "system"), { recursive: true });
     try {
       for (const f of ["worker.fixed.ts", "worker.ts", "schema.fixed.sql"])
         writeFileSync(join(dir, f), readFileSync(join(example, f)));
@@ -137,22 +139,29 @@ describe("eutaxy check", () => {
         join(dir, "deploy", "wrangler.jsonc"),
         JSON.stringify({ ...config, main: "../worker.fixed.ts" }),
       );
-      writeFileSync(
-        join(dir, "payments.sim.ts"),
-        readFileSync(join(example, "payments.fixed.sim.ts"), "utf8").replace(
-          '"./wrangler.jsonc"',
-          '"./deploy/wrangler.jsonc"',
-        ),
-      );
-      const r = eutaxy(["check", join(dir, "payments.sim.ts"), "--max-runs", "3", "--seed", "cli"]);
+      const scenario = readFileSync(join(example, "payments.fixed.sim.ts"), "utf8")
+        .replace('"./wrangler.jsonc"', '"../deploy/wrangler.jsonc"')
+        .replace('"./worker.fixed.ts"', '"../worker.fixed.ts"')
+        .replace('"./schema.fixed.sql"', '"../schema.fixed.sql"');
+      expect(scenario.match(/"\.\.\//g)).toHaveLength(3);
+      writeFileSync(join(dir, "system", "payments.sim.ts"), scenario);
+      const r = eutaxy([
+        "check",
+        join(dir, "system", "payments.sim.ts"),
+        "--max-runs",
+        "3",
+        "--seed",
+        "cli",
+        "--no-regression",
+      ]);
       expect(r.status, `${r.stdout}\n${r.stderr}`).toBe(0);
       expect(r.stdout).toContain("BOUNDED  payments-fixed");
       // A config the scenario names that does not exist is an error that names it.
       writeFileSync(
-        join(dir, "missing.sim.ts"),
-        readFileSync(join(dir, "payments.sim.ts"), "utf8").replace("./deploy/", "./nowhere/"),
+        join(dir, "system", "missing.sim.ts"),
+        scenario.replace("../deploy/", "../nowhere/"),
       );
-      const missing = eutaxy(["check", join(dir, "missing.sim.ts")]);
+      const missing = eutaxy(["check", join(dir, "system", "missing.sim.ts")]);
       expect(missing.status).toBe(3);
       expect(missing.stderr).toContain("the scenario's wrangler config was not found");
     } finally {

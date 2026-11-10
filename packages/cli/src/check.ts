@@ -250,12 +250,14 @@ export async function runCheck(o: CheckOptions): Promise<number> {
   mkdirSync(workDir, { recursive: true });
   try {
     const sqlImports: { key: string; importPath: string }[] = [];
-    if (callees.length > 0 && loaded) {
-      // A callee's schema outside the scenario's directory escapes the test's glob: imported by name.
+    /** Whether a path the scenario names lies outside its directory, where the test's globs do not reach. */
+    const outside = (file: string): boolean => relative(dir, resolve(dir, file)).startsWith("..");
+    if (loaded) {
+      // A schema outside the scenario's directory (a callee's, or a shared one) is imported by name.
       for (const step of loaded.setup) {
         if (step.kind !== "d1") continue;
         const file = String(step["schemaFile"]);
-        if (!relative(dir, resolve(dir, file)).startsWith("..")) continue;
+        if (!outside(file)) continue;
         sqlImports.push({
           key: globKey(file),
           importPath: toPosix(relative(workDir, resolve(dir, file))),
@@ -270,6 +272,10 @@ export async function runCheck(o: CheckOptions): Promise<number> {
         ...(o.budgetMs === undefined ? {} : { budgetMs: o.budgetMs }),
         ...(o.exhaustive ? { exhaustive: true } : {}),
         scenarioImport: `../${basename(scenarioPath)}`,
+        // So is a Worker entry outside it, as a scenario kept apart from the Workers it checks has.
+        ...(loaded && outside(loaded.worker.entry)
+          ? { workerImport: toPosix(relative(workDir, resolve(dir, loaded.worker.entry))) }
+          : {}),
         ...(callees.length === 0
           ? {}
           : {

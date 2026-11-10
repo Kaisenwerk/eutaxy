@@ -1223,7 +1223,9 @@ at the wrangler config the scenario names (or given with `--wrangler`;
 for a scenario that does not load in Node, the one beside it). The test holds only the Vite globs (they resolve at build
 time, so they must be written in it) and one call to `checkInWorkerd`, a
 typed function of the `cli` package that resolves the Worker and schema
-files from the scenario's own `worker.entry` and `setup`, observes the
+files from the scenario's own `worker.entry` and `setup` (one outside the
+scenario's directory, where the globs do not reach, the test imports by
+name), observes the
 modules the scenario's `specs` name, runs the check and checks the specs.
 The test stores what it returns in its Vitest task meta, and the CLI reads it back through Vitest's JSON
 reporter: nothing depends on console output. The CLI then prints the text

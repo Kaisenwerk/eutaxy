@@ -165,6 +165,8 @@ export interface WorkerdCheckInput {
   readonly modules: ModuleGlob;
   /** The generated `specs.ts` entries, by module key. */
   readonly specEntries: Readonly<Record<string, SpecEntry>>;
+  /** The Worker's module, imported by the generated test when its entry lies outside the scenario's directory. */
+  readonly worker?: Readonly<Record<string, unknown>>;
   /** The callees the scenario names, by binding: each one's Worker name and module exports, imported by the generated test. */
   readonly callees?: Readonly<Record<string, CalleeModule>>;
   /** SQL files outside the scenario's directory, by the key `schemasFor` looks up. */
@@ -182,9 +184,12 @@ export async function checkInWorkerd(input: WorkerdCheckInput): Promise<CheckTra
   const { scenario } = input;
   const schemas = schemasFor(scenario, { ...input.sqlFiles, ...input.extraSql });
   const load = input.modules[globKey(scenario.worker.entry)];
-  if (!load)
+  if (!input.worker && !load)
     throw new Error(`worker entry ${scenario.worker.entry} not found next to the scenario`);
-  const worker = (await load()) as { default: WorkerHandler } & Record<string, unknown>;
+  const worker = (input.worker ?? (await load?.())) as { default: WorkerHandler } & Record<
+    string,
+    unknown
+  >;
   const platform = createCloudflarePlatform({
     env: input.env,
     handler: worker.default,
