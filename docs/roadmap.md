@@ -131,7 +131,7 @@ Notes on releases along the way:
 
 Work that changes no phase's gate ships as a patch release of the current
 minor, each item when a target needs it (the performance items and the
-proof cache are v0.17's and wait for it unless a target needs one sooner):
+proof cache are v0.18's and wait for it unless a target needs one sooner):
 - A configurable number of `TESTED` draws on the command line (the API
   takes `inputs`).
 - The command loads the spec reader and the engines only where specs are
@@ -143,6 +143,12 @@ proof cache are v0.17's and wait for it unless a target needs one sooner):
   kernel), when a target checks proofs its own repository did not write;
   today a proof file is trusted as the spec file beside it is.
 - A GitHub Action over the JSON schema.
+- A setup step that gives a Worker or a callee a var or a secret by its
+  (qualified) binding name: the command carries a callee's `vars` into
+  the isolate but not its secrets, and a caller's come from the process
+  environment, outside the scenario.
+- A Worker's console output during a check, shown on request, to read
+  why a callee refused a call without running the generated test by hand.
 - The documentation site at eutaxy.dev (`site/`, VitePress, deployed to
   GitHub Pages by the `pages` workflow) is kept current with every change,
   outside the phases because it changes no behaviour; `docs/design.md` and
@@ -158,12 +164,54 @@ proof cache are v0.17's and wait for it unless a target needs one sooner):
 - Left over from earlier phases: concurrent delivery on the AWS platform
   (it still delivers one event at a time); latency on scripted externals;
   Workflow rollback handlers. Dynamic partial-order reduction and one
-  random stream per invocation are v0.17's.
+  random stream per invocation are v0.18's.
 
 ## After v0.16
 
 Each phase's text is made exact, gate included, when it starts. v0.17
-starts on a measurement; v0.18 needs it before it.
+comes first because an adopter's flow waits on it and because a verdict
+was wrong without it; v0.18 holds the measurement it starts on; v0.19
+needs both before it.
+
+### v0.17 — Inside the object
+
+A Durable Object is handed the Worker's real `env`, so what it calls
+through its own bindings happens outside the simulation: not recorded,
+not faulted, and a service binding the scenario scripts is, inside the
+object, the placeholder nothing was meant to call. An adopter's Agent
+called a scripted model service from the work it does after its answer;
+every call failed inside the object, the Worker's own retries absorbed
+the failures, and the check was `BOUNDED` because no invariant read the
+outcome. The patch before the phase makes that run `UNSUPPORTED` (a call
+on a service binding through `this.env` is refused with the reason); the
+phase makes it right:
+- **An object's own binding calls are effects.** A call an object makes
+  through a service binding is answered as the Worker's own is, from the
+  scenario's script or by the callee hosted inside the call, as an
+  effect of the object's invocation (the call it is serving, or
+  `DO:<binding>/<object>/after` once it has answered), with a stub
+  call's faults. That includes the cycle: a callee's object calling back
+  into the caller's Worker, whose handler runs as an invocation of its
+  own and can send the event a Workflow of the caller waits for. The
+  object's calls on the other proxied bindings (D1, R2) are recorded and
+  faulted the same way, since a crash between an object's write outside
+  and its write to its own storage is where its bugs live.
+- **Calls between Durable Objects.** One object calling another through
+  its own `env` becomes an effect hosting the second object's turn, with
+  the faults a stub call has, in place of the run ending `UNSUPPORTED`.
+- **A scripted Durable Object.** A namespace whose objects answer their
+  methods from the scenario, as `service()` answers a Worker, each call
+  an effect: for an object the isolate cannot run (one backed by a
+  container) or one the scenario does not want to explore.
+
+Gate: an Agent whose work after its answer calls a scripted service and
+a callee, a callee's object that calls back into the caller's Worker and
+wakes its Workflow's wait, an object calling a second real object and a
+scripted one, each ending in a verdict under every fault placement with
+no `UNSUPPORTED`; a planted bug in each is caught (a write outside the
+object that a crash separates from the object's own); a differential
+entry for each where the local runtime implements it; and every example
+and earlier gate stays green.
 
 ### Candidates: the larger gaps in the model
 
@@ -171,9 +219,6 @@ The `UNSUPPORTED` reasons that need model work of their own, most useful
 first. Each waits until a target's code reaches it rather than being
 built for coverage, and each becomes a phase, or joins one, with a gate
 when it does:
-- **Calls between Durable Objects.** One object calling another through
-  its own `env` ends the run today; the call becomes an effect hosting
-  the second object's turn, with the faults a stub call has.
 - **Workers KV.** The most used binding the simulation does not proxy.
   KV is eventually consistent, so the model explores reads that see an
   older value within the documented propagation window, which is where
@@ -194,9 +239,9 @@ Some reasons stay by design: the replay and leak checks (`not_replayable`,
 cannot see (a promise nothing settles, real I/O past the budget, a raw TCP
 socket) is reported rather than guessed. The leak check could fire less
 often with fresh module state per run, at a cost in speed that is
-v0.17's to weigh.
+v0.18's to weigh.
 
-### v0.17 — Runs that scale
+### v0.18 — Runs that scale
 
 The time a check and a report take, as scenarios and spec modules grow:
 the engines' modules in parallel, the proof cache keyed by source, spec
@@ -209,6 +254,19 @@ adopter's suite, that its gate must bring down, recorded with the phase.
 The performance items taken on inspection during 0.15.x showed no gain
 when measured, so none is taken that way again. The gate states a ceiling
 on the corpora's check and report time on the CI runner and holds it.
+
+Where the runs are spent belongs here with how long they take. An
+adopter planted a bug that needs a timeout on all three attempts of one
+Workflow step and then one order of the late calls: three chosen fault
+points among some 180 in a run. Sampling with up to three faults a run
+stayed `BOUNDED` over 297 runs and 120 s, while a schedule pinned by hand
+found it in two seeds of twelve. So the phase also covers saying where
+faults go (every attempt of a named step, or only the points a selector
+matches), so the runs explore orders, and pinned schedules a scenario
+carries and `eutaxy check` replays, addressed by what stays put when a
+fault is placed before them (a step's name and attempt; a binding, its
+method and the call's number) where today's address is an invocation and
+an ordinal.
 
 The measurement, taken on `main` at e9de29b (2026-11-09) once v0.16
 closed: `pnpm check` on the CI runner (`ubuntu-latest`, 4 vCPUs) over its
@@ -256,15 +314,15 @@ when the phase starts; the CI runner's suite spread, 206 s to 274 s on
 one day with no code change between two of the runs, is the noise any
 ceiling has to sit above.
 
-### v0.18 — The model proven
+### v0.19 — The model proven
 
 The first step of the long-term direction: the platform model of queues,
 Durable Objects, D1 and alarms in Lean, validated against the executable
 model as the engine's translation is validated today, so a scenario
 invariant on the shell can be `PROVEN` against the model, not only
-`BOUNDED` by exploration. It waits for v0.17 because it needs the runs
-fast enough to validate against, on the semantics v0.16 settled, and it
-opens by giving the two prover engines the one spine they were written
+`BOUNDED` by exploration. It waits for v0.18 because it needs the runs
+fast enough to validate against, on the semantics v0.16 and v0.17
+settled, and it opens by giving the two prover engines the one spine they were written
 beside, with the subset reader split along its seams and its circular
 import gone, so the model's translation has one place to live.
 
