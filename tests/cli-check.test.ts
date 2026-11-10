@@ -31,12 +31,16 @@ describe("eutaxy check", () => {
         });
         child.on("close", (status) => done({ status, stdout }));
       });
+    // Vite's cache is among what a check must not leave in the scenario's directory.
+    const viteCache = join(root, "corpus/planted-bugs/queue-duplicate-write/node_modules/.vite");
+    rmSync(viteCache, { recursive: true, force: true });
     const [a, b] = await Promise.all([run("twin-a"), run("twin-b")]);
     for (const r of [a, b]) {
       expect(r.status, r.stdout).toBe(1);
       expect((JSON.parse(r.stdout) as { verdict: { kind: string } }).verdict.kind).toBe("VIOLATED");
     }
     expect(existsSync(join(root, "corpus/planted-bugs/queue-duplicate-write/.eutaxy"))).toBe(false);
+    expect(existsSync(viteCache)).toBe(false);
   }, 240_000);
 
   test("a scenario with a callee: the command adds the callee's isolate, runs both Workers and writes a regression test naming the callee", () => {

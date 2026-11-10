@@ -7,6 +7,7 @@
  * module and adds their resources through miniflare options (`callees.ts`).
  */
 
+import { dirname, join } from "node:path";
 import { neverCalled } from "./callees.ts";
 
 /** Key under which the generated test stores its result in the Vitest task meta, read back from the JSON reporter. */
@@ -126,6 +127,9 @@ import { cloudflareTest } from "@cloudflare/vitest-plugin";
 import { defineConfig } from "vitest/config";
 
 ${helpers}export default defineConfig({
+  // Vite's cache, kept with the generated files so it goes when they do (its default is the
+  // project's node_modules/.vite, which a check would leave behind in the scenario's directory).
+  cacheDir: ${JSON.stringify(join(dirname(testPath), ".vite"))},
   plugins: [${plugin}],
   test: {
     include: [${JSON.stringify(testPath)}],

@@ -38,6 +38,8 @@ describe("generated check test", () => {
     );
     expect(src).toContain('cloudflareTest({ wrangler: { configPath: "/p/wrangler.jsonc" } })');
     expect(src).toContain('include: ["/p/.eutaxy/x.check.test.ts"]');
+    // Vite's cache goes with the generated files, not into the project's node_modules.
+    expect(src).toContain('cacheDir: "/p/.eutaxy/.vite"');
     expect(src).toContain('reporters: ["json"]');
     expect(src).toContain('outputFile: "/p/.eutaxy/r.json"');
   });
