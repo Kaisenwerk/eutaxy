@@ -1,0 +1,8 @@
+{
+  "expect": {
+    "verdict": "VIOLATED",
+    "invariant": "charged-once"
+  },
+  "fault": "anything that keeps the object from recording a charge billing made: the object reset right after the call (crash_after on the charge), or the call's answer lost (ambiguous); the run is still queued, so the watchdog alarm charges it again",
+  "description": "An object answers a call and bills the run in work it does not wait for, calling the billing Worker through its own service binding and recording the charge after. A charge made and not recorded is made a second time when the object's watchdog alarm settles what is still queued."
+}

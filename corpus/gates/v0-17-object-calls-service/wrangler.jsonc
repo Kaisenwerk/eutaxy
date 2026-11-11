@@ -1,0 +1,13 @@
+{
+  "name": "gate-v0-17-object-calls-service",
+  "main": "worker.ts",
+  "compatibility_date": "2026-10-01",
+  "durable_objects": { "bindings": [{ "name": "JOBS", "class_name": "Jobs" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Jobs"] }],
+  // Both Workers are scripted by the scenario and never called; the bindings name this Worker so that
+  // workerd starts without them.
+  "services": [
+    { "binding": "MODEL", "service": "gate-v0-17-object-calls-service" },
+    { "binding": "BILLING", "service": "gate-v0-17-object-calls-service" }
+  ]
+}

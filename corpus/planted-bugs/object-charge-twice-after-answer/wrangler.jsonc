@@ -1,0 +1,15 @@
+{
+  "name": "planted-object-charge-twice-after-answer",
+  "main": "worker.ts",
+  "compatibility_date": "2026-10-01",
+  "durable_objects": {
+    "bindings": [
+      { "name": "RUNNER", "class_name": "Runner" },
+      { "name": "SAFE_RUNNER", "class_name": "FixedRunner" }
+    ]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Runner", "FixedRunner"] }],
+  // The billing Worker is scripted by the scenario and never called; the binding names this Worker so
+  // that workerd starts without a second one.
+  "services": [{ "binding": "BILLING", "service": "planted-object-charge-twice-after-answer" }]
+}
