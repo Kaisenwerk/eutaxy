@@ -1490,6 +1490,10 @@ export class Run implements RunHooks {
     return abandoned;
   }
 
+  timersPending(invocation: string): boolean {
+    return this.patched?.clock.nextDueOwned((owner) => owner === invocation, false) !== undefined;
+  }
+
   /** Whether the invocation of this id has crashed; one never started has not. */
   hasCrashed(id: string | null): boolean {
     return id !== null && (this.invocations.get(id)?.isCrashed() ?? false);

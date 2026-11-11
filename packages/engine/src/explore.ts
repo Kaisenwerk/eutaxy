@@ -180,7 +180,10 @@ function explorationAssumption(options: ExploreOptions): readonly string[] {
 /** Deliver events one at a time, each to completion; time passes until a delayed one is due. */
 async function deliverInOrder(spec: ScenarioSpec, platform: Platform, run: Run): Promise<void> {
   const pending: EventRef[] = [...platform.initialEvents(spec)];
-  while (pending.length > 0) {
+  for (;;) {
+    // Every event delivered and nothing left to move: the platform's own closing events, if any.
+    if (pending.length === 0) pending.push(...(platform.closingEvents?.(spec) ?? []));
+    if (pending.length === 0) return;
     const [event] = pending.splice(earliestEvent(pending), 1) as [EventRef];
     if (event.at !== undefined) await run.advanceTo(event.at);
     const result = await platform.deliver(event, run, spec);
@@ -222,7 +225,12 @@ async function deliverConcurrently(
     active = active.filter((d) => !d.outcome);
     pending.push(...run.takeQueued());
     if (pending.length > queuedBefore) run.queuedEvents();
-    if (active.length === 0 && pending.length === 0 && !run.hasAfterWork()) return;
+    if (active.length === 0 && pending.length === 0 && !run.hasAfterWork()) {
+      // Every event delivered and nothing left to move: the platform's own closing events, if any.
+      pending.push(...(platform.closingEvents?.(spec) ?? []));
+      if (pending.length === 0) return;
+      run.queuedEvents();
+    }
     const next = pending.length > 0 ? earliestEvent(pending) : -1;
     const eventAt = pending[next]?.at ?? 0;
     const due = next >= 0 && eventAt <= run.now();

@@ -119,6 +119,12 @@ export interface RunHooks {
    */
   running(): string;
   /**
+   * Whether the invocation has set a virtual timer that has not fired or
+   * been cleared: work it left running, for a platform that must know
+   * before it treats the invocation's work as done.
+   */
+  timersPending(invocation: string): boolean;
+  /**
    * Run `code` as `host`'s own (see `EffectOptions.host`), where the runtime
    * does not carry async context into it: an object's method about to be
    * called, its alarm or WebSocket handler. `op` names the call the code is
@@ -205,6 +211,15 @@ export interface Platform {
   deliver(event: EventRef, hooks: RunHooks, spec: ScenarioSpec): Promise<DeliveryResult>;
   /** The same scenario driven only by the events with these ids (for shrinking and regression tests). */
   restrictEvents(spec: ScenarioSpec, keepIds: readonly string[]): ScenarioSpec;
+  /**
+   * Events of the platform's own that the end of the run calls for. Asked
+   * each time every event has been delivered and nothing is left to move;
+   * what it answers is delivered like any other event, and it is asked
+   * again until it answers none. (A stateful resource a crash reset and
+   * nothing entered since is woken here, inside the run, so the end-of-run
+   * snapshot reads it as its next event would find it.)
+   */
+  closingEvents?(spec: ScenarioSpec): readonly EventRef[];
   /** Called once all events are delivered; the place to record end-of-run state snapshots. */
   finish?(spec: ScenarioSpec, hooks: RunHooks): Promise<void>;
   /** Called when a run ends for any reason, after `finish` or after a failure: undo any per-run patching. */

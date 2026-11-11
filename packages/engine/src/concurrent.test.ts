@@ -920,6 +920,59 @@ describe("a delivery the platform is still ending after its invocation crashed",
   });
 });
 
+describe("a platform's closing events", () => {
+  test.each([1, 2])(
+    "are asked for when nothing is left to move, delivered like any other, and asked for again until there are none (%i in flight)",
+    async (concurrent) => {
+      const spec: ScenarioSpec = {
+        ...raceSpec(concurrent),
+        name: "fake-closing",
+        drive: { kind: "queue", queue: "q", messages: [{ id: "m1", body: null }] },
+        invariants: [],
+      };
+      const asked: number[] = [];
+      let delivered = 0;
+      const platform: Platform = {
+        name: "fake",
+        assumptions: [],
+        concurrent: true,
+        async reset() {},
+        async finish() {},
+        restrictEvents: (s) => s,
+        initialEvents: () => [{ id: "m1", attempt: 1, data: null }],
+        // Two rounds of closing events, then none: the second only once the first was delivered.
+        closingEvents() {
+          asked.push(delivered);
+          return asked.length <= 2
+            ? [{ id: `closing-${asked.length}`, attempt: 1, data: null }]
+            : [];
+        },
+        async deliver(event, hooks) {
+          const invocation = `${event.id}#${event.attempt}`;
+          hooks.startInvocation(invocation);
+          await hooks.effect(
+            { invocation, target: "DO:X", op: "work", args: null, allowed: [] },
+            async () => 1,
+            () => null,
+          );
+          delivered++;
+          return { status: "completed", followUps: [] };
+        },
+      };
+      const run = new Run({ bounds: spec.bounds, chooser: replayChooser({ seed: 1, faults: [] }) });
+      await runOnce(spec, platform, run);
+      expect(run.log.entries.filter((e) => e.kind === "call").map((e) => e.invocation)).toEqual([
+        "m1#1",
+        "closing-1#1",
+        "closing-2#1",
+      ]);
+      // Asked after the drive's event, after each closing event, and a last time that answered none.
+      expect(asked).toEqual([1, 2, 3]);
+      expect(run.unsupportedReasons).toEqual([]);
+    },
+  );
+});
+
 describe("timers already due are turns", () => {
   test("the second of two timers due together fires while the first's effect is parked on some seeds, not on others, and replays", async () => {
     const platform = createFakePlatform(timerJobs, { concurrent: true });
