@@ -205,11 +205,21 @@ phase makes it right:
   container) or one the scenario does not want to explore.
 
 - **An object reset by the run's last event.** Reading such an object's
-  storage for the snapshot constructs it after the run, outside the
-  simulation, and the run is `UNSUPPORTED` rather than guessed. An
+  storage for the snapshot constructed it after the run, outside the
+  simulation, and the run was `UNSUPPORTED` rather than guessed. An
   object with a watchdog alarm meets this whenever a crash lands on the
-  alarm's own calls, so the phase's gate cannot hold without it: the
+  alarm's last retry, so the phase's gate cannot hold without it: the
   object is woken inside the run, as its next event would wake it.
+
+- **The object's env and context from its construction.** The view over
+  `env` and the object's context are in place only once the constructor
+  has returned: a constructor that calls a service binding reaches the
+  isolate's own, unseen; one that awaits a timer is never resumed; and an
+  `env` the class keeps in a private field escapes the view for good.
+  The isolate's main module wraps each Durable Object class so that its
+  constructor is given the scenario's view of `env` and runs as the
+  object's code, as the callees' classes are wrapped today for their
+  names.
 
 Gate: an Agent whose work after its answer calls a scripted service and
 a callee, a callee's object that calls back into the caller's Worker and
@@ -223,14 +233,19 @@ and earlier gate stays green.
 In place: an object's calls through its service bindings, scripted or
 with a callee hosted in the call, as effects of the invocation its code
 runs as, leaving the object once its earlier writes are durable, as
-behind the output gate (`docs/design.md`, Durable Objects). The gate
-entry `v0-17-object-calls-service` holds for scripted bindings under
-every fault placement but the last-event reset above, and the planted
-bug `object-charge-twice-after-answer` (a charge made in work after the
+behind the output gate; and the wake of an object a crash reset and
+nothing entered since, inside the run, before the snapshot
+(`docs/design.md`, Durable Objects). The gate entry
+`v0-17-object-calls-service` is `BOUNDED` with nothing unsupported under
+every fault placement for scripted bindings, the v0.16 step-timeout gate
+no longer excepts any cell, and the planted bug
+`object-charge-twice-after-answer` (a charge made in work after the
 answer and recorded after it) is caught. Still to come, in this order:
-the last-event reset; the gate with a real callee and the cycle back
-into the caller's Worker, with its differential entry; the object's D1
-and R2 calls as effects; calls between objects; the scripted object.
+the object's env and context from its construction, which is a matter of
+what a verdict may be trusted for and so comes first; the gate with a
+real callee and the cycle back into the caller's Worker, with its
+differential entry; the object's D1 and R2 calls as effects;
+calls between objects; the scripted object.
 
 ### Candidates: the larger gaps in the model
 
