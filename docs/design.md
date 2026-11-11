@@ -810,7 +810,15 @@ shares the reading of the limit and none of the proxy code.
   turns (the input gate holds them, so this is the runtime's behaviour);
   the object's calls on its other bindings (D1, R2) are not recorded; an
   `env` its class keeps elsewhere than `this.env` (a private field, a
-  closure of its constructor) is not reached; an object reached
+  closure of its constructor) is not reached; and what a constructor
+  itself does is the runtime's to run, on the first call of a run as in
+  a wake: the view over `env` and the object's context are in place once
+  the constructor has returned, so a call it makes through a service
+  binding reaches whatever the isolate holds, unseen, and a timer it
+  awaits before returning is nobody's to fire (the entry does not
+  complete). A constructor that creates its tables and reads its storage,
+  under `blockConcurrencyWhile` or not, the usual kind, is unaffected; an
+  object reached
   only through another object's binding makes the run `UNSUPPORTED`, as do
   `jurisdiction()` namespaces (and a unique id asked for one) and a
   namespace the scenario does not reset (no `durableObject` setup).
@@ -821,12 +829,22 @@ shares the reading of the limit and none of the proxy code.
   name on `id.name`, where the runtime has none. An object no call
   reached is snapshotted from its seed without being constructed. Reset
   constructs each object outside the simulation, with the network blocked:
-  a constructor that makes a request fails the reset; an object reset by
-  the run's last event into it (a crash inside a call nothing follows)
-  would be constructed outside the simulation for the snapshot too, which
-  makes the run `UNSUPPORTED` rather than guessed (a later call into the
-  object, as a flow that reads back what it did makes, keeps the run
-  decidable). A call still in flight when its caller's invocation crashes
+  a constructor that makes a request fails the reset. An object a crash
+  reset and nothing entered since (a crash inside a call nothing follows,
+  or on a watchdog alarm's last retry) is woken inside the run when
+  nothing else is left to move: one effect of an invocation of its own,
+  `wake:<binding>:<object>:<n>` (`DO:<binding>` `wake`, no faults of its
+  own), constructs the instance as the object's next event would, its
+  constructor's effects hosted and its clock and requests the run's, so
+  the snapshot reads what a next reader would find and not an object
+  built after the run with the real ones (the platform's closing events,
+  `Platform.closingEvents`, asked until there are none). A timer the
+  woken constructor leaves running is not followed, since the runtime
+  carries no context of the wake into the constructor, and makes the run
+  `UNSUPPORTED` (`RunHooks.timersPending`). An instance the
+  object dropped by itself, which the model did not see go, is still
+  reported: the snapshot would construct it outside the simulation, and
+  the run is `UNSUPPORTED` rather than guessed. A call still in flight when its caller's invocation crashes
   elsewhere (a fault in a Workflow step's retry while the late attempt's
   call runs; the object is a separate isolate, so the runtime's call goes
   on) is handed to the object: what its code still does is the object's

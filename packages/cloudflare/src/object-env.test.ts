@@ -26,6 +26,9 @@ const realPeer = () => ({
   },
 });
 
+/** When set, every Runner's constructor sets a timer it does not wait for. */
+let constructorTimer = false;
+
 /** An object that asks a model service, inside a call and in work after its answer. */
 class Runner {
   readonly ctx: { storage: FakeStorage };
@@ -33,6 +36,8 @@ class Runner {
   constructor(storage: FakeStorage, env: object) {
     this.ctx = { storage };
     this.env = env as Runner["env"];
+    // Like an object that starts work as soon as it is constructed and does not wait for it.
+    if (constructorTimer) setTimeout(() => void storage.put("constructed-late", true), 10);
   }
   /** Asks inside the call and answers with what the model said. */
   async ask(question: string) {
@@ -130,10 +135,15 @@ function fakeNamespace(envOf: () => object) {
   const helpers = {
     runInDurableObject: async (
       stub: { id: { toString(): string } },
-      callback: (instance: unknown, state: { storage: FakeStorage }) => unknown,
+      callback: (instance: unknown, state: { storage: FakeStorage; abort: () => void }) => unknown,
     ) => {
-      const instance = instanceOf(stub.id.toString());
-      return callback(instance, { storage: instance.ctx.storage });
+      const hex = stub.id.toString();
+      const instance = instanceOf(hex);
+      // `abort()` resets the object as the runtime does: the instance goes, its storage stays.
+      return callback(instance, {
+        storage: instance.ctx.storage,
+        abort: () => void instances.delete(hex),
+      });
     },
     evictDurableObject: async (stub: { id: { toString(): string } }) => {
       if (!instances.delete(stub.id.toString())) throw new Error("not running");
@@ -172,6 +182,8 @@ async function runOf(
     setup?: ScenarioSpec["setup"];
     /** The binding names, when the object is a callee's: `<name>/RUNNER`, `<name>/MODEL`. */
     callee?: string;
+    /** More than one request, in order; `path` is the first when this is not given. */
+    requests?: readonly string[];
     /** Callee modules given to the platform, by binding. */
     callees?: Record<string, { name: string; exports: Record<string, unknown> }>;
   } = {},
@@ -198,7 +210,10 @@ async function runOf(
     version: 1,
     name: "runner",
     worker: { entry: "./w.ts", config: "./wrangler.jsonc" },
-    drive: http([{ path, method: "POST" }], { retries: 0 }),
+    drive: http(
+      (options.requests ?? [path]).map((p) => ({ path: p, method: "POST" })),
+      { retries: 0 },
+    ),
     setup: options.setup ?? [
       durableObject(q("RUNNER"), { r: {} }),
       { ...scripted, binding: q("MODEL") },
@@ -376,6 +391,75 @@ describe("an object's call through its own service binding", () => {
     // "why" is three letters, and the callee's own scripted service gave 4.
     expect(storage?.get("status")).toBe("done in 7");
     expect(reachedTheRealPeer).toBe(0);
+  });
+
+  test("an object a crash reset in the run's last event is woken inside the run, and the snapshot reads what it kept", async () => {
+    // The crash lands on the object's last call, after its answer: nothing enters the object again,
+    // so only the snapshot would construct it, outside the simulation.
+    const { log, run, storage } = await runOf("/start", {
+      faults: [
+        {
+          invocation: "DO:RUNNER/r/after",
+          ordinal: 0,
+          fault: "crash_after",
+          target: "Service:MODEL",
+          op: "complete",
+        },
+      ],
+    });
+    expect(run.unsupportedReasons).toEqual([]);
+    expect(lines(log).slice(4)).toEqual([
+      "DO:RUNNER/r/after call Service:MODEL complete",
+      "DO:RUNNER/r/after result Service:MODEL complete",
+      "DO:RUNNER/r/after fault Service:MODEL complete",
+      "wake:RUNNER:r:1#1 call DO:RUNNER wake",
+      "wake:RUNNER:r:1#1 result DO:RUNNER wake",
+      "platform snapshot DO:RUNNER snapshot",
+    ]);
+    // The work died with the instance before it recorded anything.
+    expect(storage?.get("status")).toBeUndefined();
+  });
+
+  test("a timer the woken object's constructor sets is the object's own work where the context reaches it: it runs before the snapshot", async () => {
+    // Node carries the async context into the constructor, so its timer is the object's work after
+    // the wake. workerd does not, and there the run is UNSUPPORTED (the command's tests show it).
+    constructorTimer = true;
+    try {
+      const { log, run, storage } = await runOf("/start", {
+        faults: [
+          {
+            invocation: "DO:RUNNER/r/after",
+            ordinal: 0,
+            fault: "crash_after",
+            target: "Service:MODEL",
+            op: "complete",
+          },
+        ],
+      });
+      expect(lines(log)).toContain("wake:RUNNER:r:1#1 result DO:RUNNER wake");
+      expect(storage?.get("constructed-late")).toBe(true);
+      expect(run.unsupportedReasons).toEqual([]);
+    } finally {
+      constructorTimer = false;
+    }
+  });
+
+  test("an object reset and entered again by a later event is not woken: that event constructed it", async () => {
+    const { log, run } = await runOf("/ask", {
+      faults: [
+        {
+          invocation: "req-1#1",
+          ordinal: 1,
+          fault: "crash_before",
+          target: "Service:MODEL",
+          op: "complete",
+        },
+      ],
+      requests: ["/ask", "/idle"],
+    });
+    expect(run.unsupportedReasons).toEqual([]);
+    expect(lines(log).filter((l) => l.includes(" wake"))).toEqual([]);
+    expect(lines(log)).toContain("req-2#1 result DO:RUNNER idle");
   });
 
   test("a callee's object reads its bindings under the callee's name: PEER there is <callee>/PEER in the scenario", async () => {

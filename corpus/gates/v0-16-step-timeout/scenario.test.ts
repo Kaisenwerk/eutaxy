@@ -62,19 +62,14 @@ describe.each([1, 2] as const)("with %i invocation(s) in flight", (concurrency) 
     [180_000, 1],
     [180_000, 2],
   ])(
-    "a start napping %i ms, up to %i fault(s): BOUNDED, or the object reset by the run's last event",
+    "a start napping %i ms, up to %i fault(s): BOUNDED, nothing unsupported",
     async (napMs, faults) => {
+      // A late start's fetch, taken after the flow's confirming read, can take a crash fault: the object
+      // is reset by the run's last event, and woken inside the run for the snapshot.
       const verdict = await check(turn(napMs, concurrency, faults), platform(), {
         seed: "gate",
         budgetMs: 30_000,
       });
-      if (napMs > 0 && faults > 0 && verdict.kind === "UNSUPPORTED") {
-        // A late start's fetch, taken after the flow's confirming read, can take a crash fault: the
-        // object is reset by the run's last event and would be constructed outside the simulation for
-        // the snapshot, which the model reports rather than guesses (docs/design.md, Durable Objects).
-        expect(verdict.reason).toContain("reconstructed for the snapshot");
-        return;
-      }
       expect(verdict.kind, renderText(verdict)).toBe("BOUNDED");
     },
   );

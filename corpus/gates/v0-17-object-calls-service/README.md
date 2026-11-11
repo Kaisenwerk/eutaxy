@@ -15,16 +15,15 @@ an object's calls through its own service bindings are the scenario's.
   answer. The call leaves the object once its earlier writes are durable,
   as behind the output gate.
 - **The cells**: one and two invocations in flight, up to two faults,
-  each ending in a verdict; every schedule with one fault, exhaustively.
-  With faults, a crash on a call the watchdog alarm makes resets the
-  object in the run's last event, which the model reports as
-  `UNSUPPORTED` (the object would be constructed outside the simulation
-  for the snapshot); those cells accept that reason and no other.
+  each `BOUNDED` with nothing unsupported; every schedule with one fault,
+  exhaustively.
 - **The replays**: where the object's calls are recorded; the same seed
   giving the same run, and two in flight interleaving the object's calls
   by the seed; an answer lost on the charge, a crash right after it (the
   claim written before the call is kept, so the watchdog bills nothing)
-  and a call that never left.
+  and a call that never left; and the watchdog alarm failing on its last
+  retry, which resets the object in the run's last event: it is woken
+  inside the run, and the snapshot reads what it kept.
 
 The invariants: no run is billed twice, and a run recorded as charged
 carries its charge and the plan it was billed for.

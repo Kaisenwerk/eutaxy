@@ -7,7 +7,15 @@
  * the instance, whose in-memory state goes with it.
  */
 
-import type { EffectPoint, Invocation, JsonValue, RunHooks } from "@eutaxy/core";
+import {
+  type DeliveryResult,
+  type EffectPoint,
+  type EventRef,
+  type Invocation,
+  invocationOf,
+  type JsonValue,
+  type RunHooks,
+} from "@eutaxy/core";
 import { type Outcome, runInvocation } from "@eutaxy/engine";
 import { isServiceBinding } from "./services.ts";
 
@@ -196,6 +204,75 @@ function behindGate(
       return then;
     },
   });
+}
+
+/** `EventRef.source` of an object's wake at the end of a run. */
+export const wakeSource = "durable_object_wake";
+
+/**
+ * The event that wakes the object `id` of `binding`, the `n`-th of the run:
+ * its instance was dropped by a crash and nothing has entered it since.
+ */
+export function wakeEvent(binding: string, id: string, object: string, n: number): EventRef {
+  return {
+    id: `wake:${binding}:${object}:${n}`,
+    attempt: 1,
+    source: wakeSource,
+    data: { binding, id, object },
+  };
+}
+
+/**
+ * Wake an object the run's crashes left dropped, as its next event would:
+ * the runtime constructs a new instance over the storage the old one left.
+ * Without it only the end-of-run snapshot would construct the object, after
+ * the run, where its constructor's requests, timers and clock are the real
+ * ones. Here the constructor runs as the object's code inside one effect of
+ * an invocation of its own, which hosts whatever effects it makes; the wake
+ * itself takes no fault (it is the model's reading of the object, not an
+ * event of the platform's), a fault on an effect the constructor makes
+ * resets the object as anywhere else, and it is then woken again. A timer
+ * the constructor leaves running is not followed (its code runs with no
+ * context of the wake's), so the run is `UNSUPPORTED` rather than
+ * snapshotted without what that work would have done.
+ */
+export async function deliverWake(
+  event: EventRef,
+  hooks: RunHooks,
+  objects: ObjectAccess,
+): Promise<DeliveryResult> {
+  const { binding, id, object } = event.data as { binding: string; id: string; object: string };
+  const invocation = invocationOf(event);
+  const inv = hooks.startInvocation(invocation);
+  let leftTimer = false;
+  const status = await hostedInObject(
+    hooks,
+    inv,
+    objects,
+    binding,
+    id,
+    object,
+    { invocation, target: `DO:${binding}`, op: "wake", args: { object }, allowed: [] },
+    async () => {
+      // Entered as the object's code, so that where the runtime carries the context a timer the
+      // constructor sets is the object's own work, waited for like any work after an answer.
+      await hooks.hostedCode(hostOf(`DO:${binding}`, object), () =>
+        objects.run(binding, id, object, async () => undefined),
+      );
+      // Where it does not (workerd), such a timer is this invocation's, whose end drops it:
+      // looked for while the invocation is alive.
+      leftTimer = hooks.timersPending(invocation);
+      return null;
+    },
+    () => null,
+  );
+  // The runtime carries no context of the wake into the constructor, so a timer it set is this
+  // invocation's, which is over: nothing would fire it, and the snapshot would miss what it does.
+  if (status === "completed" && leftTimer)
+    hooks.unsupported(
+      `Durable Object ${binding} ${object} was woken at the end of the run and its constructor left a timer running; work a constructor starts and does not await is not followed there`,
+    );
+  return { status, followUps: [] };
 }
 
 /** What a delivery into an object needs of its namespace: to run code inside one, and the crash semantics. */

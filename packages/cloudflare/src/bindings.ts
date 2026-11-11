@@ -29,7 +29,7 @@ import {
   runInObject,
   snapshotNamespace,
 } from "./durable-objects.ts";
-import type { ObjectAccess } from "./object-access.ts";
+import { deliverWake, type ObjectAccess, wakeEvent, wakeSource } from "./object-access.ts";
 import type { ProxyContext } from "./proxy-context.ts";
 import { isR2, proxyR2, resetR2, snapshotR2, VersionBook } from "./r2.ts";
 import {
@@ -94,8 +94,12 @@ export interface Binding<Real = unknown, Setup extends BindingSetup = BindingSet
   ): Promise<Tables | null>;
   /** `EventRef.source` of the events this binding emits, when it has any. */
   readonly source?: string;
+  /** A second source of events it delivers, when it has one. */
+  readonly closingSource?: string;
   /** Deliver one of its events. */
   deliver?(event: EventRef, hooks: RunHooks, spec: ScenarioSpec): Promise<DeliveryResult>;
+  /** Its events the end of the run calls for (see `Platform.closingEvents`), each handed out once. */
+  closing?(): readonly EventRef[];
 }
 
 /** A D1 database: Miniflare's SQLite, reset to the scenario's schema and read back whole. */
@@ -216,8 +220,14 @@ export function durableObjectBinding(
       runInObject(namespace(binding), binding, ctx, helpers, stateFor(binding), id, object, fn),
     abort: (binding, id) => stateFor(binding).abort(id),
     mayPark: (binding, id) => stateFor(binding).mayPark(id),
-    evict: (binding, id) => evictObject(namespace(binding), helpers, id),
+    evict: (binding, id) => {
+      // The instance a crash left is dropped: woken at the end of the run unless something enters it.
+      stateFor(binding).dropped.add(id);
+      return evictObject(namespace(binding), helpers, id);
+    },
   };
+  /** Wakes handed out this run, to name each one. */
+  let wakes = 0;
   return {
     objects,
     kind: "durable_object",
@@ -234,6 +244,7 @@ export function durableObjectBinding(
     clear() {
       setUp = new Set();
       alarmLimits = new Map();
+      wakes = 0;
       for (const state of states.values()) state.clear();
     },
     async reset(step, real) {
@@ -266,7 +277,19 @@ export function durableObjectBinding(
       );
     },
     source: alarmSource,
+    closingSource: wakeSource,
+    closing() {
+      const events: EventRef[] = [];
+      for (const [binding, state] of states) {
+        for (const id of [...state.dropped].sort()) {
+          state.dropped.delete(id);
+          events.push(wakeEvent(binding, id, state.names.get(id) ?? id, ++wakes));
+        }
+      }
+      return events;
+    },
     async deliver(event, hooks, spec) {
+      if (event.source === wakeSource) return deliverWake(event, hooks, objects);
       const binding = String((event.data as { binding?: unknown }).binding ?? "");
       return deliverAlarm(event, hooks, spec.bounds.maxRedeliveries, {
         binding,

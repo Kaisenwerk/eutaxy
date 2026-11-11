@@ -52,24 +52,14 @@ const watchdogRan = (lines: readonly string[]) =>
   lines.some((l) => l.startsWith("alarm:JOBS:j:") && l.endsWith("result DO:JOBS alarm"));
 
 describe.each([1, 2] as const)("with %i invocation(s) in flight", (concurrency) => {
-  test.each([0, 1, 2])(
-    "up to %i fault(s): BOUNDED, or the object reset by the run's last event",
-    async (faults) => {
-      const verdict = await check(jobs(concurrency, faults), platform(), {
-        seed: "gate",
-        budgetMs: 30_000,
-        maxRuns: 150,
-      });
-      if (faults > 0 && verdict.kind === "UNSUPPORTED") {
-        // A crash on a call the watchdog alarm makes resets the object in the run's last event: it would
-        // be constructed outside the simulation for the snapshot, which the model reports rather than
-        // guesses (docs/design.md, Durable Objects).
-        expect(verdict.reason).toContain("reconstructed for the snapshot");
-        return;
-      }
-      expect(verdict.kind, renderText(verdict)).toBe("BOUNDED");
-    },
-  );
+  test.each([0, 1, 2])("up to %i fault(s): BOUNDED, nothing unsupported", async (faults) => {
+    const verdict = await check(jobs(concurrency, faults), platform(), {
+      seed: "gate",
+      budgetMs: 30_000,
+      maxRuns: 150,
+    });
+    expect(verdict.kind, renderText(verdict)).toBe("BOUNDED");
+  });
 });
 
 test("every schedule with one fault holds, exhaustively", async () => {
@@ -117,6 +107,35 @@ describe("where the object's calls are recorded", () => {
     }
     expect(orders.size).toBeGreaterThan(1);
   });
+});
+
+test("an object a crash reset in the run's last event is woken inside the run, and the snapshot reads what it kept", async () => {
+  // The watchdog alarm fails twice, the second time with no retry left: its crash resets the object
+  // and nothing enters it again. The wake constructs it inside the run, as its next event would.
+  const first = ops(await replay(jobs(1, 2), platform(), { seed: 0, faults: [] }));
+  const alarm = first.find((l) => l.endsWith("call DO:JOBS alarm"))?.split(" ")[0] ?? "";
+  expect(alarm).toMatch(/^alarm:JOBS:j:\d+#1$/);
+  const crashed = (invocation: string) => ({
+    invocation,
+    ordinal: 0,
+    fault: "crash_after" as const,
+    target: "DO:JOBS",
+    op: "alarm",
+  });
+  const log = await replay(jobs(1, 2), platform(), {
+    seed: 0,
+    faults: [crashed(alarm), crashed(alarm.replace(/#1$/, "#2"))],
+  });
+  const lines = ops(log);
+  expect(lines.filter((l) => l.endsWith("fault DO:JOBS alarm"))).toHaveLength(2);
+  expect(lines.filter((l) => l.startsWith("wake:JOBS:j:"))).toEqual([
+    "wake:JOBS:j:1#1 call DO:JOBS wake",
+    "wake:JOBS:j:1#1 result DO:JOBS wake",
+  ]);
+  expect(runs(log)).toEqual([
+    { id: "run-1", status: "charged", steps: 2, charge_id: "ch-1" },
+    { id: "run-2", status: "charged", steps: 2, charge_id: "ch-1" },
+  ]);
 });
 
 describe("faults on the object's own calls", () => {

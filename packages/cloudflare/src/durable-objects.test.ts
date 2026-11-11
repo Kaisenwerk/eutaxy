@@ -797,9 +797,12 @@ describe("work an object does not await", () => {
     ]);
     expect(run.unsupportedReasons).toEqual([]);
     expect(response(log).result.body).toEqual({ value: "soon" });
+    // Nothing enters the object after the reset, so it is woken inside the run for the snapshot.
     expect(lines(log).slice(4)).toEqual([
       "DO:COUNTER/c/after call Fetch:api GET",
       "DO:COUNTER/c/after fault Fetch:api GET",
+      "wake:COUNTER:c:1#1 call DO:COUNTER wake",
+      "wake:COUNTER:c:1#1 result DO:COUNTER wake",
       "platform snapshot DO:COUNTER snapshot",
     ]);
     expect(storages.get("id-c")?.data.get("later")).toBeUndefined();

@@ -180,6 +180,12 @@ export class BindingState {
   readonly alarms = new AlarmBook();
   /** Each reached object's live state, so an invocation that crashes inside it can reset it. */
   readonly states = new Map<string, DurableObjectState>();
+  /**
+   * Ids of the objects whose instance a crash dropped (a reset inside the
+   * object, or its eviction after one) and nothing has entered since. One
+   * still here when the run would end is woken inside the run (`wakeEvents`).
+   */
+  readonly dropped = new Set<string>();
   /** The SQL tables the seed left in each seeded object, materialized, for the snapshot of one never reached. */
   seededSql: SeededSql = new Map();
 
@@ -193,6 +199,7 @@ export class BindingState {
     this.touched.clear();
     this.alarms.clear();
     this.states.clear();
+    this.dropped.clear();
     this.seededSql = new Map();
   }
 
@@ -205,6 +212,7 @@ export class BindingState {
   abort(id: string): void {
     const state = this.states.get(id);
     this.states.delete(id);
+    this.dropped.add(id);
     try {
       state?.abort("Eutaxy: the invocation crashed inside this object");
     } catch {
@@ -505,6 +513,8 @@ function enterObject<T>(
   fn: (instance: unknown, live: DurableObjectState) => Promise<T>,
 ): Promise<T> {
   state.touched.add(id);
+  // Whoever enters the object constructs it, inside the run: no need to wake it at the end.
+  state.dropped.delete(id);
   return typed(helpers).runInDurableObject(stub, async (instance, live) => {
     watchGate(live);
     state.states.set(id, live);

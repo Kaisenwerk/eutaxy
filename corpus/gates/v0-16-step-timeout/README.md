@@ -23,13 +23,10 @@ After the step, the flow sleeps ten minutes and confirms the turn's row on
 the object, as a real flow reads back what it did.
 
 Every cell must be `BOUNDED` with nothing unsupported: naps of 0 and 3
-minutes, one and two invocations in flight, up to one and two faults a run,
-with one exception the model states: a late start's turns hold nothing, so
-its fetch inside the object can land after the confirming read and take a
-crash fault there, and an object reset by the run's last event would be
-constructed outside the simulation for the snapshot, which the model
-reports as `UNSUPPORTED` rather than guesses (`docs/design.md`, Durable
-Objects). The napping cells with faults accept that verdict by its reason.
+minutes, one and two invocations in flight, up to one and two faults a run.
+A late start's turns hold nothing, so its fetch inside the object can land
+after the confirming read and take a crash fault there: the object is then
+reset by the run's last event, and woken inside the run for the snapshot.
 There is no differential entry: the Workflows engine is modelled, not run
 (`docs/design.md`, Workflows), so the local runtime has nothing to compare
 against. The planted bug for this feature is

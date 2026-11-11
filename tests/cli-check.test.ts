@@ -311,6 +311,75 @@ export default defineScenario({
     }
   }, 180_000);
 
+  test("an object woken at the end of a run whose constructor leaves a timer running is UNSUPPORTED, not snapshotted without that work", () => {
+    // A crash on the object's last call resets it with nothing left to enter it, so it is woken
+    // inside the run for the snapshot. Its constructor sets a timer and does not wait: workerd
+    // carries no context of the wake into the constructor, so that work would not be followed.
+    const dir = join(root, "examples", "payments-queue", `cli-test-wake-${process.pid}`);
+    mkdirSync(dir, { recursive: true });
+    try {
+      writeFileSync(
+        join(dir, "wrangler.jsonc"),
+        JSON.stringify({
+          name: "cli-test-wake",
+          main: "worker.ts",
+          compatibility_date: "2026-10-01",
+          durable_objects: { bindings: [{ name: "RUNNER", class_name: "Runner" }] },
+          migrations: [{ tag: "v1", new_sqlite_classes: ["Runner"] }],
+        }),
+      );
+      writeFileSync(
+        join(dir, "worker.ts"),
+        `import { DurableObject } from "cloudflare:workers";
+interface Env {
+  readonly RUNNER: DurableObjectNamespace<Runner>;
+}
+export class Runner extends DurableObject<Env> {
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
+    this.ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS runs (id TEXT PRIMARY KEY, status TEXT NOT NULL)");
+    // Work the constructor starts and does not wait for.
+    setTimeout(() => this.ctx.storage.sql.exec("INSERT OR IGNORE INTO runs (id, status) VALUES ('warm', 'late')"), 10);
+  }
+  async start(runId: string): Promise<{ accepted: true }> {
+    this.ctx.storage.sql.exec("INSERT OR IGNORE INTO runs (id, status) VALUES (?, 'queued')", runId);
+    const res = await fetch("https://model.example/plan", { method: "POST" });
+    this.ctx.storage.sql.exec("UPDATE runs SET status = ? WHERE id = ?", res.ok ? "done" : "failed", runId);
+    return { accepted: true };
+  }
+}
+export default {
+  async fetch(request: Request, env: Env): Promise<Response> {
+    const runId = new URL(request.url).pathname.slice(1);
+    return Response.json(await env.RUNNER.get(env.RUNNER.idFromName("r")).start(runId));
+  },
+};
+`,
+      );
+      writeFileSync(
+        join(dir, "scenario.sim.ts"),
+        `import { defineScenario, durableObject, durableObjectTable, external, http, unique } from "eutaxy/cloudflare";
+export default defineScenario({
+  name: "wake",
+  worker: { entry: "./worker.ts", config: "./wrangler.jsonc" },
+  setup: [durableObject("RUNNER", { r: {} })],
+  drive: http([{ id: "run-1", path: "/run-1", method: "POST" }], { retries: 0 }),
+  externals: [external("model", "model.example", { responses: [{ status: 200, body: {} }] })],
+  invariants: [unique("one-row-per-run", durableObjectTable("RUNNER", "r", "runs"), "id")],
+  bounds: { maxFaultsPerRun: 1, maxRedeliveries: 0, budgetMs: 2000 },
+});
+`,
+      );
+      const r = eutaxy(["check", join(dir, "scenario.sim.ts"), "--seed", "cli", "--no-regression"]);
+      expect(r.status, `${r.stdout}\n${r.stderr}`).toBe(2);
+      expect(r.stdout).toContain(
+        "Durable Object RUNNER r was woken at the end of the run and its constructor left a timer running",
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 180_000);
+
   test("fails clearly without a scenario or a wrangler config", () => {
     expect(eutaxy(["check"]).status).toBe(3);
     const bad = eutaxy([

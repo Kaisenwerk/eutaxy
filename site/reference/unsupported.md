@@ -110,6 +110,21 @@ path.
 
 ## Durable Objects and alarms
 
+**`Durable Object <object> was reset during the run and reconstructed for the snapshot; its constructor ran outside the simulation`**
+The object's instance went away during the run without Eutaxy resetting
+it (a failing `blockConcurrencyWhile`, the runtime evicting it), and
+nothing entered it again, so only the end-of-run snapshot constructed it,
+with the real clock and network. An object that a fault reset is not this
+case: it is woken inside the run. Make a later event of the scenario
+enter the object, or keep the constructor from failing.
+
+**`Durable Object <binding> <object> was woken at the end of the run and its constructor left a timer running; work a constructor starts and does not await is not followed there`**
+A fault reset the object and nothing entered it again, so it was woken
+inside the run for the snapshot, and its constructor set a timer it did
+not wait for. That work would run after the snapshot, so the run is not
+decided. Start such work from a method or an alarm, or make a later event
+of the scenario enter the object.
+
 **`Durable Object <binding> <object> was reached without a call Eutaxy saw (through another object's binding); calls between objects are not proxied yet`**
 One object called another through its own `env`. Calls between objects
 are not effects yet; drive the second object from the Worker in the

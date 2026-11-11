@@ -131,7 +131,10 @@ object's own work resets it with `ctx.abort()`.
 
 Objects are cleared, seeded from the `durableObject` setup and evicted
 before each run, so they start from storage alone, and their storage is
-snapshotted after it. In a concurrent run, an object's own outbound I/O
+snapshotted after it. An object a crash reset and nothing entered since is
+woken inside the run before the snapshot (`wake:<binding>:<object>:<n>`,
+one `wake` effect hosting whatever its constructor does), so the snapshot
+reads what its next event would find. In a concurrent run, an object's own outbound I/O
 during a call is a turn, so another call may enter the object meanwhile, as
 its open input gate allows; storage operations are not turns.
 
