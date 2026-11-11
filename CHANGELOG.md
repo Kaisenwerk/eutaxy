@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.16.1](https://github.com/Kaisenwerk/eutaxy/compare/v0.16.0...v0.16.1) (2026-11-10)
+
+
+### Bug Fixes
+
+* **cli:** a callee's own callee gets the entrypoint and props its binding carries ([1b83575](https://github.com/Kaisenwerk/eutaxy/commit/1b83575d36cfcaa5c470837c956469ba442fdd39))
+* **cli:** a check leaves no Vite cache in the scenario's directory ([8835330](https://github.com/Kaisenwerk/eutaxy/commit/88353308b4b350fe8aef1f41219088227dcaef53))
+* **cli:** a Worker entry or schema outside the scenario's directory is found ([b3b4d99](https://github.com/Kaisenwerk/eutaxy/commit/b3b4d9913a6651e061de395a4769a84d29e65844))
+* **cloudflare:** an object's call on a service binding through its own env is UNSUPPORTED ([db4bfde](https://github.com/Kaisenwerk/eutaxy/commit/db4bfde7c008e648ed28c5d0ce3dee4550ee1eee))
+* **cloudflare:** reading an unmodelled binding off env is not a reason; calling it is ([0627c73](https://github.com/Kaisenwerk/eutaxy/commit/0627c737508190bc497a9d1b889553ba13e84c86))
+* **cloudflare:** the stated Workflow assumption is what 0.16 models ([7e4be09](https://github.com/Kaisenwerk/eutaxy/commit/7e4be09d008b84374f65f81e3ed4b48cf51e5ae2))
+* **engine:** a replay difference names the value that differed ([8fc60b7](https://github.com/Kaisenwerk/eutaxy/commit/8fc60b78262daf3d6cb55fccdf29d8c0e21996b5))
+* **site:** keep the site package README out of the published pages ([0edca6d](https://github.com/Kaisenwerk/eutaxy/commit/0edca6db3adcf2e6d9fab9701a84a026b30dbcd2))
+
 ## [0.16.0](https://github.com/Kaisenwerk/eutaxy/compare/v0.15.1...v0.16.0) (2026-11-09)
 
 
