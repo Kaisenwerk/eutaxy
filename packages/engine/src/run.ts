@@ -1455,6 +1455,31 @@ export class Run implements RunHooks {
     return abandoned;
   }
 
+  /** Whether the invocation of this id has crashed; one never started has not. */
+  hasCrashed(id: string | null): boolean {
+    return id !== null && (this.invocations.get(id)?.isCrashed() ?? false);
+  }
+
+  /**
+   * Concurrent runs: wait in real time until one of these deliveries ends,
+   * within the scenario's budget. False when there is none to wait for or
+   * none ended in time.
+   */
+  async ended(deliveries: readonly Promise<unknown>[]): Promise<boolean> {
+    if (deliveries.length === 0) return false;
+    const deadline = realDeadline(this.options.bounds.budgetMs);
+    const over = () => "ended" as const;
+    try {
+      const first = await Promise.race([
+        ...deliveries.map((d) => d.then(over, over)),
+        deadline.expired,
+      ]);
+      return first === "ended";
+    } finally {
+      deadline.cancel();
+    }
+  }
+
   /** A call of a pure core function, recorded as a decision of the invocation running now (see `observeCore`). */
   decision(fn: string, payload: JsonValue): void {
     this.append({

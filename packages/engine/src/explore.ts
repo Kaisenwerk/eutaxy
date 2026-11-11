@@ -268,10 +268,16 @@ async function deliverConcurrently(
       // only such work is alive its own timers fire, not a finished handler's stray one, which would
       // keep it alive; with no such work, timers fire as before (a stray one until the next event is due).
       const stuck = active.flatMap((d) => d.started.invocation() ?? []);
-      if (run.abandon(stuck) === 0)
-        throw new Error(
-          `the ${platform.name} platform's delivery made no progress and cannot be abandoned`,
-        );
+      if (run.abandon(stuck) === 0) {
+        // A delivery whose invocation has crashed is the platform's to end, and what it does after a
+        // crash is its own work outside any effect (evicting the object the crash reset takes real
+        // time): waited for, within the budget. Anything else left here cannot move at all.
+        const ending = active.filter((d) => run.hasCrashed(d.started.invocation()));
+        if (!(await run.ended(ending.map((d) => d.started.promise))))
+          throw new Error(
+            `the ${platform.name} platform's delivery made no progress and cannot be abandoned`,
+          );
+      }
     }
     await run.quiesce();
   }

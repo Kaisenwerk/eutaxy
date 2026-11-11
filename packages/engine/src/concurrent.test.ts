@@ -863,6 +863,63 @@ describe("a delivery whose invocation crashed inside an object", () => {
   });
 });
 
+describe("a delivery the platform is still ending after its invocation crashed", () => {
+  test("is waited for in real time, not called stuck: what a platform does after a crash is its own work", async () => {
+    // After the crash the platform cleans up outside any effect, as evicting the object a crash
+    // reset takes real time in workerd: nothing is parked, no timer is due, and the delivery has not
+    // ended yet.
+    const spec: ScenarioSpec = {
+      ...raceSpec(2),
+      name: "fake-winding-down",
+      drive: { kind: "queue", queue: "q", messages: [{ id: "m1", body: null }] },
+      invariants: [],
+    };
+    const realSetTimeout = globalThis.setTimeout.bind(globalThis);
+    let cleanedUp = false;
+    const platform: Platform = {
+      name: "fake",
+      assumptions: [],
+      concurrent: true,
+      async reset() {},
+      async finish() {},
+      restrictEvents: (s) => s,
+      initialEvents: () => [{ id: "m1", attempt: 1, data: null }],
+      async deliver(event, hooks) {
+        const invocation = `${event.id}#${event.attempt}`;
+        const inv = hooks.startInvocation(invocation);
+        const work = hooks.effect(
+          { invocation, target: "DO:X", op: "alarm", args: null, allowed: ["crash_before"] },
+          async () => 1,
+          () => null,
+        );
+        try {
+          await hooks.settle(work, invocation);
+        } catch (err) {
+          if (!(err instanceof CrashSignal)) throw err;
+        }
+        if (inv.isCrashed()) {
+          await new Promise((resolve) => realSetTimeout(resolve, 30));
+          cleanedUp = true;
+        }
+        return { status: inv.isCrashed() ? "crashed" : "completed", followUps: [] };
+      },
+    };
+    const run = new Run({
+      bounds: spec.bounds,
+      chooser: replayChooser({
+        seed: 1,
+        faults: [
+          { invocation: "m1#1", ordinal: 0, fault: "crash_before", target: "DO:X", op: "alarm" },
+        ],
+      }),
+    });
+    await runOnce(spec, platform, run);
+    expect(cleanedUp).toBe(true);
+    expect(run.log.entries.map((e) => `${e.kind} ${e.op}`)).toEqual(["call alarm", "fault alarm"]);
+    expect(run.unsupportedReasons).toEqual([]);
+  });
+});
+
 describe("timers already due are turns", () => {
   test("the second of two timers due together fires while the first's effect is parked on some seeds, not on others, and replays", async () => {
     const platform = createFakePlatform(timerJobs, { concurrent: true });
