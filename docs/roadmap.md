@@ -204,6 +204,13 @@ phase makes it right:
   an effect: for an object the isolate cannot run (one backed by a
   container) or one the scenario does not want to explore.
 
+- **An object reset by the run's last event.** Reading such an object's
+  storage for the snapshot constructs it after the run, outside the
+  simulation, and the run is `UNSUPPORTED` rather than guessed. An
+  object with a watchdog alarm meets this whenever a crash lands on the
+  alarm's own calls, so the phase's gate cannot hold without it: the
+  object is woken inside the run, as its next event would wake it.
+
 Gate: an Agent whose work after its answer calls a scripted service and
 a callee, a callee's object that calls back into the caller's Worker and
 wakes its Workflow's wait, an object calling a second real object and a
@@ -212,6 +219,18 @@ no `UNSUPPORTED`; a planted bug in each is caught (a write outside the
 object that a crash separates from the object's own); a differential
 entry for each where the local runtime implements it; and every example
 and earlier gate stays green.
+
+In place: an object's calls through its service bindings, scripted or
+with a callee hosted in the call, as effects of the invocation its code
+runs as, leaving the object once its earlier writes are durable, as
+behind the output gate (`docs/design.md`, Durable Objects). The gate
+entry `v0-17-object-calls-service` holds for scripted bindings under
+every fault placement but the last-event reset above, and the planted
+bug `object-charge-twice-after-answer` (a charge made in work after the
+answer and recorded after it) is caught. Still to come, in this order:
+the last-event reset; the gate with a real callee and the cycle back
+into the caller's Worker, with its differential entry; the object's D1
+and R2 calls as effects; calls between objects; the scripted object.
 
 ### Candidates: the larger gaps in the model
 
