@@ -226,8 +226,12 @@ export class Run implements RunHooks {
    * those effects from then on; see `ownerOf`.
    */
   private readonly adopted = new WeakMap<Frame, InvocationState>();
-  /** Per host, its poller (concurrent runs; see `pollHost`). */
-  private readonly hostPollers = new Map<string, { waiters: (() => void)[] }>();
+  /**
+   * Per host, its poller (concurrent runs; see `pollHost`): the waits its
+   * ticks wake, and the turns released to the host's code since its last
+   * tick (`releasedTo`).
+   */
+  private readonly hostPollers = new Map<string, { waiters: (() => void)[]; unseen: number }>();
   /** Concurrent runs: settles waiting on invocations, released with a `CrashSignal` once theirs crashed; see `settle`. */
   private crashWatch: { readonly inv: InvocationState; readonly reject: (err: unknown) => void }[] =
     [];
@@ -252,7 +256,7 @@ export class Run implements RunHooks {
       this.frames,
       (id) => this.runAs(id),
       () => this.patched?.reads,
-      () => this.firedPending(),
+      () => this.firedPending() + this.releasedUnseen(),
       () => this.hasAfterWork(),
       () => this.timersAllowed() !== null,
     );
@@ -460,16 +464,43 @@ export class Run implements RunHooks {
    */
   private pollHost(host: string): void {
     if (this.hostPollers.has(host)) return;
-    const poller = { waiters: [] as (() => void)[] };
+    const poller = { waiters: [] as (() => void)[], unseen: 0 };
     this.hostPollers.set(host, poller);
     const tick = (): void => {
       const waiters = poller.waiters;
       poller.waiters = [];
+      const released = poller.unseen;
       for (const wake of waiters) wake();
+      // The code a wake resumes sees its release within this tick; code a reset tore down never will.
+      if (released > 0)
+        void Promise.resolve().then(() => {
+          poller.unseen -= released;
+        });
       if (poller.waiters.length > 0 || this.hostMayMove(host)) realSetTimeout(tick, 0);
       else this.hostPollers.delete(host);
     };
     realSetTimeout(tick, 0);
+  }
+
+  /**
+   * A turn was released to code that waits for it by polling from inside
+   * `host` (an object's effect during a call, or in its work after an
+   * answer). Until the host's poller ticks, the effect is neither parked
+   * nor in flight, and the scheduler must not take the run for at rest: it
+   * would decide with that code's next effect missing from its options on
+   * a slow tick and present on a fast one. Counted against the poller, so
+   * a host that was reset, whose poller is gone, is not waited for.
+   */
+  private releasedTo(host: string | undefined): void {
+    const poller = host === undefined ? undefined : this.hostPollers.get(host);
+    if (poller) poller.unseen++;
+  }
+
+  /** Turns released to hosts' code and not yet seen by it (see `releasedTo`): work on its way. */
+  private releasedUnseen(): number {
+    let n = 0;
+    for (const poller of this.hostPollers.values()) n += poller.unseen;
+    return n;
   }
 
   private hostMayMove(host: string): boolean {
@@ -881,6 +912,7 @@ export class Run implements RunHooks {
           let released = false;
           this.turns.park(cont, own.target, () => {
             released = true;
+            this.releasedTo(host);
           });
           // Waited for on the host's poller's ticks: a real timer the host's code armed here, after
           // its request completed, would keep the object referenced (workerd), as the poller, armed
@@ -939,8 +971,11 @@ export class Run implements RunHooks {
           // code is a host's: a real timer of its own armed after its answer crossed would keep the
           // object referenced (see `pollHost`).
           let released = false;
-          park(() => (released = true));
           const host = enclosing.host;
+          park(() => {
+            released = true;
+            this.releasedTo(host);
+          });
           while (!released && !crashed())
             await (host === undefined ? realTick() : this.hostTick(host));
           return released;

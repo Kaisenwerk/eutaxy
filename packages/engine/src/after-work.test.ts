@@ -8,7 +8,7 @@
  */
 import type { Bounds, EffectRecord, Platform, RunHooks, ScenarioSpec } from "@eutaxy/core";
 import { describe, expect, test } from "vitest";
-import { replayChooser } from "./chooser.ts";
+import { replayChooser, seededChooser } from "./chooser.ts";
 import { realTick, virtualEpoch } from "./clock.ts";
 import { runInvocation } from "./deliver.ts";
 import { runOnce } from "./explore.ts";
@@ -819,6 +819,72 @@ const spec = (concurrent: number): ScenarioSpec => ({
 });
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+describe("two jobs of one object after their answers, each making two effects", () => {
+  /** Two calls into the object; each answers and, a timer later, makes a `plan` and then a `charge`. */
+  const jobs = (): Platform => ({
+    name: "objects",
+    assumptions: [],
+    concurrent: true,
+    reset: async () => {},
+    initialEvents: () => [
+      { id: "a", attempt: 1, data: null },
+      { id: "b", attempt: 1, data: null },
+    ],
+    restrictEvents: (s) => s,
+    async deliver(event, hooks) {
+      const inv = hooks.startInvocation(`${event.id}#${event.attempt}`);
+      const outcome = await runInvocation(hooks, inv, () =>
+        callObject(
+          hooks,
+          inv.id,
+          () => {},
+          async (running) => {
+            await objectFetch(hooks, running, `plan ${event.id}`);
+            await objectFetch(hooks, running, `charge ${event.id}`);
+          },
+        ),
+      );
+      return { status: outcome.status, followUps: [] };
+    },
+  });
+  const spec: ScenarioSpec = {
+    version: 1,
+    name: "two-jobs",
+    worker: { entry: "./w.ts", config: "./w.jsonc" },
+    drive: { kind: "none" },
+    setup: [],
+    externals: [],
+    invariants: [],
+    bounds: bounds(2),
+  };
+  const calls = (entries: readonly EffectRecord[]) =>
+    entries.filter((e) => e.kind === "call" && e.target === "Fetch:api").map((e) => e.op);
+
+  test("one job's next effect and the other job's due timer are both options at each decision: the same seed gives the same run, and seeds differ", async () => {
+    // After a job's plan answers, its charge must be parked before the scheduler decides again: the
+    // turn is released to a poller inside the object, and a decision taken before the object's code
+    // has moved would see only the other job's timer.
+    const orders = new Set<string>();
+    for (let seed = 1; seed <= 24; seed++) {
+      const runs: string[] = [];
+      for (let again = 0; again < 2; again++) {
+        const run = new Run({
+          chooser: seededChooser(seed, { faultProbability: 0, maxFaultsPerRun: 0 }),
+          bounds: bounds(2),
+        });
+        const log = await runOnce(spec, jobs(), run);
+        expect(run.unsupportedReasons).toEqual([]);
+        runs.push(calls(log.entries).join(", "));
+      }
+      expect(runs[1]).toBe(runs[0]);
+      expect(runs[0]?.split(", ").sort()).toEqual(["charge a", "charge b", "plan a", "plan b"]);
+      orders.add(runs[0] ?? "");
+    }
+    // A job runs through before the other starts on some seeds, and they interleave on others.
+    expect(orders.size).toBeGreaterThan(1);
+  });
+});
 
 describe("an object's timers and effects around its answer", () => {
   test("an object that awaits one of its own timers before answering is woken by it: the call completes", async () => {

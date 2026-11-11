@@ -725,7 +725,13 @@ shares the reading of the limit and none of the proxy code.
   to settle a promise made inside an object from outside it, so such an
   effect waits by polling a flag with real zero timers made inside the
   object, and the scheduler is never woken from inside an object, where it
-  would resume in the object's I/O context. While an object holds its
+  would resume in the object's I/O context. A turn released to such code
+  is on its way until the object's poller has ticked: the scheduler does
+  not take the run for at rest before then, or it would decide with that
+  code's next effect among its options on a fast tick and missing on a
+  slow one. A delivery whose invocation crashed is the platform's to end
+  (evicting the object a crash reset takes real time), and is waited for
+  within the budget rather than taken for stuck. While an object holds its
   input gate with `blockConcurrencyWhile` nothing else can enter it, and
   even its timers wait at the gate, so its effects run at once then
   (`EffectOptions.mayPark`). Work an object starts and does not await (a
