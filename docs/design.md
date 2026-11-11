@@ -789,13 +789,28 @@ shares the reading of the limit and none of the proxy code.
   call crashes the call and resets the object; the run sees a crash on its
   own ticks (a wait on a crashed invocation ends with its `CrashSignal`),
   since the reset tears down the object's task, with whatever that task
-  had settled. Current limits: storage operations are not
+  had settled. An object's own service bindings are the scenario's. The
+  runtime hands an object the Worker's real `env`, where a service
+  binding is whatever the isolate holds under that name, so the model
+  puts the instance's `env` behind a view under which a service binding
+  is the Worker's own stub for it (for a callee's object, under the
+  callee's qualified name), resolved when first used: reading it off
+  `env` does nothing. A call the object makes through it is an effect of
+  the invocation its code is running as (the call it is serving, or its
+  own work after the answer), answered from the `service()` script or by
+  the `callee()` hosted inside it, with that binding's faults, and a
+  crash fault on it resets the object as on any effect the object makes.
+  The call leaves the object only once what the object wrote before it
+  is durable: the storage's `sync()` is awaited inside the effect, before
+  the call is performed, as the runtime's output gate holds an outgoing
+  message until the writes before it are confirmed. A fault that resets
+  the object after the call therefore finds a claim the object recorded
+  before calling, and one that keeps the call from leaving does not make
+  the writes durable. Current limits: storage operations are not
   turns (the input gate holds them, so this is the runtime's behaviour);
-  the object's own binding calls are not recorded (the runtime hands it
-  the Worker's real `env`), so a call it makes on a service binding
-  through `this.env` makes the run `UNSUPPORTED`: no script or callee
-  answers there, and the failure would pass for the peer's answer in the
-  object's own error handling; an object reached
+  the object's calls on its other bindings (D1, R2) are not recorded; an
+  `env` its class keeps elsewhere than `this.env` (a private field, a
+  closure of its constructor) is not reached; an object reached
   only through another object's binding makes the run `UNSUPPORTED`, as do
   `jurisdiction()` namespaces (and a unique id asked for one) and a
   namespace the scenario does not reset (no `durableObject` setup).

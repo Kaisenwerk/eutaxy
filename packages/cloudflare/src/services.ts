@@ -13,7 +13,7 @@
 
 import { type EffectPoint, type JsonValue, toJson, writeFaults } from "@eutaxy/core";
 import { findResponse, isRedirect, parseBody, replyOf, toResponse } from "@eutaxy/engine";
-import { type ProxyContext, pointAt, refuse } from "./proxy-context.ts";
+import { outboundGate, type ProxyContext, pointAt, refuse } from "./proxy-context.ts";
 import type { ScriptedReply, ServiceSetup } from "./scenario.ts";
 
 /** Marks of the other kinds of binding, which a service binding's duck type must not carry. */
@@ -190,17 +190,24 @@ export function proxyService(binding: string, ctx: ProxyContext, script: Service
     call: (method, args) =>
       ctx.hooks.effect(
         point(method, { args: args.map((a) => toJson(a)) }),
-        async () => answer(method),
+        outboundGate(ctx, async () => answer(method)),
         summarize,
       ),
     property: (method) =>
-      ctx.hooks.effect(point(method, { property: true }), async () => answer(method), summarize),
+      ctx.hooks.effect(
+        point(method, { property: true }),
+        outboundGate(ctx, async () => answer(method)),
+        summarize,
+      ),
     async fetch(request) {
+      // Taken where the call starts, before anything is awaited: an object's gate, when one is calling.
+      const behind = outboundGate(ctx, async () => undefined);
       const url = new URL(request.url);
       const { method, headers, body } = await recordRequest(request);
       const reply = await ctx.hooks.effect(
         point(method, { url: request.url, method, headers, body }),
         async () => {
+          await behind();
           // The matcher is the externals'; a service binding takes any host, so none is matched.
           const found = findResponse(
             {

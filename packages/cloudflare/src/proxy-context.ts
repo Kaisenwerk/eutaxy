@@ -11,6 +11,15 @@ export interface ProxyContext {
   readonly hooks: RunHooks;
   /** The invocation currently running; only one runs at a time, even with several in flight. */
   readonly currentInvocation: () => string;
+  /** The Worker's env as the platform proxies it: what an object's own service bindings answer from. */
+  readonly env?: () => object;
+  /**
+   * An object's output gate, for the call it is making right now: set by the
+   * object's own env around the synchronous start of a call through a
+   * binding, and taken by that binding's stub (`outboundGate`) to wait on
+   * inside the effect, before the call is performed.
+   */
+  readonly gate?: { pending: (() => Promise<void>) | undefined };
   /** Told when a Durable Object stub's fetch answered 101: the object a WebSocket connection reached, the invocation whose call it was, and the client end. */
   readonly onUpgrade?: (info: {
     binding: string;
@@ -30,6 +39,24 @@ export function pointAt(
   allowed: readonly FaultKind[],
 ): EffectPoint {
   return { invocation: ctx.currentInvocation(), target, op, args, allowed };
+}
+
+/**
+ * What performing a call must wait on first, when an object is making it:
+ * the object's writes before the call, durable, as the runtime's output gate
+ * holds an outgoing message until they are. Read where the stub's call
+ * starts, synchronously; the wait runs inside the effect, as its real I/O,
+ * so a fault that keeps the call from leaving does not make the writes
+ * durable and one that lands after it finds them kept.
+ */
+export function outboundGate<T>(ctx: ProxyContext, perform: () => Promise<T>): () => Promise<T> {
+  const gate = ctx.gate?.pending;
+  return gate
+    ? async () => {
+        await gate();
+        return perform();
+      }
+    : perform;
 }
 
 /** Report why the run cannot be trusted and refuse the call with the same reason. */

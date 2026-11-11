@@ -154,6 +154,21 @@ caller's crash does not end it and a fault in it resets the object, not the
 caller; and a crash injected into an effect the object makes during a call
 crashes the call and resets the object.
 
+**Calls of its own.** An object's calls through its own service bindings
+(`this.env.BILLING.charge(…)`) are the scenario's, as the Worker's are:
+answered from the `service()` script or by the `callee()` hosted inside
+the call, and recorded as effects of the invocation the object's code is
+running as, the call it is serving or its own work after the answer. A
+fault can land on each: an answer lost, a call that never left, the object
+reset right after it. The call leaves the object only once what the object
+wrote before it is durable, as the runtime's output gate holds an outgoing
+message until the writes before it are confirmed, so a claim the object
+records before calling survives a reset after the call. The corpus's
+`object-charge-twice-after-answer` is an object that bills a run in work
+after its answer and records the charge after making it. Two limits: the
+object's calls on its other bindings (D1, R2) are not recorded, and an
+`env` the class keeps elsewhere than `this.env` is not reached.
+
 **SQLite storage.** For a SQLite-backed class (`new_sqlite_classes` in the
 wrangler migrations, the backend Cloudflare recommends and the Agents SDK
 requires), the setup seeds SQL storage too: `durableObject("INVENTORY", {},

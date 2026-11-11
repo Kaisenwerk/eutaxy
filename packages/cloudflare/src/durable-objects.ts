@@ -16,7 +16,7 @@
 import { canonicalJson, type JsonValue, toJson, writeFaults } from "@eutaxy/core";
 import { withoutNetwork } from "@eutaxy/engine";
 import { AlarmBook, alarmControl, takenOver, takeOverAlarms } from "./alarms.ts";
-import { guardEnv, hostMethod, hostOf } from "./object-access.ts";
+import { hostMethod, hostOf, ownEnv } from "./object-access.ts";
 import type { ProxyContext } from "./proxy-context.ts";
 import type { DurableObjectSqlSeed } from "./scenario.ts";
 
@@ -512,7 +512,18 @@ function enterObject<T>(
       live.storage,
       alarmControl(state.alarms, binding, id, object, () => ctx.hooks),
     );
-    guardEnv(ctx.hooks, binding, object, instance);
+    // What the object wrote is durable before a call of its own leaves it, as behind the output gate.
+    const sync = (live.storage as { sync?: () => Promise<void> }).sync;
+    ownEnv(
+      ctx.hooks,
+      binding,
+      object,
+      instance,
+      ctx.env,
+      ctx.gate && typeof sync === "function"
+        ? { slot: ctx.gate, durable: () => sync.call(live.storage) }
+        : undefined,
+    );
     return fn(instance, live);
   });
 }

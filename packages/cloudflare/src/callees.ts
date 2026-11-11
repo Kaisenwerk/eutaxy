@@ -28,7 +28,8 @@ import { hostInvocation, isRedirect, type Outcome, runInvocation } from "@eutaxy
 import { drainBackground, executionContext } from "./background.ts";
 import { isPlainData } from "./durable-objects.ts";
 import { constructEntrypoint } from "./entrypoint.ts";
-import { type ProxyContext, pointAt, refuse } from "./proxy-context.ts";
+import { calleeOfEnv } from "./object-access.ts";
+import { outboundGate, type ProxyContext, pointAt, refuse } from "./proxy-context.ts";
 import { describeError, entrypointClass, rpcMethod } from "./rpc.ts";
 import type { CalleeSetup } from "./scenario.ts";
 import { recordRequest, scriptedError, serviceStub } from "./services.ts";
@@ -86,6 +87,8 @@ export function calleeEnv(
   );
   return new Proxy(Object.create(null) as Record<string, unknown>, {
     get(_t, prop) {
+      // Whose view this is, for an object constructed with it (see `ownEnv`).
+      if (prop === calleeOfEnv) return name;
       const key = keyOf(prop);
       return key === undefined ? undefined : source[key];
     },
@@ -285,7 +288,7 @@ export function proxyCallee(
       }
       return ctx.hooks.effect(
         point(method, { args: args.map((a) => toJson(a)) }),
-        async () => {
+        outboundGate(ctx, async () => {
           const cls = entrypoint();
           const outcome = await invoke(method, (executionContext) => {
             const instance = constructEntrypoint(cls, "WorkerEntrypoint", executionContext, view);
@@ -295,14 +298,14 @@ export function proxyCallee(
             return fn.apply(instance, copy);
           });
           return plain(method, answer(outcome, method));
-        },
+        }),
         summarize,
       );
     },
     property: (name) =>
       ctx.hooks.effect(
         point(name, { property: true }),
-        async () => {
+        outboundGate(ctx, async () => {
           const cls = entrypoint();
           const outcome = await invoke(name, (executionContext) => {
             const instance = constructEntrypoint(cls, "WorkerEntrypoint", executionContext, view);
@@ -312,14 +315,17 @@ export function proxyCallee(
             return getter.call(instance);
           });
           return plain(name, answer(outcome, name));
-        },
+        }),
         summarize,
       ),
     async fetch(request) {
+      // Taken where the call starts, before anything is awaited: an object's gate, when one is calling.
+      const behind = outboundGate(ctx, async () => undefined);
       const { method, headers, body } = await recordRequest(request);
       return ctx.hooks.effect(
         point(method, { url: request.url, method, headers, body }),
         async () => {
+          await behind();
           const outcome = await invoke("fetch", (executionContext) => {
             const handler = fetchHandlerOf(module.exports, entrypointName, executionContext, view);
             if (!handler)

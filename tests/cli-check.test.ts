@@ -232,10 +232,11 @@ describe("eutaxy check", () => {
     }
   }, 180_000);
 
-  test("an object calling a scripted service binding through its own env is UNSUPPORTED, not a failure its code absorbs", () => {
-    // The runtime hands an object the Worker's real env, where the binding is not the scenario's script:
-    // the call would fail inside the object, the object's own error handling would take it for the
-    // model's answer, and with no invariant on the outcome the check would be BOUNDED.
+  test("an object's call on a scripted service binding through its own env is answered from the script", () => {
+    // The runtime hands an object the Worker's real env, where the binding is the isolate's placeholder:
+    // left alone, the call fails inside the object, whose own error handling takes that for the model's
+    // answer. The scenario's script answers it instead, as an effect of the object's work after its
+    // answer, so every run ends done, in the steps the script gave.
     const dir = join(root, "examples", "payments-queue", `cli-test-object-env-${process.pid}`);
     mkdirSync(dir, { recursive: true });
     try {
@@ -286,24 +287,25 @@ export default {
       );
       writeFileSync(
         join(dir, "scenario.sim.ts"),
-        `import { defineScenario, durableObject, durableObjectTable, http, service, unique } from "eutaxy/cloudflare";
+        `import { defineScenario, durableObject, durableObjectTable, everyRow, http, service } from "eutaxy/cloudflare";
 export default defineScenario({
   name: "object-env",
   worker: { entry: "./worker.ts", config: "./wrangler.jsonc" },
   setup: [durableObject("RUNNER", { r: {} }), service("MODEL", { methods: { complete: { returns: { steps: 2 } } } })],
   drive: http([{ id: "run-1", path: "/run-1", method: "POST" }], { retries: 0 }),
   externals: [],
-  // Nothing here reads how a run ended, as a scenario written before the question came up would not.
-  invariants: [unique("one-row-per-run", durableObjectTable("RUNNER", "r", "runs"), "id")],
+  invariants: [
+    everyRow("every-run-is-done", durableObjectTable("RUNNER", "r", "runs"), [
+      { column: "status", op: "eq", value: "done in 2" },
+    ]),
+  ],
   bounds: { maxFaultsPerRun: 0, maxRedeliveries: 0, budgetMs: 2000 },
 });
 `,
       );
       const r = eutaxy(["check", join(dir, "scenario.sim.ts"), "--seed", "cli", "--no-regression"]);
-      expect(r.status, `${r.stdout}\n${r.stderr}`).toBe(2);
-      expect(r.stdout).toContain(
-        "Durable Object RUNNER r called the service binding MODEL through its own env",
-      );
+      expect(r.status, `${r.stdout}\n${r.stderr}`).toBe(0);
+      expect(r.stdout).toContain("BOUNDED  object-env");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
