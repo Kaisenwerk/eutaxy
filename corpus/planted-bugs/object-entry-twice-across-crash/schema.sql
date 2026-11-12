@@ -1,0 +1,6 @@
+CREATE TABLE entries (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  deposit_id TEXT NOT NULL,
+  account TEXT NOT NULL,
+  amount_cents INTEGER NOT NULL
+);

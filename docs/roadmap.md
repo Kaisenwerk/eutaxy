@@ -248,8 +248,25 @@ handler wakes the Workflow that waits; it is `BOUNDED` with nothing
 unsupported with two in flight and one at a time under one fault a run,
 and its planted bug (a notice recorded each time it is sent) is caught.
 It has no differential entry: the local runtime under the test plugin
-holds no second Worker to call. Still to come, in this order: the object's D1 and R2 calls as effects;
-calls between objects; the scripted object.
+holds no second Worker to call. The object's stores are in too: a
+statement it runs on a D1 database and an operation on an R2 bucket,
+through its own `env`, are effects of the invocation its code runs as,
+performed on the real store behind the same gate. The gate entry
+`v0-17-object-stores` (bytes to a bucket inside the call, the catalogue
+row to a database after the answer, the limit loaded by the constructor)
+is `BOUNDED` with nothing unsupported under every fault placement, one
+and two in flight; the planted bug `object-entry-twice-across-crash` (a
+ledger row written and the object's record of it lost to a crash, so the
+resend writes it again) is caught; and the differential entry
+`object-stores` agrees with the local runtime on every answer and on
+what each store holds. The gate found that a callback behind
+`blockConcurrencyWhile` that failed left the model waiting on an
+instance the runtime had already reset; the model resets it now too.
+Still to come, in this order: the object's remaining bindings (a
+Workflow binding answered by the model as the Worker's is, and a call on
+a binding the model does not cover refused as it is from the Worker,
+where today both reach the isolate's own, unseen); calls between
+objects; the scripted object.
 
 ### Candidates: the larger gaps in the model
 

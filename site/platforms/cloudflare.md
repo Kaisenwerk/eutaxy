@@ -175,7 +175,9 @@ wrote before it is durable, as the runtime's output gate holds an outgoing
 message until the writes before it are confirmed, so a claim the object
 records before calling survives a reset after the call. The corpus's
 `object-charge-twice-after-answer` is an object that bills a run in work
-after its answer and records the charge after making it. A constructor is
+after its answer and records the charge after making it, and
+`object-entry-twice-across-crash` an object that writes a ledger row to D1
+and records the deposit in its own storage after it. A constructor is
 covered too: `this.env` is the scenario's from its first line, and what it
 does behind `blockConcurrencyWhile` (loading its configuration from
 another Worker, waiting on a timer) runs as the object's code before the

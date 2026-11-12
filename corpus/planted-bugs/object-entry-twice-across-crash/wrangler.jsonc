@@ -1,0 +1,19 @@
+{
+  "name": "planted-object-entry-twice-across-crash",
+  "main": "worker.ts",
+  "compatibility_date": "2026-10-01",
+  "durable_objects": {
+    "bindings": [
+      { "name": "ACCOUNT", "class_name": "Account" },
+      { "name": "SAFE_ACCOUNT", "class_name": "FixedAccount" }
+    ]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Account", "FixedAccount"] }],
+  "d1_databases": [
+    {
+      "binding": "LEDGER",
+      "database_name": "ledger",
+      "database_id": "00000000-0000-0000-0000-000000000117"
+    }
+  ]
+}
