@@ -226,6 +226,8 @@ export class Run implements RunHooks {
    * those effects from then on; see `ownerOf`.
    */
   private readonly adopted = new WeakMap<Frame, InvocationState>();
+  /** Per hosted invocation, the object (host) whose code it was hosted from, directly or through another: see `hosted`. */
+  private readonly hostedWithin = new Map<string, string>();
   /**
    * Per host, its poller (concurrent runs; see `pollHost`): the waits its
    * ticks wake, and the turns released to the host's code since its last
@@ -968,7 +970,12 @@ export class Run implements RunHooks {
       if (host?.active) {
         // Code another invocation's effect hosts (a called Worker's): a turn of its own, during which the
         // host waits on it; while it performs, the host is in flight again. Nothing cuts this code off
-        // from async context, so a promise settled from outside wakes it.
+        // from async context, so a promise settled from outside wakes it, unless the Worker was
+        // called from inside an object: its code then runs in the object's I/O context, where a
+        // promise settled from outside resumes it in the wrong one (workerd), so it waits on the
+        // object's poller, as the object's own effects do.
+        const within = this.hostedWithin.get(point.invocation);
+        if (within !== undefined) this.pollHost(within);
         return this.hostedTurn(
           point,
           perform,
@@ -977,7 +984,17 @@ export class Run implements RunHooks {
           inv,
           undefined,
           host,
-          (park) => new Promise<boolean>((go) => park(() => go(true))),
+          within === undefined
+            ? (park) => new Promise<boolean>((go) => park(() => go(true)))
+            : async (park, crashed) => {
+                let released = false;
+                park(() => {
+                  released = true;
+                  this.releasedTo(within);
+                });
+                while (!released && !crashed()) await this.hostTick(within);
+                return released;
+              },
         );
       }
       await new Promise<void>((go) =>
@@ -1319,18 +1336,23 @@ export class Run implements RunHooks {
       throw new Error(`invocation ${id} can only be hosted inside an effect being performed`);
     if (!deliveryScope)
       throw new Error("hosting an invocation needs AsyncLocalStorage (node:async_hooks)");
+    // The object whose code is hosting it, if any (an object calling another Worker), or the one
+    // the invocation hosting it runs inside of: the hosted code runs in that object's I/O context.
+    const within = hostScope?.getStore()?.host ?? this.hostedWithin.get(frame.invocation);
     const run = async (): Promise<T> => {
       // Tracked, not made the running one: the hosted code is known by its own cell, so the caller's
       // code that goes on meanwhile (a second call awaited together) stays the caller's.
       const inv = this.track(id);
       if (this.concurrent) this.turns.started(id);
       this.hosts.set(id, frame);
+      if (within !== undefined) this.hostedWithin.set(id, within);
       this.childWaits(frame);
       try {
         return await work(inv);
       } finally {
         this.childLeaves(frame, true);
         this.hosts.delete(id);
+        this.hostedWithin.delete(id);
       }
     };
     // Inside an effect's perform the library's timers are real; the hosted code is handler code, so
