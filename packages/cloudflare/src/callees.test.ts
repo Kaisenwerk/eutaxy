@@ -185,6 +185,7 @@ async function run(
       exports: Record<string, unknown>;
       entrypoint?: string;
       props?: Record<string, string>;
+      self?: boolean;
     }
   > | null = {
     INVENTORY: { name: "inventory", exports: inventoryModule },
@@ -555,6 +556,43 @@ describe("a callee's own bindings", () => {
       "msg-1#1 result Service:INVENTORY reserve",
     ]);
     expect(r.unsupportedReasons).toEqual([]);
+  });
+
+  test("a callee's binding that leads back to the scenario's own Worker runs it with the scenario's env, under its own names", async () => {
+    // The storefront calls inventory, whose partner is the storefront itself: the call comes back
+    // into the Worker the scenario drives, which reads its own bindings as it always does.
+    class Storefront extends WorkerEntrypoint<{ RATES: { rate(): Promise<number> } }> {
+      async quote(orderId: string): Promise<number> {
+        return (await this.env.RATES.rate()) + orderId.length;
+      }
+    }
+    const back = callee("inventory/PARTNER", { entry: "./worker.ts", config: "./wrangler.jsonc" });
+    const rates = service("RATES", { methods: { rate: { returns: 4 } } });
+    const {
+      log,
+      seen,
+      run: r,
+    } = await run(
+      spec([inventory, back, rates]),
+      (stub) => stub["reserve"]?.("o-1", 1) ?? Promise.resolve(),
+      [],
+      {
+        INVENTORY: { name: "inventory", exports: inventoryModule },
+        "inventory/PARTNER": { name: "storefront", exports: { default: Storefront }, self: true },
+      },
+      { RATES: new FakeFetcher() },
+    );
+    expect(r.unsupportedReasons).toEqual([]);
+    expect((seen[0] as { quote: number }).quote).toBe(7);
+    expect(lines(log).slice(0, 6)).toEqual([
+      "msg-1#1 call Service:INVENTORY reserve",
+      "msg-1#1/INVENTORY.reserve call Service:inventory/PARTNER quote",
+      // The scenario's own binding, not one qualified by the Worker's name.
+      "msg-1#1/INVENTORY.reserve/inventory/PARTNER.quote call Service:RATES rate",
+      "msg-1#1/INVENTORY.reserve/inventory/PARTNER.quote result Service:RATES rate",
+      "msg-1#1/INVENTORY.reserve result Service:inventory/PARTNER quote",
+      "msg-1#1 result Service:INVENTORY reserve",
+    ]);
   });
 
   test("an alias is the binding it names: the callee's calls carry the caller's name; a setup on the alias is refused", async () => {

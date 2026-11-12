@@ -57,6 +57,29 @@ describe("generated check test", () => {
   });
 });
 
+describe("a callee that is the scenario's own Worker", () => {
+  test("is passed as itself: the Worker a callee calls back runs with the scenario's env", () => {
+    const src = checkTestSource({
+      seed: "s",
+      scenarioImport: "../x.sim.ts",
+      callees: [
+        { binding: "TURNS", name: "turns", importPath: "../turns/worker.ts" },
+        {
+          binding: "turns/FRONT",
+          name: "front",
+          importPath: "../worker.ts",
+          entrypoint: "Notices",
+          self: true,
+        },
+      ],
+    });
+    expect(src).toContain(
+      '"turns/FRONT": { name: "front", exports: callee_1, entrypoint: "Notices", self: true }',
+    );
+    expect(src).toContain('"TURNS": { name: "turns", exports: callee_0 }');
+  });
+});
+
 describe("a scenario with callees", () => {
   test("the test imports each callee's module and passes it with its name; a schema outside the directory is imported by name", () => {
     const src = checkTestSource({

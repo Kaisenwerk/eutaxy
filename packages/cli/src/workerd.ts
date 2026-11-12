@@ -37,6 +37,7 @@ export interface CheckTransport {
         readonly name: string;
         readonly entrypoint?: string;
         readonly props?: Readonly<Record<string, unknown>>;
+        readonly self?: boolean;
       }
     >
   >;
@@ -218,6 +219,7 @@ export async function checkInWorkerd(input: WorkerdCheckInput): Promise<CheckTra
                 name: c.name,
                 ...(c.entrypoint === undefined ? {} : { entrypoint: c.entrypoint }),
                 ...(c.props === undefined ? {} : { props: c.props }),
+                ...(c.self ? { self: true } : {}),
               },
             ]),
           ),

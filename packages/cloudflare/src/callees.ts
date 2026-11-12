@@ -46,6 +46,14 @@ export interface CalleeModule {
   readonly exports: Readonly<Record<string, unknown>>;
   readonly entrypoint?: string;
   readonly props?: Readonly<Record<string, JsonValue>>;
+  /**
+   * The module is the scenario's own Worker, reached back through a
+   * callee's binding (the Worker it called calls it in turn): it runs with
+   * the scenario's env as it is, under its own names, not with a view
+   * qualified by `name`, so what it reads and writes there is what the
+   * scenario's events read and write.
+   */
+  readonly self?: boolean;
 }
 
 /** The faults a call to a real callee admits; `error` is the callee's own to throw. */
@@ -194,7 +202,7 @@ export function proxyCallee(
   state: CalleeState,
 ): object {
   const target = `Service:${binding}`;
-  const view = calleeEnv(module.name, env);
+  const view = module.self ? env : calleeEnv(module.name, env);
   const entrypointName = setup.entrypoint ?? module.entrypoint;
   const props = module.props ?? {};
   const unsupported = (what: string): never => refuse(ctx, `callee ${binding}: ${what}`);

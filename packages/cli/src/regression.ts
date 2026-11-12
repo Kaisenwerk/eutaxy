@@ -41,6 +41,8 @@ export interface CloudflareRegressionOptions {
         readonly path: string;
         readonly entrypoint?: string;
         readonly props?: Readonly<Record<string, unknown>>;
+        /** The callee is the scenario's own Worker, called back by a Worker it called. */
+        readonly self?: boolean;
       }
     >
   >;
@@ -141,7 +143,7 @@ export function cloudflareRegressionTest(
       : `, callees: { ${callees
           .map(
             (b) =>
-              `${key(b)}: { name: ${JSON.stringify(options.callees?.[b]?.name)}, exports: callee_${calleeIds.get(b)}${options.callees?.[b]?.entrypoint === undefined ? "" : `, entrypoint: ${JSON.stringify(options.callees?.[b]?.entrypoint)}`}${options.callees?.[b]?.props === undefined ? "" : `, props: ${JSON.stringify(options.callees?.[b]?.props)}`} }`,
+              `${key(b)}: { name: ${JSON.stringify(options.callees?.[b]?.name)}, exports: callee_${calleeIds.get(b)}${options.callees?.[b]?.entrypoint === undefined ? "" : `, entrypoint: ${JSON.stringify(options.callees?.[b]?.entrypoint)}`}${options.callees?.[b]?.props === undefined ? "" : `, props: ${JSON.stringify(options.callees?.[b]?.props)}`}${options.callees?.[b]?.self ? ", self: true" : ""} }`,
           )
           .join(", ")} }`;
   const retries = options.maxRetries === undefined ? "" : `, maxRetries: ${options.maxRetries}`;

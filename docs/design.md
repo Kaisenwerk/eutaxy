@@ -536,6 +536,17 @@ isolate, as Cloudflare routes a service-binding call on the same thread
   (`service("orders/PARTNER", …)`) or a further callee
   (`callee("orders/PARTNER", …)`), whose invocation nests
   (`…/ORDERS.reserve/orders/PARTNER.quote`); the depth is not bounded.
+  The further callee may be the scenario's own Worker, called back by the
+  Worker it called: a `callee()` step whose config names the Worker the
+  scenario drives (the command tells by the name; a test says
+  `self: true`) runs that Worker's module with the scenario's env as it
+  is, under its own names, so what the call back reads and writes is what
+  the scenario's events read and write, and an event it sends wakes a
+  Workflow of the scenario's that waits for it. A Worker called from
+  inside a Durable Object (an object's own binding, see Durable Objects)
+  runs in that object's I/O context, where a promise settled from outside
+  would resume it in the wrong one: its effects wait for their turn on
+  the object's poller, as the object's own do.
 - _Running it under the Vitest plugin._ The plugin runs one `main` module in
   the test's isolate, where the engine's patches apply (its auxiliary
   Workers run elsewhere, unpatched, so they are not what this is built

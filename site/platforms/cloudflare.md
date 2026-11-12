@@ -109,7 +109,12 @@ from the other's script) is one resource, set up and snapshotted under the
 caller's binding, the callee's an alias of it (the platform's `aliases`
 option, which the command derives). A callee's Workflow runs the callee's
 class with the callee's env; a callee's own service bindings are scripted
-or further callees.
+or further callees. One of them may lead back to the Worker the scenario
+drives: name it as a callee whose entry and config are the scenario's own
+(`callee("orders/FRONT", { entry: "./worker.ts", config: "./wrangler.jsonc" })`),
+and the call back runs your Worker with the scenario's own bindings, so a
+notice it records or an event it sends to a waiting Workflow is the
+scenario's.
 
 ### Background work
 

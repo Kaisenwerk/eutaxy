@@ -236,13 +236,19 @@ export async function runCheck(o: CheckOptions): Promise<number> {
     o.stderr(`could not read the scenario's callees: ${String(err)}\n`);
     return exitCodes.error;
   }
+  // Shared resources, from the caller's config (readable as JSON or JSONC) and the callees'.
+  const callerResources = readCallerResources(wrangler);
+  // A callee step that names the scenario's own Worker (the Worker it called calls it in turn): its
+  // module is the caller's and its resources are in the isolate already, under their own names.
+  const isSelf = (c: CalleeConfig): boolean =>
+    callerResources?.name !== undefined && c.name === callerResources.name;
+  const allCallees = callees;
+  callees = allCallees.filter((c) => !isSelf(c));
   for (const c of callees)
     if (c.notAdded.length > 0)
       o.stderr(
         `callee ${describeCallee(c, dir)}: not added to the test's isolate: ${c.notAdded.join(", ")}\n`,
       );
-  // Shared resources, from the caller's config (readable as JSON or JSONC) and the callees'.
-  const callerResources = readCallerResources(wrangler);
   const isolate = isolateOf(callees, callees.length > 0 ? callerResources : undefined);
   // The caller's service bindings, replaced in the isolate: the platform answers each one.
   const callerServices = (callerResources?.services ?? []).map((s) => s.binding).filter((b) => b);
@@ -276,14 +282,15 @@ export async function runCheck(o: CheckOptions): Promise<number> {
         ...(loaded && outside(loaded.worker.entry)
           ? { workerImport: toPosix(relative(workDir, resolve(dir, loaded.worker.entry))) }
           : {}),
-        ...(callees.length === 0
+        ...(allCallees.length === 0
           ? {}
           : {
-              callees: callees.map((c) => ({
+              callees: allCallees.map((c) => ({
                 binding: c.binding,
                 name: c.name,
                 importPath: toPosix(relative(workDir, c.entry)),
                 ...bindingCarries(callerResources, c.binding, callees),
+                ...(isSelf(c) ? { self: true } : {}),
               })),
             }),
         ...(sqlImports.length === 0 ? {} : { sqlImports }),

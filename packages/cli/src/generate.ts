@@ -32,6 +32,8 @@ export interface GeneratedCheck {
     /** From the caller's config: the entrypoint the binding reaches, the props it carries. */
     readonly entrypoint?: string;
     readonly props?: Readonly<Record<string, unknown>>;
+    /** The callee is the scenario's own Worker, called back by a Worker it called. */
+    readonly self?: boolean;
   }[];
   /** SQL files outside the scenario's directory (a callee's schema), by the key `schemasFor` looks up, with their import specifiers. */
   readonly sqlImports?: readonly { readonly key: string; readonly importPath: string }[];
@@ -69,7 +71,7 @@ export function checkTestSource(g: GeneratedCheck): string {
       : `, callees: { ${callees
           .map(
             (c, i) =>
-              `${JSON.stringify(c.binding)}: { name: ${JSON.stringify(c.name)}, exports: callee_${i}${c.entrypoint === undefined ? "" : `, entrypoint: ${JSON.stringify(c.entrypoint)}`}${c.props === undefined ? "" : `, props: ${JSON.stringify(c.props)}`} }`,
+              `${JSON.stringify(c.binding)}: { name: ${JSON.stringify(c.name)}, exports: callee_${i}${c.entrypoint === undefined ? "" : `, entrypoint: ${JSON.stringify(c.entrypoint)}`}${c.props === undefined ? "" : `, props: ${JSON.stringify(c.props)}`}${c.self ? ", self: true" : ""} }`,
           )
           .join(", ")} }`;
   const extraSql =
