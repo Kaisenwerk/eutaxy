@@ -7,7 +7,8 @@
 import type { RunHooks } from "@eutaxy/core";
 import { describe, expect, test } from "vitest";
 import { calleeEnv } from "./callees.ts";
-import { ownEnv } from "./object-access.ts";
+import { outsideRunEnv, ownEnv } from "./object-access.ts";
+import { service } from "./scenario.ts";
 
 /** Hooks that only collect the reasons a run was called unsupported for. */
 function collecting(): { hooks: RunHooks; reasons: string[] } {
@@ -143,5 +144,48 @@ describe("ownEnv", () => {
     ownEnv(hooks, "RUNNER", "r", null);
     expect(Object.keys(bare)).toEqual([]);
     expect(typeof (frozen.env.PEER as { complete(): unknown }).complete).toBe("function");
+  });
+});
+
+describe("outsideRunEnv", () => {
+  test("a constructor's call while its object is reset is answered from the scenario's script, and nothing else is", async () => {
+    let reached = 0;
+    const real = () => ({
+      fetch: async () => new Response("the real peer"),
+      connect: () => undefined,
+      load: async () => void reached++,
+    });
+    const scripts = [
+      service("CONFIG", {
+        methods: { load: { returns: { limit: 7 } }, fail: { throws: "RangeError: no" } },
+      }),
+      service("orders/CONFIG", { methods: { load: { returns: { limit: 9 } } } }),
+    ];
+    const scripted = (name: string) => scripts.find((s) => s.binding === name);
+    type Config = Record<"load" | "fail" | "other" | "fetch", () => Promise<unknown>> & {
+      load: Promise<unknown>;
+    };
+
+    const env = outsideRunEnv({ CONFIG: real(), PEER: real(), LIMIT: 3 }, scripted) as {
+      CONFIG: Config;
+      PEER: Config;
+      LIMIT: number;
+    };
+    expect(env.LIMIT).toBe(3);
+    expect(await env.CONFIG.load()).toEqual({ limit: 7 });
+    // An RPC getter awaited without a call is answered the same way.
+    expect(await env.CONFIG.load).toEqual({ limit: 7 });
+    await expect(env.CONFIG.fail()).rejects.toThrow(RangeError);
+    await expect(env.CONFIG.other()).rejects.toThrow(/called other on the service binding CONFIG/);
+    await expect(env.CONFIG.fetch()).rejects.toThrow(/outside a run/);
+    await expect(env.PEER.load()).rejects.toThrow(/no service\(\) script answers it there/);
+    expect(reached).toBe(0);
+
+    // A callee's object reads the binding under the callee's name.
+    const callee = outsideRunEnv(calleeEnv("orders", { "orders/CONFIG": real() }), scripted) as {
+      CONFIG: Config;
+    };
+    expect(await callee.CONFIG.load()).toEqual({ limit: 9 });
+    expect(reached).toBe(0);
   });
 });

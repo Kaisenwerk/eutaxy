@@ -23,6 +23,7 @@ import {
   BindingState,
   type DurableObjectTestHelpers,
   evictObject,
+  forgetHosts,
   isDurableObjectNamespace,
   proxyNamespace,
   resetNamespace,
@@ -245,6 +246,7 @@ export function durableObjectBinding(
       setUp = new Set();
       alarmLimits = new Map();
       wakes = 0;
+      forgetHosts();
       for (const state of states.values()) state.clear();
     },
     async reset(step, real) {

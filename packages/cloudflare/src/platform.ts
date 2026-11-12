@@ -28,13 +28,18 @@ import {
   workflowBinding,
 } from "./bindings.ts";
 import type { CalleeModule } from "./callees.ts";
-import type { DurableObjectTestHelpers } from "./durable-objects.ts";
+import {
+  type DurableObjectTestHelpers,
+  scriptsOutsideRuns,
+  simulateConstruction,
+  simulatingConstruction,
+} from "./durable-objects.ts";
 import { entrypointHandler } from "./entrypoint.ts";
 import { deliverRequest } from "./http.ts";
 import { type ProxyContext, refuse } from "./proxy-context.ts";
 import { deliverMessage } from "./queues.ts";
 import { deliverCall, entrypointClass } from "./rpc.ts";
-import { type Drive, driveEvents, restrictDrive } from "./scenario.ts";
+import { type Drive, driveEvents, restrictDrive, type ServiceSetup } from "./scenario.ts";
 import { deliverTick } from "./scheduled.ts";
 import { Connections, deliverWebSocket } from "./websocket.ts";
 
@@ -165,6 +170,9 @@ export function createCloudflarePlatform(options: CloudflarePlatformOptions): Pl
    * them: service bindings first (a callee's, then scripted), since in workerd
    * they answer every duck type (their property reads are RPC stubs).
    */
+  // The Worker's and the callees' Durable Object classes are constructed with the scenario's env.
+  simulateConstruction(options.exports);
+  for (const callee of Object.values(options.callees ?? {})) simulateConstruction(callee.exports);
   const durable = durableObjectBinding({
     ctx,
     helpers: options.durableObjects,
@@ -278,6 +286,12 @@ export function createCloudflarePlatform(options: CloudflarePlatformOptions): Pl
     async reset(spec: ScenarioSpec): Promise<void> {
       await connections.clear();
       for (const binding of bindings) binding.clear();
+      // From here to the cleanup, a Durable Object is constructed with the scenario's env.
+      simulatingConstruction(true);
+      // What a constructor calls while its object is reset is answered from the scenario's scripts.
+      scriptsOutsideRuns((name) =>
+        spec.setup.find((s): s is ServiceSetup => s.kind === "service" && s["binding"] === name),
+      );
       for (const [binding, setup] of ownedSetups(spec.setup, bindings)) {
         // One resource is set up once, under the name it is known by.
         if (setup.binding in aliases)
@@ -286,6 +300,11 @@ export function createCloudflarePlatform(options: CloudflarePlatformOptions): Pl
           );
         await binding.reset(setup, env[setup.binding]);
       }
+    },
+
+    async cleanup(): Promise<void> {
+      // Outside the platform's runs a class is constructed with the runtime's env again.
+      simulatingConstruction(false);
     },
 
     restrictEvents(spec: ScenarioSpec, keepIds: readonly string[]): ScenarioSpec {

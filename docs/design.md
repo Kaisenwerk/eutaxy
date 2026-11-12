@@ -815,23 +815,33 @@ shares the reading of the limit and none of the proxy code.
   before calling, and one that keeps the call from leaving does not make
   the writes durable. Current limits: storage operations are not
   turns (the input gate holds them, so this is the runtime's behaviour);
-  the object's calls on its other bindings (D1, R2) are not recorded; an
-  `env` its class keeps elsewhere than `this.env` (a private field, a
-  closure of its constructor) is not reached. A constructor runs before
-  the method a call names, on the first call of a run as in a wake, and
-  the runtime carries no context of the call into it. What it does
-  behind its input gate (`blockConcurrencyWhile`, wrapped on the state's
-  prototype) runs as the object's code while the call is on its way in
-  (`RunHooks.hostEntering`): its timers are virtual and the object's, so
-  one it awaits is fired for it as for an object sleeping before it
-  answers, and its effects are the entering call's; the call's method
-  starts once the gate is released, as in the runtime. What the
-  constructor's own body does outside the gate is still the runtime's to
-  run: the view over `env` is in place once it has returned, so a call it
-  makes there through a service binding reaches whatever the isolate
-  holds, unseen, and a timer it sets there and does not await is the
-  calling invocation's (in a wake, where that invocation ends at once,
-  the run is `UNSUPPORTED`); an
+  the object's calls on its other bindings (D1, R2) are not recorded. A
+  constructor runs before the method a call names, on the first call of
+  a run as in a wake, and the runtime carries no context of the call
+  into it. Two things put it inside the model all the same. A Durable
+  Object class among the modules the platform is given (the Worker's
+  exports, the callees') is given a base of the platform's between
+  itself and the runtime's `DurableObject`, which hands its constructor
+  the view over `env`: `this.env` is the scenario's from the
+  constructor's first line, so a call it makes through a service binding
+  is answered and recorded as any of the object's is. And what the
+  constructor does behind its input gate (`blockConcurrencyWhile`,
+  wrapped on the state's prototype) runs as the object's code while the
+  call is on its way in (`RunHooks.hostEntering`): its timers are
+  virtual and the object's, so one it awaits is fired for it as for an
+  object sleeping before it answers, and its effects are the entering
+  call's; the call's method starts once the gate is released, as in the
+  runtime. The reset constructs each seeded object too, outside any run:
+  there a method of a scripted service binding is answered from the
+  script, unrecorded, so that a constructor that loads from one comes
+  up, and anything else through a service binding is refused, never
+  passed to the isolate's own. Still outside: a class the platform is
+  not given (its `env` is put behind the view once its constructor has
+  returned), the `env` parameter a constructor keeps for itself where
+  `this.env` would do, and a timer the constructor's own body sets
+  outside the gate and does not await, which is the calling
+  invocation's (in a wake, where that invocation ends at once, the run
+  is `UNSUPPORTED`); an
   object reached
   only through another object's binding makes the run `UNSUPPORTED`, as do
   `jurisdiction()` namespaces (and a unique id asked for one) and a

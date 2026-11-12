@@ -434,11 +434,15 @@ export class Run implements RunHooks {
     // The host's code, as in `hostedCode`: its timers are virtual and the host's.
     const run = (): T => (this.patched ? this.patched.handlerCode(code) : code());
     if (!frame) return hostScope ? hostScope.run({ host, frame }, run) : run();
-    // While it runs the entering call is code that may be awaiting a timer of its own.
-    frame.entering++;
-    const left = (): void => {
-      frame.entering--;
-    };
+    // While it runs the entering call is code that may be awaiting a timer of its own, or an
+    // effect of its own that is parked.
+    this.frames.adjust(frame, () => {
+      frame.entering++;
+    });
+    const left = (): void =>
+      this.frames.adjust(frame, () => {
+        frame.entering--;
+      });
     let result: T;
     try {
       result = hostScope ? hostScope.run({ host, frame }, run) : run();
@@ -462,8 +466,11 @@ export class Run implements RunHooks {
     const current = this.frames.current();
     const frame =
       current?.host === host && current.active ? current : this.frames.claimHost(host, op);
-    // The call has crossed into the object: its code runs from here.
-    if (frame) frame.entered = true;
+    // The call has crossed into the object: its code runs from here (and may now count as waiting).
+    if (frame)
+      this.frames.adjust(frame, () => {
+        frame.entered = true;
+      });
     // An object's code is handler code: its timers are virtual, inside a call's I/O or not.
     const run = (): T => (this.patched ? this.patched.handlerCode(code) : code());
     const result = hostScope ? hostScope.run({ host, frame }, run) : run();

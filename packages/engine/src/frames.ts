@@ -72,9 +72,16 @@ export class Frame {
     this.mayPark = options.mayPark ?? (() => true);
   }
 
-  /** Its hosted code is only waiting on effects of its own that are parked (however deep). */
+  /**
+   * Its hosted code is only waiting on effects of its own that are parked
+   * (however deep). A call into a host (an object) waits only once its code
+   * is running there: one whose constructor left an effect parked and whose
+   * method has not started is still on its way in, and taking it for
+   * waiting would let another call enter the host's code ahead of it.
+   */
   isWaiting(): boolean {
-    return this.children > 0 && this.waitingChildren === this.children;
+    const inside = this.host === undefined || this.entered || this.entering > 0;
+    return inside && this.children > 0 && this.waitingChildren === this.children;
   }
 
   /**

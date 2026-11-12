@@ -17,7 +17,8 @@ import {
   type RunHooks,
 } from "@eutaxy/core";
 import { type Outcome, runInvocation } from "@eutaxy/engine";
-import { isServiceBinding } from "./services.ts";
+import type { ServiceSetup } from "./scenario.ts";
+import { isServiceBinding, scriptedError } from "./services.ts";
 
 /** The host an object's code runs as (`EffectOptions.host`): its namespace's target and its name. */
 export function hostOf(target: string, object: string): string {
@@ -69,9 +70,6 @@ export function hostMethod(hooks: RunHooks, host: string, instance: unknown, met
   }
 }
 
-/** Who each instance with a view over its env is and the run it belongs to, set each time a call enters it. */
-const ownerOfEnv = new WeakMap<object, { hooks: RunHooks; binding: string; object: string }>();
-
 /**
  * Under this key a callee's view of env (`calleeEnv`) gives the callee's
  * name, so an object constructed with that view has its bindings read back
@@ -92,9 +90,11 @@ export const calleeOfEnv: unique symbol = Symbol.for("eutaxy.calleeOfEnv");
  * that binding's faults. The binding is resolved when first used, so
  * reading it off `env` does nothing. Without the platform's env, or when it
  * holds nothing under the name, the call ends the run `UNSUPPORTED`. The
- * object's other bindings are its own to use, unrecorded. An `env` the
- * class keeps elsewhere than `this.env` (a private field, a closure of its
- * constructor) is out of reach.
+ * object's other bindings are its own to use, unrecorded. A class given
+ * the platform's base (`simulateConstruction`) is constructed with the view
+ * (`envView`) and this only tells it whose it is; for any other the view is
+ * in place once the constructor has returned, and the `env` parameter a
+ * constructor keeps for itself is out of reach either way.
  *
  * A call leaves the object only once what the object wrote before it is
  * durable, as the runtime's output gate holds an outgoing message until the
@@ -111,26 +111,115 @@ export function ownEnv(
   object: string,
   instance: unknown,
   worker?: () => object,
-  gate?: {
-    readonly slot: { pending: (() => Promise<void>) | undefined };
-    readonly durable: () => Promise<void>;
-  },
+  gate?: EnvGate,
 ): void {
   if (instance === null || typeof instance !== "object") return;
-  const viewed = ownerOfEnv.has(instance);
-  ownerOfEnv.set(instance, { hooks, binding, object });
-  if (viewed) return;
   const descriptor = Object.getOwnPropertyDescriptor(instance, "env");
   const env: unknown = descriptor?.value;
-  if (!descriptor?.writable || env === null || typeof env !== "object") return;
+  if (env === null || typeof env !== "object") return;
+  // Constructed with the view already (`envView`, through the class's base): whose it is, for this run.
+  const known = ownerOfView.get(env);
+  if (known) {
+    Object.assign(known, { hooks, binding, object });
+    return;
+  }
+  if (!descriptor?.writable) return;
+  (instance as { env: unknown }).env = envView(env, { hooks, binding, object }, worker, gate);
+}
+
+/**
+ * The env an object is constructed with outside a run (the reset constructs
+ * each seeded object to clear and seed it). No run is there to record a
+ * call, and the isolate's own binding must not be reached either: a method
+ * of a service binding the scenario scripts (`scripted`, by the binding's
+ * name there) is answered from the script as it will be in the run, so a
+ * constructor that loads from one comes up; anything else through a
+ * service binding (a `fetch()`, a binding with a callee or with no script)
+ * is refused. The instance is evicted before the run, whose first call
+ * constructs the object again, inside the run.
+ */
+export function outsideRunEnv(
+  env: object,
+  scripted: (binding: string) => ServiceSetup | undefined = () => undefined,
+): object {
+  const callee = (env as { readonly [calleeOfEnv]?: unknown })[calleeOfEnv];
+  const qualified = (name: string): string =>
+    typeof callee === "string" ? `${callee}/${name}` : name;
+  const stubs = new Map<string, object>();
+  const stubFor = (name: string): object => {
+    let stub = stubs.get(name);
+    if (!stub) {
+      const member = (method: string): object => {
+        const answer = async (): Promise<unknown> => {
+          const script = scripted(qualified(name));
+          const reply =
+            script === undefined || method === "fetch" || method === "connect"
+              ? undefined
+              : script.methods === undefined
+                ? { returns: null }
+                : Object.hasOwn(script.methods, method)
+                  ? script.methods[method]
+                  : undefined;
+          if (reply === undefined)
+            throw new Error(
+              `eutaxy: a Durable Object's constructor called ${method} on the service binding ${name} while the scenario's objects were being reset, outside a run, and no service() script answers it there`,
+            );
+          if ("throws" in reply) throw scriptedError(reply.throws);
+          return structuredClone(reply.returns);
+        };
+        return Object.assign(answer, {
+          // biome-ignore lint/suspicious/noThenProperty: an RPC property is awaitable as well as callable
+          then: (onFulfilled?: (v: unknown) => unknown, onRejected?: (e: unknown) => unknown) =>
+            answer().then(onFulfilled, onRejected),
+        });
+      };
+      stub = new Proxy(
+        {},
+        {
+          get: (_t, prop) =>
+            prop === "then" || typeof prop === "symbol" ? undefined : member(prop),
+        },
+      );
+      stubs.set(name, stub);
+    }
+    return stub;
+  };
+  return new Proxy(env, {
+    get(target, prop) {
+      const value = Reflect.get(target, prop, target) as unknown;
+      return typeof prop === "string" && isServiceBinding(value) ? stubFor(prop) : value;
+    },
+  });
+}
+
+/** What an object's output gate needs: the slot a call leaves it in, and the wait itself. */
+export interface EnvGate {
+  readonly slot: { pending: (() => Promise<void>) | undefined };
+  readonly durable: () => Promise<void>;
+}
+
+/** Whose each view over an env is: the object and the run a refusal is reported to. */
+const ownerOfView = new WeakMap<object, { hooks: RunHooks; binding: string; object: string }>();
+
+/**
+ * The view `ownEnv` puts over an object's `env`, made on its own so that a
+ * class given a base of the platform's (`simulatedBase`) is constructed
+ * with it and its constructor's first line already reads the scenario's
+ * bindings. `owner` is told again at each entry into the object.
+ */
+export function envView(
+  env: object,
+  owner: { hooks: RunHooks; binding: string; object: string },
+  worker?: () => object,
+  gate?: EnvGate,
+): object {
   const callee = (env as { readonly [calleeOfEnv]?: unknown })[calleeOfEnv];
   /** The name the scenario knows the object's binding by. */
   const qualified = (name: string): string =>
     typeof callee === "string" ? `${callee}/${name}` : name;
   const refuse = (name: string): never => {
-    const of = ownerOfEnv.get(instance) ?? { hooks, binding, object };
-    const reason = `Durable Object ${of.binding} ${of.object} called the service binding ${name} through its own env, and the scenario's env holds no service binding ${qualified(name)} to answer it`;
-    of.hooks.unsupported(reason);
+    const reason = `Durable Object ${owner.binding} ${owner.object} called the service binding ${name} through its own env, and the scenario's env holds no service binding ${qualified(name)} to answer it`;
+    owner.hooks.unsupported(reason);
     throw new Error(`eutaxy: ${reason}`);
   };
   const stubs = new Map<string, object>();
@@ -156,7 +245,7 @@ export function ownEnv(
               : undefined;
             if (through === null || typeof through !== "object") return refused;
             const member = Reflect.get(through, prop, through) as unknown;
-            return typeof member === "function" && gate ? behindGate(member, gate) : member;
+            return typeof member === "function" ? calling(member, owner, gate) : member;
           },
         },
       );
@@ -164,34 +253,50 @@ export function ownEnv(
     }
     return stub;
   };
-  (instance as { env: unknown }).env = new Proxy(env, {
+  const view = new Proxy(env, {
     get(target, prop) {
       const value = Reflect.get(target, prop, target) as unknown;
       return typeof prop === "string" && isServiceBinding(value) ? stubFor(prop) : value;
     },
   });
+  ownerOfView.set(view, owner);
+  return view;
 }
 
 /**
- * A method of a service binding as an object calls it: while the call (or
- * the await of an RPC getter) starts, the object's output gate is in the
- * slot for the stub to take. The start is synchronous, so no other call
- * sees it. Anything else read on the method is its own (the stub's guards).
+ * A method of a service binding as an object calls it. The call (or the
+ * await of an RPC getter) starts as the object's code, which it is: in a
+ * method it already runs as such, but the runtime carries no context into
+ * a constructor, whose call would otherwise be a turn of nobody's inside
+ * the call that is entering the object (`RunHooks.hostEntering`). And
+ * while it starts, the object's output gate is in the slot for the stub to
+ * take. The start is synchronous, so no other call sees the slot. Anything
+ * else read on the method is its own (the stub's guards).
  */
-function behindGate(
+function calling(
   member: object,
-  gate: {
-    readonly slot: { pending: (() => Promise<void>) | undefined };
-    readonly durable: () => Promise<void>;
-  },
+  owner: { hooks: RunHooks; binding: string; object: string },
+  gate: EnvGate | undefined,
 ): object {
   const starting = <T>(start: () => T): T => {
-    gate.slot.pending = gate.durable;
-    try {
-      return start();
-    } finally {
-      gate.slot.pending = undefined;
-    }
+    const behind = (): T => {
+      if (!gate) return start();
+      gate.slot.pending = gate.durable;
+      try {
+        return start();
+      } finally {
+        gate.slot.pending = undefined;
+      }
+    };
+    // Test doubles for the hooks may lack it; the run's has it. Only the start is the entering
+    // code: a constructor that starts a call and returns is not waiting on it, so the promise is
+    // handed out around the hook, not through it.
+    if (typeof owner.hooks.hostEntering !== "function") return behind();
+    let started: { readonly value: T } | undefined;
+    owner.hooks.hostEntering(hostOf(`DO:${owner.binding}`, owner.object), () => {
+      started = { value: behind() };
+    });
+    return (started as unknown as { readonly value: T }).value;
   };
   type Then = (ok?: (v: unknown) => unknown, fail?: (e: unknown) => unknown) => unknown;
   return new Proxy(member, {

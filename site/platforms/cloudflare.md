@@ -168,9 +168,13 @@ wrote before it is durable, as the runtime's output gate holds an outgoing
 message until the writes before it are confirmed, so a claim the object
 records before calling survives a reset after the call. The corpus's
 `object-charge-twice-after-answer` is an object that bills a run in work
-after its answer and records the charge after making it. Two limits: the
-object's calls on its other bindings (D1, R2) are not recorded, and an
-`env` the class keeps elsewhere than `this.env` is not reached.
+after its answer and records the charge after making it. A constructor is
+covered too: `this.env` is the scenario's from its first line, and what it
+does behind `blockConcurrencyWhile` (loading its configuration from
+another Worker, waiting on a timer) runs as the object's code before the
+call's method starts. Limits: the object's calls on its other bindings
+(D1, R2) are not recorded, and the `env` parameter a constructor keeps for
+itself, where `this.env` would do, is the runtime's.
 
 **SQLite storage.** For a SQLite-backed class (`new_sqlite_classes` in the
 wrangler migrations, the backend Cloudflare recommends and the Agents SDK

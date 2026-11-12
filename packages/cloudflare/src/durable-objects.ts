@@ -16,9 +16,9 @@
 import { canonicalJson, type JsonValue, type RunHooks, toJson, writeFaults } from "@eutaxy/core";
 import { withoutNetwork } from "@eutaxy/engine";
 import { AlarmBook, alarmControl, takenOver, takeOverAlarms } from "./alarms.ts";
-import { hostMethod, hostOf, ownEnv } from "./object-access.ts";
+import { envView, hostMethod, hostOf, outsideRunEnv, ownEnv } from "./object-access.ts";
 import type { ProxyContext } from "./proxy-context.ts";
-import type { DurableObjectSqlSeed } from "./scenario.ts";
+import type { DurableObjectSqlSeed, ServiceSetup } from "./scenario.ts";
 
 /** Seeds by object name: key-value entries, and SQL for SQLite-backed objects. */
 type Seeds = { readonly [name: string]: { readonly [key: string]: JsonValue } };
@@ -145,7 +145,115 @@ const gateWatched = new WeakSet<object>();
  * noted before each entry into the object: what its constructor does on the
  * way in has no other way to know whose code it is.
  */
-const hostOfId = new Map<string, { readonly hooks: () => RunHooks; readonly host: string }>();
+const hostOfId = new Map<
+  string,
+  {
+    readonly hooks: () => RunHooks;
+    readonly host: string;
+    readonly binding: string;
+    readonly object: string;
+    /** The platform's proxy context: its env answers the object's bindings, its slot carries the gate. */
+    readonly ctx: ProxyContext;
+    /** Told the instance's state as soon as it is constructed: the gate it may hold is watched from then. */
+    readonly constructed: (state: DurableObjectState) => void;
+  }
+>();
+
+/**
+ * Whether the platform is running a scenario (from its reset to its
+ * cleanup). Only then is a construction the scenario's: the base a class
+ * was given stays on it, and outside the platform's runs (the differential
+ * runner's raw side, which compares against the real bindings) it hands
+ * the runtime's env on untouched.
+ */
+let simulating = false;
+
+/** Tell that the platform's run of a scenario begins or is over. */
+export function simulatingConstruction(on: boolean): void {
+  simulating = on;
+  if (!on) hostOfId.clear();
+}
+
+/** Forget every object's host: a new run notes them again as it enters each. */
+export function forgetHosts(): void {
+  hostOfId.clear();
+}
+
+/** The scenario's service scripts by binding, for what a constructor calls while its object is reset. */
+let scriptedOutsideRuns: (binding: string) => ServiceSetup | undefined = () => undefined;
+
+/** Tell which service bindings the scenario being reset scripts (see `outsideRunEnv`). */
+export function scriptsOutsideRuns(scripted: (binding: string) => ServiceSetup | undefined): void {
+  scriptedOutsideRuns = scripted;
+}
+
+/** The bases the platform gave to Durable Object classes (`simulateConstruction`). */
+const simulatedBases = new WeakSet<object>();
+
+/**
+ * Give each Durable Object class among a module's exports a base that hands
+ * its constructor the scenario's view of env (`envView`), so that
+ * `this.env` is the scenario's from the constructor's first line: a call
+ * the constructor makes through a service binding is answered as any of the
+ * object's is. The class that extends the runtime's `DurableObject` (found
+ * by name, as the entrypoint bases are) is made to extend a class of the
+ * platform's that extends it in turn; the runtime constructs the same
+ * class as before. Outside a run (the reset) the constructor is given an
+ * env whose service bindings refuse. A class the platform is not given, or
+ * the `env` parameter a constructor keeps for itself, is out of reach.
+ */
+export function simulateConstruction(exports: Readonly<Record<string, unknown>> | undefined): void {
+  for (const value of Object.values(exports ?? {})) {
+    if (typeof value !== "function") continue;
+    // The class that extends the runtime's base directly, unless it was given a base already.
+    let direct: object | undefined = value;
+    while (direct !== undefined) {
+      const parent = Object.getPrototypeOf(direct) as unknown;
+      if (
+        typeof parent !== "function" ||
+        parent === Function.prototype ||
+        simulatedBases.has(parent)
+      )
+        direct = undefined;
+      else if ((parent as { name: string }).name === "DurableObject") break;
+      else direct = parent;
+    }
+    if (direct === undefined) continue;
+    const real = Object.getPrototypeOf(direct) as new (state: unknown, env: unknown) => object;
+    const base = class extends real {
+      constructor(state: unknown, env: unknown) {
+        super(state, constructionEnv(state, env));
+      }
+    };
+    // Still the runtime's base to anything that looks for it by name.
+    Object.defineProperty(base, "name", { value: "DurableObject" });
+    simulatedBases.add(base);
+    Object.setPrototypeOf(direct, base);
+    Object.setPrototypeOf((direct as { prototype: object }).prototype, base.prototype);
+  }
+}
+
+/** The env a class given a simulated base is constructed with: the entering run's view, or the refusing one outside a run. */
+function constructionEnv(state: unknown, env: unknown): unknown {
+  if (!simulating || env === null || typeof env !== "object") return env;
+  const id = (state as { id?: { toString(): string } } | null)?.id;
+  const of = id === undefined ? undefined : hostOfId.get(id.toString());
+  if (!of) return outsideRunEnv(env, scriptedOutsideRuns);
+  // Before the constructor's own code runs: a gate it takes is seen, and its effects wait behind it.
+  // The gate is watched from here too: for an object nobody seeded, no reset has installed that yet.
+  watchGate(state as DurableObjectState);
+  of.constructed(state as DurableObjectState);
+  const sync = (state as { storage?: { sync?: () => Promise<void> } }).storage?.sync;
+  const storage = (state as { storage?: object }).storage;
+  return envView(
+    env,
+    { hooks: of.hooks(), binding: of.binding, object: of.object },
+    of.ctx.env,
+    of.ctx.gate && typeof sync === "function"
+      ? { slot: of.ctx.gate, durable: () => sync.call(storage) }
+      : undefined,
+  );
+}
 
 /**
  * Record when an object holds its input gate with blockConcurrencyWhile,
@@ -172,7 +280,7 @@ function watchGate(state: DurableObjectState): void {
       }
     };
     const id = (this as { id?: { toString(): string } }).id;
-    const of = id === undefined ? undefined : hostOfId.get(id.toString());
+    const of = !simulating || id === undefined ? undefined : hostOfId.get(id.toString());
     return native.call(this, of ? () => of.hooks().hostEntering(of.host, held) : held);
   };
 }
@@ -528,7 +636,14 @@ function enterObject<T>(
   // Whoever enters the object constructs it, inside the run: no need to wake it at the end.
   state.dropped.delete(id);
   // Known before the runtime constructs the instance: its constructor's work is this object's.
-  hostOfId.set(id, { hooks: () => ctx.hooks, host: hostOf(`DO:${binding}`, object) });
+  hostOfId.set(id, {
+    hooks: () => ctx.hooks,
+    host: hostOf(`DO:${binding}`, object),
+    binding,
+    object,
+    ctx,
+    constructed: (live) => void state.states.set(id, live),
+  });
   return typed(helpers).runInDurableObject(stub, async (instance, live) => {
     watchGate(live);
     state.states.set(id, live);

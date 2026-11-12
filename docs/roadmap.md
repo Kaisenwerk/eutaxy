@@ -214,13 +214,11 @@ phase makes it right:
 - **The object's env and context from its construction.** The view over
   `env` and the object's context were in place only once the constructor
   had returned: a constructor that awaited a timer behind its input gate
-  was never resumed, and the check did not end; one that calls a service
-  binding reaches the isolate's own, unseen; and an `env` the class keeps
-  in a private field escapes the view for good. What a constructor does
-  behind `blockConcurrencyWhile` now runs as the object's code while the
-  call is on its way in. Still to come: the scenario's view of `env` from
-  the constructor's first line, by giving the class a base that hands it
-  on, as the callees' classes are given one today for their names.
+  was never resumed, and the check did not end; one that called a service
+  binding reached the isolate's own, unseen. A Durable Object class is
+  given a base that hands its constructor the scenario's view of `env`,
+  and what the constructor does behind `blockConcurrencyWhile` runs as
+  the object's code while the call is on its way in.
 
 Gate: an Agent whose work after its answer calls a scripted service and
 a callee, a callee's object that calls back into the caller's Worker and
@@ -241,9 +239,9 @@ nothing entered since, inside the run, before the snapshot
 every fault placement for scripted bindings, the v0.16 step-timeout gate
 no longer excepts any cell, and the planted bug
 `object-charge-twice-after-answer` (a charge made in work after the
-answer and recorded after it) is caught. Still to come, in this order:
-the object's env and context from its construction, which is a matter of
-what a verdict may be trusted for and so comes first; the gate with a
+answer and recorded after it) is caught. A constructor is inside the model too: its `this.env`
+is the scenario's from its first line, and its work behind its input
+gate is the object's code. Still to come, in this order: the gate with a
 real callee and the cycle back into the caller's Worker, with its
 differential entry; the object's D1 and R2 calls as effects;
 calls between objects; the scripted object.

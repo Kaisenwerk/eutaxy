@@ -464,6 +464,210 @@ export default defineScenario({
     }
   }, 180_000);
 
+  test("a constructor that calls a scripted service binding is answered from the script, as the object's methods are", async () => {
+    // The object loads its configuration from another Worker as it is constructed, behind its input
+    // gate. The class is given a base that hands its constructor the scenario's view of env: left
+    // with the runtime's, the call reaches the isolate's placeholder and the object never comes up.
+    const dir = join(root, "examples", "payments-queue", `cli-test-ctor-env-${process.pid}`);
+    mkdirSync(dir, { recursive: true });
+    try {
+      writeFileSync(
+        join(dir, "wrangler.jsonc"),
+        JSON.stringify({
+          name: "cli-test-ctor-env",
+          main: "worker.ts",
+          compatibility_date: "2026-10-01",
+          durable_objects: { bindings: [{ name: "RUNNER", class_name: "Runner" }] },
+          migrations: [{ tag: "v1", new_sqlite_classes: ["Runner"] }],
+          services: [{ binding: "CONFIG", service: "config-worker" }],
+        }),
+      );
+      writeFileSync(
+        join(dir, "worker.ts"),
+        `import { DurableObject } from "cloudflare:workers";
+interface Env {
+  readonly RUNNER: DurableObjectNamespace<Runner>;
+  readonly CONFIG: { load(): Promise<{ limit: number }> };
+}
+export class Runner extends DurableObject<Env> {
+  private limit = 0;
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
+    this.ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS runs (id TEXT PRIMARY KEY, lim INTEGER NOT NULL)");
+    void this.ctx.blockConcurrencyWhile(async () => {
+      this.limit = (await this.env.CONFIG.load()).limit;
+    });
+  }
+  async start(runId: string): Promise<{ accepted: true }> {
+    this.ctx.storage.sql.exec("INSERT OR IGNORE INTO runs (id, lim) VALUES (?, ?)", runId, this.limit);
+    return { accepted: true };
+  }
+}
+export default {
+  async fetch(request: Request, env: Env): Promise<Response> {
+    const runId = new URL(request.url).pathname.slice(1);
+    return Response.json(await env.RUNNER.get(env.RUNNER.idFromName("r")).start(runId));
+  },
+};
+`,
+      );
+      writeFileSync(
+        join(dir, "scenario.sim.ts"),
+        `import { defineScenario, durableObject, durableObjectTable, everyRow, http, service } from "eutaxy/cloudflare";
+export default defineScenario({
+  name: "ctor-env",
+  worker: { entry: "./worker.ts", config: "./wrangler.jsonc" },
+  setup: [durableObject("RUNNER", { r: {} }), service("CONFIG", { methods: { load: { returns: { limit: 7 } } } })],
+  drive: http([{ id: "run-1", path: "/run-1", method: "POST" }], { retries: 0 }),
+  externals: [],
+  invariants: [
+    everyRow("every-run-has-the-scripted-limit", durableObjectTable("RUNNER", "r", "runs"), [
+      { column: "lim", op: "eq", value: 7 },
+    ]),
+  ],
+  bounds: { maxFaultsPerRun: 0, maxRedeliveries: 0, budgetMs: 2000 },
+});
+`,
+      );
+      const r = await eutaxyWithin(
+        [
+          "check",
+          join(dir, "scenario.sim.ts"),
+          "--seed",
+          "cli",
+          "--max-runs",
+          "10",
+          "--no-regression",
+        ],
+        60_000,
+      );
+      expect(r.status, `${r.stdout}\n${r.stderr}`).toBe(0);
+      expect(r.stdout).toContain("BOUNDED  ctor-env");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 180_000);
+
+  test("constructors that call out and hold the gate end in a verdict with two invocations in flight", async () => {
+    // Two shapes, two requests into one object, two in flight. A constructor that starts a call
+    // outside its gate and lets a method await it: the call is the entering call's, not a turn of a
+    // stranger. And one that holds its gate over a call: nothing else may enter the object, or be
+    // scheduled as if it could, until the gate is released.
+    const dir = join(root, "examples", "payments-queue", `cli-test-ctor-two-${process.pid}`);
+    mkdirSync(dir, { recursive: true });
+    try {
+      writeFileSync(
+        join(dir, "wrangler.jsonc"),
+        JSON.stringify({
+          name: "cli-test-ctor-two",
+          main: "worker.ts",
+          compatibility_date: "2026-10-01",
+          durable_objects: {
+            bindings: [
+              { name: "EAGER", class_name: "Eager" },
+              { name: "GATED", class_name: "Gated" },
+            ],
+          },
+          migrations: [{ tag: "v1", new_sqlite_classes: ["Eager", "Gated"] }],
+          services: [{ binding: "CONFIG", service: "config-worker" }],
+        }),
+      );
+      writeFileSync(
+        join(dir, "worker.ts"),
+        `import { DurableObject } from "cloudflare:workers";
+interface Env {
+  readonly EAGER: DurableObjectNamespace<Eager>;
+  readonly GATED: DurableObjectNamespace<Gated>;
+  readonly CONFIG: { load(): Promise<{ limit: number }> };
+}
+const table = "CREATE TABLE IF NOT EXISTS runs (id TEXT PRIMARY KEY, lim INTEGER NOT NULL)";
+export class Eager extends DurableObject<Env> {
+  private readonly ready: Promise<{ limit: number }>;
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
+    this.ctx.storage.sql.exec(table);
+    this.ready = this.env.CONFIG.load();
+  }
+  async start(runId: string): Promise<{ accepted: true }> {
+    const { limit } = await this.ready;
+    this.ctx.storage.sql.exec("INSERT OR IGNORE INTO runs (id, lim) VALUES (?, ?)", runId, limit);
+    return { accepted: true };
+  }
+}
+export class Gated extends DurableObject<Env> {
+  private limit = 0;
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
+    this.ctx.storage.sql.exec(table);
+    void this.ctx.blockConcurrencyWhile(async () => {
+      this.limit = (await this.env.CONFIG.load()).limit;
+    });
+  }
+  async start(runId: string): Promise<{ accepted: true }> {
+    this.ctx.storage.sql.exec("INSERT OR IGNORE INTO runs (id, lim) VALUES (?, ?)", runId, this.limit);
+    return { accepted: true };
+  }
+}
+export default {
+  async fetch(request: Request, env: Env): Promise<Response> {
+    const [, kind, runId = ""] = new URL(request.url).pathname.split("/");
+    const namespace = kind === "eager" ? env.EAGER : env.GATED;
+    return Response.json(await namespace.get(namespace.idFromName("r")).start(runId));
+  },
+};
+`,
+      );
+      // "fresh" is the gated class with no object seeded: nothing constructs it before the run.
+      const kinds = ["eager", "gated", "fresh"] as const;
+      const bindingOf = (kind: string) => (kind === "eager" ? "EAGER" : "GATED");
+      const pathOf = (kind: string) => (kind === "eager" ? "eager" : "gated");
+      for (const kind of kinds) {
+        writeFileSync(
+          join(dir, `${kind}.sim.ts`),
+          `import { defineScenario, durableObject, durableObjectTable, everyRow, http, service } from "eutaxy/cloudflare";
+export default defineScenario({
+  name: "ctor-two-${kind}",
+  worker: { entry: "./worker.ts", config: "./wrangler.jsonc" },
+  setup: [durableObject("${bindingOf(kind)}", ${kind === "fresh" ? "{}" : "{ r: {} }"}), service("CONFIG", { methods: { load: { returns: { limit: 7 } } } })],
+  drive: http(
+    [
+      { id: "run-1", path: "/${pathOf(kind)}/run-1", method: "POST" },
+      { id: "run-2", path: "/${pathOf(kind)}/run-2", method: "POST" },
+    ],
+    { retries: 0 },
+  ),
+  externals: [],
+  invariants: [
+    everyRow("every-run-has-the-scripted-limit", durableObjectTable("${bindingOf(kind)}", "r", "runs"), [
+      { column: "lim", op: "eq", value: 7 },
+    ]),
+  ],
+  bounds: { maxFaultsPerRun: 0, maxRedeliveries: 0, maxConcurrentInvocations: 2, budgetMs: 2000 },
+});
+`,
+        );
+      }
+      for (const kind of kinds) {
+        const r = await eutaxyWithin(
+          [
+            "check",
+            join(dir, `${kind}.sim.ts`),
+            "--seed",
+            "cli",
+            "--max-runs",
+            "20",
+            "--no-regression",
+          ],
+          60_000,
+        );
+        expect(r.status, `${kind}\n${r.stdout}\n${r.stderr}`).toBe(0);
+        expect(r.stdout).toContain(`BOUNDED  ctor-two-${kind}`);
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 240_000);
+
   test("fails clearly without a scenario or a wrangler config", () => {
     expect(eutaxy(["check"]).status).toBe(3);
     const bad = eutaxy([
