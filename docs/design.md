@@ -810,7 +810,11 @@ shares the reading of the limit and none of the proxy code.
   The call leaves the object only once what the object wrote before it
   is durable: the storage's `sync()` is awaited inside the effect, before
   the call is performed, as the runtime's output gate holds an outgoing
-  message until the writes before it are confirmed. A fault that resets
+  message until the writes before it are confirmed (the gate is handed
+  to the stub in a slot the stub empties as it takes it: a crash fault's
+  `abort()` ends the object's code without unwinding, and a gate left
+  behind would be the next call's to wait on, another object's storage).
+  A fault that resets
   the object after the call therefore finds a claim the object recorded
   before calling, and one that keeps the call from leaving does not make
   the writes durable. Current limits: storage operations are not

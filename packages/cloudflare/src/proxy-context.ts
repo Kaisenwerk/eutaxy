@@ -44,13 +44,17 @@ export function pointAt(
 /**
  * What performing a call must wait on first, when an object is making it:
  * the object's writes before the call, durable, as the runtime's output gate
- * holds an outgoing message until they are. Read where the stub's call
+ * holds an outgoing message until they are. Taken where the stub's call
  * starts, synchronously; the wait runs inside the effect, as its real I/O,
  * so a fault that keeps the call from leaving does not make the writes
  * durable and one that lands after it finds them kept.
  */
 export function outboundGate<T>(ctx: ProxyContext, perform: () => Promise<T>): () => Promise<T> {
+  // Taken, not read: the slot is empty again before the effect is made. A crash fault on that
+  // effect resets the object with `abort()`, which ends its code without running a `finally`, and a
+  // gate left in the slot would be the next call's, anywhere, to wait on: another object's storage.
   const gate = ctx.gate?.pending;
+  if (ctx.gate) ctx.gate.pending = undefined;
   return gate
     ? async () => {
         await gate();

@@ -8,6 +8,7 @@ import type { RunHooks } from "@eutaxy/core";
 import { describe, expect, test } from "vitest";
 import { calleeEnv } from "./callees.ts";
 import { outsideRunEnv, ownEnv } from "./object-access.ts";
+import { outboundGate, type ProxyContext } from "./proxy-context.ts";
 import { service } from "./scenario.ts";
 
 /** Hooks that only collect the reasons a run was called unsupported for. */
@@ -187,5 +188,27 @@ describe("outsideRunEnv", () => {
     };
     expect(await callee.CONFIG.load()).toEqual({ limit: 9 });
     expect(reached).toBe(0);
+  });
+});
+
+describe("outboundGate", () => {
+  test("takes the gate out of the slot: nothing is left for a later call when the object's code ends without unwinding", async () => {
+    const order: string[] = [];
+    const slot: { pending: (() => Promise<void>) | undefined } = {
+      pending: async () => void order.push("durable"),
+    };
+    const ctx = { gate: slot } as unknown as ProxyContext;
+    const perform = outboundGate(ctx, async () => {
+      order.push("performed");
+      return 1;
+    });
+    // Empty at once, before the effect that will perform it is even made.
+    expect(slot.pending).toBeUndefined();
+    // A call made by anyone else meanwhile waits on nothing of that object's.
+    const other = outboundGate(ctx, async () => void order.push("other"));
+    await other();
+    expect(order).toEqual(["other"]);
+    expect(await perform()).toBe(1);
+    expect(order).toEqual(["other", "durable", "performed"]);
   });
 });
