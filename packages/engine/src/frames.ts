@@ -213,17 +213,21 @@ export class Frames {
    * resumed in the context of an effect that has ended, as an object's code
    * may run in the context it was built in) or absent (workerd carries none
    * into an object's code): trust only a live frame of the same invocation
-   * (the innermost); else, for code in a stale context or hosted code
-   * (`hosted`: an object's, entered by the platform), the invocation's own
-   * hosting effect. Code in no context at all that is not hosted is
+   * (the innermost); else, for hosted code (`hosted`: an object's, entered
+   * by the platform), the call that code is (`call`, when the platform
+   * knows it: an invocation may have calls into several objects in flight
+   * at once, and the one that started last is not the one every object's
+   * code is inside); else, for hosted code or code in a stale context, the
+   * invocation's own innermost hosting effect. Code in no context at all that is not hosted is
    * outside every effect: a second strand of the invocation (a step
    * attempt the engine gave up on, see `Run.attempt`) running while a call
    * of the first strand is in flight.
    */
-  enclosing(invocation: string, hosted = true): Frame | undefined {
+  enclosing(invocation: string, hosted = true, call?: Frame): Frame | undefined {
     if (!effectScope) return this.stack.at(-1);
     const store = effectScope.getStore();
     if (store?.active && store.invocation === invocation) return store;
+    if (call?.active && call.invocation === invocation) return call;
     return hosted || store !== undefined ? this.hosting.get(invocation)?.at(-1) : undefined;
   }
 

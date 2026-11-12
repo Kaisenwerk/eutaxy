@@ -913,6 +913,8 @@ export class Run implements RunHooks {
     options: EffectOptions = {},
   ): Promise<T> {
     const ctx = hostScope?.getStore();
+    /** A host's code inside a call of its: that call. */
+    let call: Frame | undefined;
     if (ctx !== undefined) {
       const { host } = ctx;
       // The call this code is, while its effect is being performed; where the call is not known, the
@@ -922,6 +924,7 @@ export class Run implements RunHooks {
           ? ctx.frame
           : undefined
         : this.frames.liveHost(host);
+      call = live;
       if (live) {
         // A host's code inside one of its effects: the effect is that one's, whatever invocation the
         // platform named (the runtime carries no context of the caller's into the host's code).
@@ -960,7 +963,9 @@ export class Run implements RunHooks {
     const inv = this.invocation(point.invocation);
     // An effect made inside another's perform (an object calling out during a call) is part of
     // that effect's turn: parking it would wait for the outer one, which waits for it.
-    const enclosing = this.frames.enclosing(point.invocation, hostScope?.getStore() !== undefined);
+    // Hosted code's effect is inside the call that code is, whichever of the invocation's calls
+    // into objects started last.
+    const enclosing = this.frames.enclosing(point.invocation, ctx !== undefined, call);
     // Whose effect it is (the object's own once its call was handed over, see `ownerOf`): a crashed
     // owner's effect hangs.
     if (this.ownerOf(inv, enclosing).isCrashed()) return hang();
