@@ -11,7 +11,7 @@ can rely on it.
 
 ## As of now
 
-The phases through v0.16 are done; `docs/design.md` describes what they
+The phases through v0.17 are done; `docs/design.md` describes what they
 built, and each phase's gate keeps running in CI on every change.
 - **v0.4, the simulator.** A Worker's queue consumer run under explored
   schedules: faults at every effect, redelivery as Cloudflare Queues
@@ -109,10 +109,40 @@ built, and each phase's gate keeps running in CI on every change.
   turn abandoned meanwhile), the first has its differential entry (the
   local runtime models the Workflows engine rather than running it), and
   every example and the v0.14 gate stay green.
+- **v0.17, inside the object.** A Durable Object is handed the Worker's
+  real `env`, so what it called through its own bindings happened outside
+  the simulation: not recorded, not faulted, and a service binding the
+  scenario scripts was, inside the object, a placeholder nothing was
+  meant to call. Now every binding on an object's `env` is what the
+  Worker sees under that name. A call through a service binding is
+  answered from the scenario's script or by the callee hosted inside it,
+  a statement on D1, an operation on R2 and a call on a Workflow binding
+  are recorded and faulted as the Worker's are, and a call on a binding
+  the simulation does not model is refused. Each is an effect of the
+  invocation the object's code runs as (the call it is serving, or
+  `DO:<binding>/<object>/after` once it has answered), and leaves the
+  object once its earlier writes are durable. A callee's object may call
+  back into the caller's Worker. A constructor is inside the model from
+  its first line, an object a crash reset and nothing entered since is
+  woken inside the run before its storage is read, and a callback behind
+  `blockConcurrencyWhile` that fails resets the object as the runtime
+  does. Gate: an Agent whose work after its answer calls a scripted
+  service and a callee, a callee's object that calls back into the
+  caller's Worker and wakes its Workflow's wait, an object writing to a
+  database and a bucket, and an object starting a Workflow instance,
+  each ending in a verdict under every fault placement with no
+  `UNSUPPORTED`; a planted bug caught for the service call, the callback
+  and the stores (in each, a write outside the object that a fault
+  separates from the object's own); a differential entry for the stores,
+  the one case the local runtime under the test plugin runs by itself;
+  and every example and earlier gate green.
 
 Notes on releases along the way:
-- `0.16.0` closes v0.16; the patch work after it ships as `0.16.x`, and
-  the next minor opens with v0.17.
+- `0.17.0` closes v0.17; the patch work after it ships as `0.17.x`, and
+  the next minor opens with v0.18. Calls between Durable Objects and the
+  scripted Durable Object, which the phase first held, are the first of
+  that patch work: the rest of the phase is what an adopter's flow was
+  waiting on, and neither changes any of it.
 - `0.9.0` needs TypeScript 7.1 in the project (`typescript@7.1.0-beta`
   until the release on 2026-11-24, then the release): the spec reader runs
   the project's compiler. The reader follows the compiler's own releases
@@ -132,6 +162,23 @@ Notes on releases along the way:
 Work that changes no phase's gate ships as a patch release of the current
 minor, each item when a target needs it (the performance items and the
 proof cache are v0.18's and wait for it unless a target needs one sooner):
+- **Calls between Durable Objects and a scripted Durable Object**, first,
+  as `0.17.1`. One object calling another through its own `env` becomes
+  an effect hosting the second object's turn, with the faults a stub
+  call has, in place of the run ending `UNSUPPORTED`. A call nested in
+  another object's call meets everything a call from the Worker does
+  (a timer the called object awaits before it answers, work it goes on
+  with after, a reset of either object while the call is in flight), so
+  it is done when each of those is tested nested as it is tested from
+  the Worker, not when one gate entry passes. A scripted object is a
+  namespace whose objects answer their methods from the scenario, as
+  `service()` answers a Worker, each call an effect, from the Worker and
+  from another object: for an object the isolate cannot run (one backed
+  by a container) or one the scenario does not want to explore; an
+  adopter's second flow waits on it. Done when an object calling a
+  second real object and a scripted one each end in a verdict under
+  every fault placement with no `UNSUPPORTED`, a planted bug in each is
+  caught, and the real one has its differential entry.
 - A configurable number of `TESTED` draws on the command line (the API
   takes `inputs`).
 - The command loads the spec reader and the engines only where specs are
@@ -166,114 +213,11 @@ proof cache are v0.18's and wait for it unless a target needs one sooner):
   Workflow rollback handlers. Dynamic partial-order reduction and one
   random stream per invocation are v0.18's.
 
-## After v0.16
+## After v0.17
 
-Each phase's text is made exact, gate included, when it starts. v0.17
-comes first because an adopter's flow waits on it and because a verdict
-was wrong without it; v0.18 holds the measurement it starts on; v0.19
-needs both before it.
-
-### v0.17 — Inside the object
-
-A Durable Object is handed the Worker's real `env`, so what it calls
-through its own bindings happens outside the simulation: not recorded,
-not faulted, and a service binding the scenario scripts is, inside the
-object, the placeholder nothing was meant to call. An adopter's Agent
-called a scripted model service from the work it does after its answer;
-every call failed inside the object, the Worker's own retries absorbed
-the failures, and the check was `BOUNDED` because no invariant read the
-outcome. The patch before the phase makes that run `UNSUPPORTED` (a call
-on a service binding through `this.env` is refused with the reason); the
-phase makes it right:
-- **An object's own binding calls are effects.** A call an object makes
-  through a service binding is answered as the Worker's own is, from the
-  scenario's script or by the callee hosted inside the call, as an
-  effect of the object's invocation (the call it is serving, or
-  `DO:<binding>/<object>/after` once it has answered), with a stub
-  call's faults. That includes the cycle: a callee's object calling back
-  into the caller's Worker, whose handler runs as an invocation of its
-  own and can send the event a Workflow of the caller waits for. The
-  object's calls on the other proxied bindings (D1, R2) are recorded and
-  faulted the same way, since a crash between an object's write outside
-  and its write to its own storage is where its bugs live.
-- **Calls between Durable Objects.** One object calling another through
-  its own `env` becomes an effect hosting the second object's turn, with
-  the faults a stub call has, in place of the run ending `UNSUPPORTED`.
-- **A scripted Durable Object.** A namespace whose objects answer their
-  methods from the scenario, as `service()` answers a Worker, each call
-  an effect: for an object the isolate cannot run (one backed by a
-  container) or one the scenario does not want to explore.
-
-- **An object reset by the run's last event.** Reading such an object's
-  storage for the snapshot constructed it after the run, outside the
-  simulation, and the run was `UNSUPPORTED` rather than guessed. An
-  object with a watchdog alarm meets this whenever a crash lands on the
-  alarm's last retry, so the phase's gate cannot hold without it: the
-  object is woken inside the run, as its next event would wake it.
-
-- **The object's env and context from its construction.** The view over
-  `env` and the object's context were in place only once the constructor
-  had returned: a constructor that awaited a timer behind its input gate
-  was never resumed, and the check did not end; one that called a service
-  binding reached the isolate's own, unseen. A Durable Object class is
-  given a base that hands its constructor the scenario's view of `env`,
-  and what the constructor does behind `blockConcurrencyWhile` runs as
-  the object's code while the call is on its way in.
-
-Gate: an Agent whose work after its answer calls a scripted service and
-a callee, a callee's object that calls back into the caller's Worker and
-wakes its Workflow's wait, an object calling a second real object and a
-scripted one, each ending in a verdict under every fault placement with
-no `UNSUPPORTED`; a planted bug in each is caught (a write outside the
-object that a crash separates from the object's own); a differential
-entry for each where the local runtime implements it; and every example
-and earlier gate stays green.
-
-In place: an object's calls through its service bindings, scripted or
-with a callee hosted in the call, as effects of the invocation its code
-runs as, leaving the object once its earlier writes are durable, as
-behind the output gate; and the wake of an object a crash reset and
-nothing entered since, inside the run, before the snapshot
-(`docs/design.md`, Durable Objects). The gate entry
-`v0-17-object-calls-service` is `BOUNDED` with nothing unsupported under
-every fault placement for scripted bindings, the v0.16 step-timeout gate
-no longer excepts any cell, and the planted bug
-`object-charge-twice-after-answer` (a charge made in work after the
-answer and recorded after it) is caught. A constructor is inside the model too: its `this.env`
-is the scenario's from its first line, and its work behind its input
-gate is the object's code. And the cycle runs: the gate entry
-`v0-17-callback` is two Workers' real code through the command, a
-callee's object calling back into the scenario's own Worker, whose
-handler wakes the Workflow that waits; it is `BOUNDED` with nothing
-unsupported with two in flight and one at a time under one fault a run,
-and its planted bug (a notice recorded each time it is sent) is caught.
-It has no differential entry: the local runtime under the test plugin
-holds no second Worker to call. The object's stores are in too: a
-statement it runs on a D1 database and an operation on an R2 bucket,
-through its own `env`, are effects of the invocation its code runs as,
-performed on the real store behind the same gate. The gate entry
-`v0-17-object-stores` (bytes to a bucket inside the call, the catalogue
-row to a database after the answer, the limit loaded by the constructor)
-is `BOUNDED` with nothing unsupported under every fault placement, one
-and two in flight; the planted bug `object-entry-twice-across-crash` (a
-ledger row written and the object's record of it lost to a crash, so the
-resend writes it again) is caught; and the differential entry
-`object-stores` agrees with the local runtime on every answer and on
-what each store holds. The gate found that a callback behind
-`blockConcurrencyWhile` that failed left the model waiting on an
-instance the runtime had already reset; the model resets it now too.
-The object's remaining bindings are the Worker's as well: a Workflow
-binding on its own `env` is answered by the model, so an instance an
-object creates runs the scenario's class as an event of the run and
-never in the local engine, and a call on a binding the model does not
-cover is refused from inside an object as it is from the Worker, where
-both used to reach the isolate's own, unseen. The gate entry
-`v0-17-object-bindings` (an object that starts a Workflow instance for
-each job it takes, the instance's step calling back into it) is
-`BOUNDED` with nothing unsupported under every fault placement, one and
-two in flight, and its read of a KV namespace is `UNSUPPORTED` with the
-reason. Still to come, in this order: calls between objects; the
-scripted object.
+Each phase's text is made exact, gate included, when it starts. v0.18
+holds the measurement it starts on; v0.19 needs it and the semantics the
+phases before it settled.
 
 ### Candidates: the larger gaps in the model
 
@@ -291,6 +235,14 @@ when it does:
 - **A scripted binding for request-and-answer bindings** (Workers AI,
   Vectorize, Images and the like), answered from the scenario as
   `service()` answers a service binding.
+- **Calls in parallel inside one invocation.** A handler that awaits two
+  calls together (`Promise.all` over two object stubs) has two chains of
+  effects in flight at once. With several invocations in flight each
+  effect is a turn and the order is the seed's; with one at a time the
+  chains race in real time, and a check that sees two orders reports the
+  run as one that does not replay (`module_state_leak`), which names the
+  wrong cause. The effects of such chains want to be turns in a
+  sequential run too.
 - **Later:** RPC promise pipelining and capabilities (stubs returned,
   functions passed); the standard WebSocket API and auto-responses; D1
   sessions; R2 multipart uploads; constructors that read the alarm, as an
