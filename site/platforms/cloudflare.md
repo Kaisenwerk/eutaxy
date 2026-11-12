@@ -177,7 +177,8 @@ after its answer and records the charge after making it. A constructor is
 covered too: `this.env` is the scenario's from its first line, and what it
 does behind `blockConcurrencyWhile` (loading its configuration from
 another Worker, waiting on a timer) runs as the object's code before the
-call's method starts. Limits: the object's calls on its other bindings
+call's method starts. A callback there that fails resets the object, as
+the runtime does. Limits: the object's calls on its other bindings
 (D1, R2) are not recorded, and the `env` parameter a constructor keeps for
 itself, where `this.env` would do, is the runtime's.
 

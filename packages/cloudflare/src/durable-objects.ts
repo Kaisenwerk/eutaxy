@@ -156,6 +156,8 @@ const hostOfId = new Map<
     readonly ctx: ProxyContext;
     /** Told the instance's state as soon as it is constructed: the gate it may hold is watched from then. */
     readonly constructed: (state: DurableObjectState) => void;
+    /** Told when a callback behind the instance's input gate failed: the runtime resets the object. */
+    readonly broken: (state: DurableObjectState) => void;
   }
 >();
 
@@ -261,7 +263,11 @@ function constructionEnv(state: unknown, env: unknown): unknown {
  * holds the gate for as the object's code (`RunHooks.hostEntering`): a
  * constructor's work behind the gate has no context of the call entering
  * the object, and a timer it awaited would be nobody's to fire. Inside a
- * method the code is the object's already and runs as it is.
+ * method the code is the object's already and runs as it is. A callback
+ * that fails breaks the gate, and the runtime resets the object
+ * (developers.cloudflare.com/durable-objects/api/state/#blockconcurrencywhile):
+ * the run is told (`broken`), so nothing waits on the instance that is
+ * gone.
  */
 function watchGate(state: DurableObjectState): void {
   const proto = Object.getPrototypeOf(state) as {
@@ -271,16 +277,21 @@ function watchGate(state: DurableObjectState): void {
   gateWatched.add(proto);
   const native = proto.blockConcurrencyWhile;
   proto.blockConcurrencyWhile = function (this: object, callback: () => Promise<unknown>) {
+    const id = (this as { id?: { toString(): string } }).id;
+    const of = !simulating || id === undefined ? undefined : hostOfId.get(id.toString());
+    // The state holding a gate is its object's live one, whether or not its class was given a base.
+    of?.constructed(this as DurableObjectState);
     const held = async (): Promise<unknown> => {
       gateDepth.set(this, (gateDepth.get(this) ?? 0) + 1);
       try {
         return await callback();
+      } catch (err) {
+        of?.broken(this as DurableObjectState);
+        throw err;
       } finally {
         gateDepth.set(this, (gateDepth.get(this) ?? 1) - 1);
       }
     };
-    const id = (this as { id?: { toString(): string } }).id;
-    const of = !simulating || id === undefined ? undefined : hostOfId.get(id.toString());
     return native.call(this, of ? () => of.hooks().hostEntering(of.host, held) : held);
   };
 }
@@ -321,6 +332,19 @@ export class BindingState {
     this.states.clear();
     this.dropped.clear();
     this.seededSql = new Map();
+  }
+
+  /**
+   * The object's instance is gone because a callback behind its input gate
+   * failed, which makes the runtime reset it. Nothing to abort: the runtime
+   * did. Not for an instance a crash already reset (its failing callback
+   * is that crash unwinding), nor for one a newer instance has replaced.
+   */
+  broke(id: string, live: DurableObjectState, reset: () => void): void {
+    if (this.states.get(id) !== live) return;
+    this.states.delete(id);
+    this.dropped.add(id);
+    reset();
   }
 
   /**
@@ -643,6 +667,8 @@ function enterObject<T>(
     object,
     ctx,
     constructed: (live) => void state.states.set(id, live),
+    broken: (live) =>
+      state.broke(id, live, () => ctx.hooks.hostReset(hostOf(`DO:${binding}`, object))),
   });
   return typed(helpers).runInDurableObject(stub, async (instance, live) => {
     watchGate(live);
@@ -840,16 +866,29 @@ async function readTables(
     let entries: [string, unknown][];
     const tables: [string, JsonValue[]][] = [];
     if (read) {
-      const read = await typed(helpers).runInDurableObject(real.get(id), (_instance, state) => {
-        // Storage Eutaxy never took over belongs to an instance built after the run's calls.
-        if (!all && !takenOver.has(state.storage))
-          onUnsupported(
-            `Durable Object ${name} was reset during the run and reconstructed for the snapshot; its constructor ran outside the simulation`,
-          );
-        const surface = sqlOf(state.storage);
-        const sqlTables: [string, JsonValue[]][] = surface ? readSqlTables(surface) : [];
-        return Promise.resolve(state.storage.list()).then((kv) => ({ kv: [...kv], sqlTables }));
-      });
+      let failed: { readonly reason: string } | undefined;
+      const read = await typed(helpers)
+        .runInDurableObject(real.get(id), (_instance, state) => {
+          // Storage Eutaxy never took over belongs to an instance built after the run's calls.
+          if (!all && !takenOver.has(state.storage))
+            onUnsupported(
+              `Durable Object ${name} was reset during the run and reconstructed for the snapshot; its constructor ran outside the simulation`,
+            );
+          const surface = sqlOf(state.storage);
+          const sqlTables: [string, JsonValue[]][] = surface ? readSqlTables(surface) : [];
+          return Promise.resolve(state.storage.list()).then((kv) => ({ kv: [...kv], sqlTables }));
+        })
+        .catch((err: unknown) => {
+          failed = { reason: err instanceof Error ? err.message : String(err) };
+          return undefined;
+        });
+      // An object that cannot be constructed cannot be read: said, and left out of the snapshot.
+      if (!read) {
+        onUnsupported(
+          `Durable Object ${name} could not be entered to read its storage for the snapshot (${failed?.reason ?? "no reason given"})`,
+        );
+        continue;
+      }
       entries = read.kv;
       tables.push(...read.sqlTables);
     } else {

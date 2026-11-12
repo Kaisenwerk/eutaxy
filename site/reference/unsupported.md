@@ -112,11 +112,25 @@ path.
 
 **`Durable Object <object> was reset during the run and reconstructed for the snapshot; its constructor ran outside the simulation`**
 The object's instance went away during the run without Eutaxy resetting
-it (a failing `blockConcurrencyWhile`, the runtime evicting it), and
-nothing entered it again, so only the end-of-run snapshot constructed it,
-with the real clock and network. An object that a fault reset is not this
-case: it is woken inside the run. Make a later event of the scenario
-enter the object, or keep the constructor from failing.
+it (the runtime evicting it), and nothing entered it again, so only the
+end-of-run snapshot constructed it, with the real clock and network. An
+object that a fault reset, or whose `blockConcurrencyWhile` callback
+failed, is not this case: it is woken inside the run. Make a later event
+of the scenario enter the object.
+
+**`Durable Object <binding> <object> could not be woken at the end of the run: a callback behind its input gate failed each of the <n> times it was constructed for that, more often than the run's faults explain, so what its storage holds was not read as its next event would find it`**
+The object was reset and nothing entered it again, so it was woken inside
+the run for the snapshot, and its constructor's `blockConcurrencyWhile`
+callback failed every time, with no fault left to explain it: the
+constructor fails by itself (what it loads is missing, or the state the
+run left is one it cannot start from). Fix the constructor, or make the
+scenario's setup give it what it reads.
+
+**`Durable Object <object> could not be entered to read its storage for the snapshot (<reason>)`**
+The end-of-run snapshot reads each object's storage from inside it, and
+this object could not be constructed: its constructor threw, or a
+callback behind its input gate failed. Its tables are left out of the
+snapshot. The reason is the constructor's own error.
 
 **`Durable Object <binding> <object> was woken at the end of the run and its constructor left a timer running; work a constructor starts and does not await is not followed there`**
 A fault reset the object and nothing entered it again, so it was woken

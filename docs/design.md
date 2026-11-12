@@ -831,6 +831,14 @@ shares the reading of the limit and none of the proxy code.
   the writes durable. Current limits: storage operations are not
   turns (the input gate holds them, so this is the runtime's behaviour);
   the object's calls on its other bindings (D1, R2) are not recorded. A
+  callback behind the input gate that fails breaks the gate, and the
+  runtime resets the object: the model takes the instance for gone from
+  there, with its work and its poller, as after a crash inside it, so
+  the call that was entering fails, the next event constructs the object
+  again, and when none comes it is woken before the snapshot. An object
+  whose construction fails in more wakes than the run has faults fails
+  by itself: it is not woken again, the snapshot leaves out an object it
+  cannot enter, and the run is `UNSUPPORTED` with the reason. A
   constructor runs before the method a call names, on the first call of
   a run as in a wake, and the runtime carries no context of the call
   into it. Two things put it inside the model all the same. A Durable

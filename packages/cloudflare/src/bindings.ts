@@ -229,6 +229,8 @@ export function durableObjectBinding(
   };
   /** Wakes handed out this run, to name each one. */
   let wakes = 0;
+  /** Wakes delivered to each object this run, by binding and id. */
+  const woken = new Map<string, number>();
   return {
     objects,
     kind: "durable_object",
@@ -246,6 +248,7 @@ export function durableObjectBinding(
       setUp = new Set();
       alarmLimits = new Map();
       wakes = 0;
+      woken.clear();
       forgetHosts();
       for (const state of states.values()) state.clear();
     },
@@ -291,7 +294,28 @@ export function durableObjectBinding(
       return events;
     },
     async deliver(event, hooks, spec) {
-      if (event.source === wakeSource) return deliverWake(event, hooks, objects);
+      if (event.source === wakeSource) {
+        const { binding, id, object } = event.data as {
+          binding: string;
+          id: string;
+          object: string;
+        };
+        const key = `${binding}\n${id}`;
+        const times = (woken.get(key) ?? 0) + 1;
+        woken.set(key, times);
+        const result = await deliverWake(event, hooks, objects);
+        // A wake that left the object dropped again failed: a fault landed in its constructor, or
+        // the constructor fails by itself. Each fault explains one failure, so more failures than
+        // the run has faults are the object's own, and waking it again would fail the same way.
+        const state = stateFor(binding);
+        if (state.dropped.has(id) && times > spec.bounds.maxFaultsPerRun) {
+          state.dropped.delete(id);
+          hooks.unsupported(
+            `Durable Object ${binding} ${object} could not be woken at the end of the run: a callback behind its input gate failed each of the ${times} times it was constructed for that, more often than the run's faults explain, so what its storage holds was not read as its next event would find it`,
+          );
+        }
+        return result;
+      }
       const binding = String((event.data as { binding?: unknown }).binding ?? "");
       return deliverAlarm(event, hooks, spec.bounds.maxRedeliveries, {
         binding,
