@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.17.0](https://github.com/Kaisenwerk/eutaxy/compare/v0.16.1...v0.17.0) (2026-11-12)
+
+
+### Features
+
+* **cloudflare:** a callee may be the scenario's own Worker, called back by a Worker it called ([7845ca8](https://github.com/Kaisenwerk/eutaxy/commit/7845ca8b41f56a5b85c860c22ff60784440b1085))
+* **cloudflare:** an object a crash reset is woken inside the run before the snapshot ([443c4fd](https://github.com/Kaisenwerk/eutaxy/commit/443c4fdf4e9134ea76e6d8f0974a70fd14b46aa6))
+* **cloudflare:** an object's calls through its own service bindings are effects ([61b2035](https://github.com/Kaisenwerk/eutaxy/commit/61b203509af25852557f61cf5caeb71db7dc8ad7))
+* **cloudflare:** an object's D1 statements and R2 operations are effects of the invocation its code runs as ([4f32aab](https://github.com/Kaisenwerk/eutaxy/commit/4f32aaba57345ab5d73a64a0066c9efdb0b175fc))
+* **cloudflare:** an object's env is the scenario's from its constructor's first line ([b62ce9a](https://github.com/Kaisenwerk/eutaxy/commit/b62ce9a24a878e6a7376bf3a952c97f34be57222))
+* **cloudflare:** an object's Workflow binding is the model's, and its other bindings are what the Worker sees ([4e07aa3](https://github.com/Kaisenwerk/eutaxy/commit/4e07aa33791fea9daad5e5dba6f11b3bd94bda36))
+* **engine:** a platform's closing events, and whether an invocation left a timer ([c1dcf3a](https://github.com/Kaisenwerk/eutaxy/commit/c1dcf3a03353e992c5d4c377392e40cc036f9bf0))
+
+
+### Bug Fixes
+
+* **cloudflare:** a constructor's work behind its input gate is the object's code ([aaafc15](https://github.com/Kaisenwerk/eutaxy/commit/aaafc15d04ebbbd0d39ea712cefa6bf72906b3b4))
+* **cloudflare:** an object whose callback behind its input gate fails is reset in the model too ([ad3322a](https://github.com/Kaisenwerk/eutaxy/commit/ad3322ae7baf1980507ea8913f36b647606a162f))
+* **cloudflare:** an object's output gate is taken from its slot, not left in it ([c55b1f1](https://github.com/Kaisenwerk/eutaxy/commit/c55b1f1480a9952b472d52f303c202cf94881566))
+* **engine:** a call awaiting what another call of its object started is not busy forever ([e045d3b](https://github.com/Kaisenwerk/eutaxy/commit/e045d3bad67180cf2d626ed534992c379a30b063))
+* **engine:** a delivery the platform is still ending after a crash is waited for ([81c22c2](https://github.com/Kaisenwerk/eutaxy/commit/81c22c2c0f9ae514f4cbd7d367ef9ea4fb3d8575))
+* **engine:** a turn released to an object's code is on its way until the object's poller ticks ([5a81d05](https://github.com/Kaisenwerk/eutaxy/commit/5a81d05d08c220ed155261fcfa64fe7d0184f26d))
+* **engine:** a Worker called from inside an object waits for its turns on the object's poller ([817a445](https://github.com/Kaisenwerk/eutaxy/commit/817a445672637dab5fede6c236f2c5860fc21059))
+* **engine:** an effect an object makes is inside its own call, with another object's call in flight beside it ([914cc7c](https://github.com/Kaisenwerk/eutaxy/commit/914cc7c9a6e4fed6d2bf0b7ae16b28e8149d13de))
+
+
+### Documentation
+
+* **roadmap:** v0.17 is done; calls between objects and the scripted object follow as patch work ([57e6afe](https://github.com/Kaisenwerk/eutaxy/commit/57e6afe3d049bcb7609e44c8106cba4e657a0d87))
+
 ## [0.16.1](https://github.com/Kaisenwerk/eutaxy/compare/v0.16.0...v0.16.1) (2026-11-10)
 
 
