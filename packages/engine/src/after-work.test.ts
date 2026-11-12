@@ -888,6 +888,87 @@ describe("code an object runs while a call is entering it", () => {
   );
 });
 
+describe("two calls of one object awaiting one load", () => {
+  // An object may be named "after": its host then ends as a continuation's id does.
+  test.each([
+    [1, HOST],
+    [2, HOST],
+    [2, "DO:X/after"],
+  ])(
+    "the second call awaits what the first started, whose effect waits for its turn: both answer (%i in flight, host %s)",
+    async (concurrent, host) => {
+      // The object dedupes a load: the first call starts it, the second awaits the same promise. The
+      // second call's code is idle with nothing parked of its own; it is waiting on the first's effect.
+      let loading: Promise<number> | undefined;
+      const platform: Platform = {
+        name: "objects",
+        assumptions: [],
+        concurrent: true,
+        reset: async () => {
+          loading = undefined;
+        },
+        initialEvents: () => [
+          { id: "a", attempt: 1, data: null },
+          { id: "b", attempt: 1, data: null },
+        ],
+        restrictEvents: (s) => s,
+        async deliver(event, hooks) {
+          const inv = hooks.startInvocation(`${event.id}#${event.attempt}`);
+          const outcome = await runInvocation(hooks, inv, () =>
+            hooks.effect(
+              {
+                invocation: inv.id,
+                target: "DO:X",
+                op: "call",
+                args: null,
+                allowed: [],
+                hostsEffects: true,
+              },
+              () =>
+                hooks.hostedCode(
+                  host,
+                  async () => {
+                    loading ??= objectFetch(hooks, hooks.running(), "load");
+                    return loading;
+                  },
+                  "call",
+                ),
+              (v) => v,
+              { host },
+            ),
+          );
+          return { status: outcome.status, followUps: [] };
+        },
+      };
+      const spec: ScenarioSpec = {
+        version: 1,
+        name: "shared-load",
+        worker: { entry: "./w.ts", config: "./w.jsonc" },
+        drive: { kind: "none" },
+        setup: [],
+        externals: [],
+        invariants: [],
+        bounds: bounds(concurrent),
+      };
+      for (let seed = 1; seed <= 12; seed++) {
+        const run = new Run({
+          chooser: seededChooser(seed, { faultProbability: 0, maxFaultsPerRun: 0 }),
+          bounds: spec.bounds,
+        });
+        const log = await runOnce(spec, platform, run);
+        expect(run.unsupportedReasons, `seed ${seed}`).toEqual([]);
+        const lines = ops(log.entries);
+        expect(lines.filter((l) => l.endsWith(" result call")).sort()).toEqual([
+          "a#1 result call",
+          "b#1 result call",
+        ]);
+        // One load, whichever call got to start it.
+        expect(lines.filter((l) => l.endsWith(" call load"))).toHaveLength(1);
+      }
+    },
+  );
+});
+
 describe("two jobs of one object after their answers, each making two effects", () => {
   /** Two calls into the object; each answers and, a timer later, makes a `plan` and then a `charge`. */
   const jobs = (): Platform => ({

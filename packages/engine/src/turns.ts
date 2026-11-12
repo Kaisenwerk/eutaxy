@@ -126,6 +126,21 @@ export class Turns {
     this.startOrder.set(id, this.startOrder.size);
   }
 
+  /**
+   * Whether a turn is parked that belongs to one of these hosts: an effect
+   * made by code a call into the host hosts, or by the host's work after an
+   * answer (its continuation, `<host>/after`).
+   */
+  parkedFor(hosts: ReadonlySet<string>): boolean {
+    return this.parked.some((p) => {
+      if (p.host?.host !== undefined && hosts.has(p.host.host)) return true;
+      // `<host>/after`, or `<host>/after#<n>` for a later instance's: the id's end, since a host's
+      // own name may hold "/after" too.
+      const continuation = /^(.*)\/after(?:#\d+)?$/.exec(p.inv.id);
+      return continuation !== null && hosts.has(continuation[1] as string);
+    });
+  }
+
   /** Park an invocation at an effect until `takeTurn` releases it with `go`. */
   park(
     inv: Turner,

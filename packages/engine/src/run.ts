@@ -258,7 +258,7 @@ export class Run implements RunHooks {
       () => this.patched?.reads,
       () => this.firedPending() + this.releasedUnseen(),
       () => this.hasAfterWork(),
-      () => this.timersAllowed() !== null,
+      () => this.timersAllowed() !== null || this.idleBehindParked(),
     );
     this.concurrent = options.bounds.maxConcurrentInvocations > 1;
   }
@@ -1517,6 +1517,19 @@ export class Run implements RunHooks {
 
   timersPending(invocation: string): boolean {
     return this.patched?.clock.nextDueOwned((owner) => owner === invocation, false) !== undefined;
+  }
+
+  /**
+   * Whether everything in flight is idle code of hosts (see
+   * `Frames.idleHosts`) one of which has an effect parked: a call that
+   * awaits what another call of the same object started (a load the object
+   * dedupes) is waiting on that call's effect, though it parked none of its
+   * own. The run is at rest then, for the scheduler to give that effect its
+   * turn; taken for busy, the call would wait for a turn nothing could give.
+   */
+  private idleBehindParked(): boolean {
+    const hosts = this.frames.idleHosts();
+    return hosts !== null && this.turns.parkedFor(hosts);
   }
 
   /** Whether the invocation of this id has crashed; one never started has not. */

@@ -729,7 +729,14 @@ shares the reading of the limit and none of the proxy code.
   is on its way until the object's poller has ticked: the scheduler does
   not take the run for at rest before then, or it would decide with that
   code's next effect among its options on a fast tick and missing on a
-  slow one. A delivery whose invocation crashed is the platform's to end
+  slow one. A call whose code is idle inside an object with nothing
+  parked of its own may be awaiting what another call of the same object
+  started (a load the object dedupes): while such code is all that is in
+  flight and an effect of that object is parked, the run is at rest, for
+  that effect to get its turn. A call counts as waiting on its own parked
+  effects only once its code runs in the object: one whose constructor
+  left an effect parked is still on its way in until its method starts.
+  A delivery whose invocation crashed is the platform's to end
   (evicting the object a crash reset takes real time), and is waited for
   within the budget rather than taken for stuck. While an object holds its
   input gate with `blockConcurrencyWhile` nothing else can enter it, and
