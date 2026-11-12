@@ -241,9 +241,14 @@ no longer excepts any cell, and the planted bug
 `object-charge-twice-after-answer` (a charge made in work after the
 answer and recorded after it) is caught. A constructor is inside the model too: its `this.env`
 is the scenario's from its first line, and its work behind its input
-gate is the object's code. Still to come, in this order: the gate with a
-real callee and the cycle back into the caller's Worker, with its
-differential entry; the object's D1 and R2 calls as effects;
+gate is the object's code. And the cycle runs: the gate entry
+`v0-17-callback` is two Workers' real code through the command, a
+callee's object calling back into the scenario's own Worker, whose
+handler wakes the Workflow that waits; it is `BOUNDED` with nothing
+unsupported with two in flight and one at a time under one fault a run,
+and its planted bug (a notice recorded each time it is sent) is caught.
+It has no differential entry: the local runtime under the test plugin
+holds no second Worker to call. Still to come, in this order: the object's D1 and R2 calls as effects;
 calls between objects; the scripted object.
 
 ### Candidates: the larger gaps in the model

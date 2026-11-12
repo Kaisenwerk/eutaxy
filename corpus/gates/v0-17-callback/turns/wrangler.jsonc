@@ -1,0 +1,13 @@
+{
+  "name": "turns",
+  "main": "worker.ts",
+  "compatibility_date": "2026-10-01",
+  "durable_objects": { "bindings": [{ "name": "TURN", "class_name": "Turn" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Turn"] }],
+  "services": [
+    // The model Worker, scripted by the scenario.
+    { "binding": "MODEL", "service": "model" },
+    // Back to the Worker that called: its notices entrypoint.
+    { "binding": "FRONT", "service": "front", "entrypoint": "Notices" }
+  ]
+}

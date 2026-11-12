@@ -1,0 +1,9 @@
+{
+  "name": "front",
+  "main": "worker.ts",
+  "compatibility_date": "2026-10-01",
+  "d1_databases": [{ "binding": "DB", "database_name": "front", "database_id": "front" }],
+  "workflows": [{ "name": "request-flow", "binding": "REQUESTS", "class_name": "RequestFlow" }],
+  // The turns Worker, by its real name: eutaxy check runs its code inside this scenario.
+  "services": [{ "binding": "TURNS", "service": "turns" }]
+}
