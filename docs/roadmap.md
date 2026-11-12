@@ -262,11 +262,18 @@ resend writes it again) is caught; and the differential entry
 what each store holds. The gate found that a callback behind
 `blockConcurrencyWhile` that failed left the model waiting on an
 instance the runtime had already reset; the model resets it now too.
-Still to come, in this order: the object's remaining bindings (a
-Workflow binding answered by the model as the Worker's is, and a call on
-a binding the model does not cover refused as it is from the Worker,
-where today both reach the isolate's own, unseen); calls between
-objects; the scripted object.
+The object's remaining bindings are the Worker's as well: a Workflow
+binding on its own `env` is answered by the model, so an instance an
+object creates runs the scenario's class as an event of the run and
+never in the local engine, and a call on a binding the model does not
+cover is refused from inside an object as it is from the Worker, where
+both used to reach the isolate's own, unseen. The gate entry
+`v0-17-object-bindings` (an object that starts a Workflow instance for
+each job it takes, the instance's step calling back into it) is
+`BOUNDED` with nothing unsupported under every fault placement, one and
+two in flight, and its read of a KV namespace is `UNSUPPORTED` with the
+reason. Still to come, in this order: calls between objects; the
+scripted object.
 
 ### Candidates: the larger gaps in the model
 
