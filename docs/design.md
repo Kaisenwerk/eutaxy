@@ -809,19 +809,27 @@ shares the reading of the limit and none of the proxy code.
   since the reset tears down the object's task, with whatever that task
   had settled. An object's own bindings are the scenario's. The runtime
   hands an object the Worker's real `env`, where a service binding is
-  whatever the isolate holds under that name and a database or a bucket
-  is the real one, whose calls nothing would record or fault. So the
-  model puts the instance's `env` behind a view under which a service
-  binding, a D1 database and an R2 bucket are the Worker's own proxies
-  for them (for a callee's object, under the callee's qualified name),
-  resolved when first used: reading one off `env`, or preparing a
-  statement, does nothing. A call the object makes through one is an
+  whatever the isolate holds under that name, a database or a bucket
+  is the real one, whose calls nothing would record or fault, and a
+  Workflow binding is the local engine, which would run the class on the
+  real clock. So the model puts the instance's `env` behind a view under
+  which every binding but another object's namespace is what the Worker
+  sees under that name (for a callee's object, under the callee's
+  qualified name): a service binding, a D1 database, an R2 bucket and a
+  Workflow binding are the Worker's own proxies for them, resolved when
+  first used (reading one off `env`, or preparing a statement, does
+  nothing), and a binding of a kind the model does not cover is the
+  Worker's stand-in for it, whose every call is refused and makes the
+  run `UNSUPPORTED`, never passed on. A call the object makes through one is an
   effect of the invocation its code is running as (the call it is
   serving, the call entering it while its constructor runs, or its own
   work after the answer), with that binding's faults: a service's
   answered from the `service()` script or by the `callee()` hosted
   inside it, a statement (`run`, `all`, `first`, `raw`, a `batch`, an
-  `exec`) or a bucket operation performed on the real store. A crash
+  `exec`) or a bucket operation performed on the real store, a Workflow
+  instance created, found or asked for its status in the model, where
+  it runs the scenario's class as an event of the run (a call on the
+  instance the binding gave is the object's call as well). A crash
   fault on it resets the object as on any effect the object makes. That
   is where a write outside the object and the object's own record of it
   come apart: the store has the write, the object's storage does not
@@ -864,8 +872,9 @@ shares the reading of the limit and none of the proxy code.
   runtime. The reset constructs each seeded object too, outside any run:
   there a method of a scripted service binding is answered from the
   script, unrecorded, so that a constructor that loads from one comes
-  up, and anything else through a service binding is refused, never
-  passed to the isolate's own; a database or a bucket is the real one
+  up, and anything else through a service binding, and any call on a
+  Workflow binding, is refused, never passed to the isolate's own; a
+  database or a bucket is the real one
   there, so a constructor that reads one needs that store's setup step
   before the object's, and what a constructor writes to one is written
   once more by the reset, before the run. Still outside: a class the platform is

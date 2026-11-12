@@ -35,8 +35,9 @@ import {
   r2Binding,
 } from "./bindings.ts";
 import { isD1 } from "./d1.ts";
-import { type DurableObjectTestHelpers, isDurableObjectNamespace } from "./durable-objects.ts";
+import type { DurableObjectTestHelpers } from "./durable-objects.ts";
 import { requestFor } from "./http.ts";
+import { isDurableObjectNamespace } from "./object-access.ts";
 import {
   type CloudflarePlatformOptions,
   createCloudflarePlatform,

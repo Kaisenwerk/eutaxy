@@ -65,7 +65,8 @@ scenario's schema.
 ## Setup and bindings
 
 **`binding <name> is not proxied`**
-The Worker called a binding of a kind the simulation does not model (KV,
+The Worker, or a Durable Object through its own `env`, called a binding
+of a kind the simulation does not model (KV,
 Workers AI, Vectorize, Hyperdrive, a Queue producer and others; the
 [Cloudflare page](/platforms/cloudflare) lists what is). Reading the
 binding off `env` is not a reason; the first call on it is, and the call

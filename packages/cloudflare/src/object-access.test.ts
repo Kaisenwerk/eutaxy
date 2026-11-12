@@ -191,6 +191,26 @@ describe("outsideRunEnv", () => {
   });
 });
 
+describe("outsideRunEnv: a Workflow binding", () => {
+  test("a constructor's call on it while its object is reset is refused, and the local engine is not asked", async () => {
+    let reached = 0;
+    const real = {
+      create: async () => void reached++,
+      createBatch: async () => void reached++,
+      get: async () => void reached++,
+    };
+    const env = outsideRunEnv({ FLOW: real, LIMIT: 3 }) as { FLOW: typeof real; LIMIT: number };
+    expect(env.LIMIT).toBe(3);
+    // Reading it, as code that builds its dependencies from env does, is nothing.
+    expect(typeof env.FLOW).toBe("object");
+    await expect(env.FLOW.create()).rejects.toThrow(
+      /called create on the Workflow binding FLOW while the scenario's objects were being reset/,
+    );
+    await expect(env.FLOW.get()).rejects.toThrow(/outside a run/);
+    expect(reached).toBe(0);
+  });
+});
+
 describe("outboundGate", () => {
   test("takes the gate out of the slot: nothing is left for a later call when the object's code ends without unwinding", async () => {
     const order: string[] = [];

@@ -21,6 +21,17 @@ import { isD1 } from "./d1.ts";
 import { isR2 } from "./r2.ts";
 import type { ServiceSetup } from "./scenario.ts";
 import { isServiceBinding, scriptedError } from "./services.ts";
+import { isWorkflowBinding } from "./workflows.ts";
+
+/** A Durable Object namespace as the env shows it. */
+export function isDurableObjectNamespace(value: unknown): value is DurableObjectNamespace {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as { idFromName?: unknown }).idFromName === "function" &&
+    typeof (value as { get?: unknown }).get === "function"
+  );
+}
 
 /** The host an object's code runs as (`EffectOptions.host`): its namespace's target and its name. */
 export function hostOf(target: string, object: string): string {
@@ -84,18 +95,21 @@ export const calleeOfEnv: unique symbol = Symbol.for("eutaxy.calleeOfEnv");
  * runtime hands an object the Worker's real `env`, where a service binding
  * is not the scenario's script or callee (a call through it would reach
  * whatever the isolate holds under that name and fail or answer unseen),
- * and a database or bucket is the real one, whose calls nothing records
- * or faults. So the instance's `env` is put behind a view under which a
- * service binding, a D1 database and an R2 bucket are the ones the Worker
- * itself sees (`worker()`, the platform's env, under the binding's
+ * a database or bucket is the real one, whose calls nothing records or
+ * faults, and a Workflow binding is the local engine, which would run the
+ * class on the real clock. So the instance's `env` is put behind a view
+ * under which every binding but a Durable Object namespace is the one the
+ * Worker itself sees (`worker()`, the platform's env, under the binding's
  * qualified name): the call is an effect of whichever invocation the
  * object's code is running as, with that binding's faults: a service's
  * answered from the `service()` script or by the `callee()` hosted inside
- * it, a statement or a bucket operation performed on the real store. The
- * binding is resolved when first used, so reading it off `env` does
- * nothing. Without the platform's env, or when it holds nothing under the
- * name, a service call ends the run `UNSUPPORTED`, and a database or
- * bucket is the object's own, unrecorded, as its remaining bindings are. A
+ * it, a statement or a bucket operation performed on the real store, a
+ * Workflow instance created in the model; and a call on a binding of a
+ * kind the model does not cover is refused as it is from the Worker, never
+ * passed on. The binding is resolved when first used, so reading it off
+ * `env` does nothing. Without the platform's env, or when it holds nothing
+ * under the name, a service call ends the run `UNSUPPORTED`, and any other
+ * binding is the object's own, unrecorded, as a namespace is either way. A
  * class given the platform's base (`simulateConstruction`) is constructed
  * with the view (`envView`) and this only tells it whose it is; for any
  * other the view is in place once the constructor has returned, and the
@@ -141,9 +155,11 @@ export function ownEnv(
  * name there) is answered from the script as it will be in the run, so a
  * constructor that loads from one comes up; anything else through a
  * service binding (a `fetch()`, a binding with a callee or with no script)
- * is refused. A database or a bucket is the real one there, as it is the
- * reset's own: what a constructor writes to one while its object is reset
- * stays unless that store's setup step comes after the object's. The
+ * is refused, and so is a call on a Workflow binding, which would start
+ * an instance in the local engine. A database or a bucket is the real one
+ * there, as it is the reset's own: what a constructor writes to one while
+ * its object is reset stays unless that store's setup step comes after the
+ * object's. The
  * instance is evicted before the run, whose first call constructs the
  * object again, inside the run.
  */
@@ -193,10 +209,33 @@ export function outsideRunEnv(
     }
     return stub;
   };
+  /** A Workflow binding whose every call is refused: no run is there to hold the instance. */
+  const flows = new Map<string, object>();
+  const flowFor = (name: string, own: object): object => {
+    let flow = flows.get(name);
+    if (!flow) {
+      flow = new Proxy(own, {
+        get(target, prop) {
+          const value = Reflect.get(target, prop, target) as unknown;
+          if (typeof value !== "function" || typeof prop !== "string") return value;
+          return async (): Promise<never> => {
+            throw new Error(
+              `eutaxy: a Durable Object's constructor called ${prop} on the Workflow binding ${name} while the scenario's objects were being reset, outside a run, where no instance can be created or read`,
+            );
+          };
+        },
+      });
+      flows.set(name, flow);
+    }
+    return flow;
+  };
   return new Proxy(env, {
     get(target, prop) {
       const value = Reflect.get(target, prop, target) as unknown;
-      return typeof prop === "string" && isServiceBinding(value) ? stubFor(prop) : value;
+      if (typeof prop !== "string") return value;
+      // A service binding first: in workerd it answers every duck type.
+      if (isServiceBinding(value)) return stubFor(prop);
+      return isWorkflowBinding(value) ? flowFor(prop, value) : value;
     },
   });
 }
@@ -262,31 +301,47 @@ export function envView(
     }
     return stub;
   };
-  /** The scenario's database or bucket under the object's binding `name`, or the object's own. */
-  const stores = new Map<string, object>();
-  const storeFor = (name: string, own: object): object => {
-    let store = stores.get(name);
-    if (!store) {
-      store = new Proxy(own, {
+  /**
+   * The scenario's database, bucket or Workflow under the object's binding
+   * `name`, or the object's own. `flow` tells a Workflow, whose `create()`
+   * and `get()` answer with an instance to call later.
+   */
+  const modelled = new Map<string, object>();
+  const modelledFor = (name: string, own: object, flow: boolean): object => {
+    let through = modelled.get(name);
+    if (!through) {
+      through = new Proxy(own, {
         get(target, prop) {
           // The Worker's own proxy for the binding, looked up now: its effects carry the run.
-          const through = worker ? (Reflect.get(worker(), qualified(name)) as unknown) : undefined;
-          if (through === null || typeof through !== "object" || through === target) {
+          const model = worker ? (Reflect.get(worker(), qualified(name)) as unknown) : undefined;
+          if (model === null || typeof model !== "object" || model === target) {
             const value = Reflect.get(target, prop, target) as unknown;
             return typeof value === "function" ? value.bind(target) : value;
           }
-          const member = Reflect.get(through, prop, through) as unknown;
+          const member = Reflect.get(model, prop, model) as unknown;
           if (typeof member !== "function") return member;
           // A statement is executed later: that, not preparing it, is the object's call.
           if (prop === "prepare")
             return (...args: unknown[]) =>
-              statementView(Reflect.apply(member, through, args) as object, owner, gate);
-          return calling(member.bind(through), owner, gate);
+              handedView(Reflect.apply(member, model, args) as object, owner, gate, "bind");
+          const call = calling(member.bind(model), owner, gate);
+          if (!flow || (prop !== "create" && prop !== "get")) return call;
+          // Creating or finding an instance is the object's call, and so is each call on it after.
+          return async (...args: unknown[]) =>
+            handedView(
+              (await Reflect.apply(
+                call as (...a: unknown[]) => unknown,
+                undefined,
+                args,
+              )) as object,
+              owner,
+              gate,
+            );
         },
       });
-      stores.set(name, store);
+      modelled.set(name, through);
     }
-    return store;
+    return through;
   };
   const view = new Proxy(env, {
     get(target, prop) {
@@ -294,7 +349,14 @@ export function envView(
       if (typeof prop !== "string") return value;
       // A service binding first: in workerd it answers every duck type.
       if (isServiceBinding(value)) return stubFor(prop);
-      return isD1(value) || isR2(value) ? storeFor(prop, value) : value;
+      if (isD1(value) || isR2(value)) return modelledFor(prop, value, false);
+      if (isWorkflowBinding(value)) return modelledFor(prop, value, true);
+      // Another object's namespace is the object's own.
+      if (isDurableObjectNamespace(value) || !worker) return value;
+      // Anything else is what the Worker sees under the name: a binding of a kind the model does not
+      // cover with every call refused, a var as it is.
+      const seen = Reflect.get(worker(), qualified(prop)) as unknown;
+      return seen === undefined ? value : seen;
     },
   });
   ownerOfView.set(view, owner);
@@ -302,22 +364,25 @@ export function envView(
 }
 
 /**
- * A D1 statement as an object holds it: executing it (`run`, `all`,
- * `first`, `raw`) is the object's call, and `bind()` gives another such
- * statement. What `batch()` reads of it is the statement's own.
+ * What a binding handed an object to call later (a D1 statement, a Workflow
+ * instance): each method called is the object's call (a statement's `run`,
+ * `all`, `first`, `raw`; an instance's `status`, `sendEvent`), and the
+ * method named `again` (a statement's `bind`) gives another such thing.
+ * What else is read of it (`batch()` reads a statement's text) is its own.
  */
-function statementView(
-  statement: object,
+function handedView(
+  handed: object,
   owner: { hooks: RunHooks; binding: string; object: string },
   gate: EnvGate | undefined,
+  again?: string,
 ): object {
-  return new Proxy(statement, {
+  return new Proxy(handed, {
     get(target, key) {
       const value = Reflect.get(target, key, target) as unknown;
       if (typeof value !== "function") return value;
-      if (key === "bind")
+      if (key === again)
         return (...values: unknown[]) =>
-          statementView(Reflect.apply(value, target, values) as object, owner, gate);
+          handedView(Reflect.apply(value, target, values) as object, owner, gate, again);
       return calling(value.bind(target), owner, gate);
     },
   });

@@ -26,7 +26,7 @@ import {
 } from "@eutaxy/engine";
 import { drainBackground, executionContext } from "./background.ts";
 import { constructEntrypoint } from "./entrypoint.ts";
-import { type ProxyContext, refuse } from "./proxy-context.ts";
+import { outboundGate, type ProxyContext, refuse } from "./proxy-context.ts";
 
 /** The `EventRef.source` of a Workflow instance's run. */
 export const workflowSource = "workflow";
@@ -150,7 +150,11 @@ interface CreateOptions {
   readonly params?: unknown;
 }
 
-/** The binding's proxy: instances live in the registry and run as events, never in the real engine. */
+/**
+ * The binding's proxy: instances live in the registry and run as events,
+ * never in the real engine. A call an object makes waits behind its output
+ * gate (`outboundGate`).
+ */
 export function proxyWorkflow(
   binding: string,
   ctx: ProxyContext,
@@ -164,7 +168,7 @@ export function proxyWorkflow(
     status: () =>
       ctx.hooks.effect(
         { invocation: ctx.currentInvocation(), target, op: "status", args: { id }, allowed: [] },
-        async () => {
+        outboundGate(ctx, async () => {
           const i = registry.instances.get(id);
           if (!i) throw new Error("instance.not_found");
           return {
@@ -174,7 +178,7 @@ export function proxyWorkflow(
             output: i.output === undefined ? null : structuredClone(i.output),
             ...(i.error === undefined ? {} : { error: { ...i.error } }),
           };
-        },
+        }),
         (s) => toJson(s),
       ),
     pause: () => unsupported("pause()"),
@@ -191,7 +195,7 @@ export function proxyWorkflow(
           // A call to the engine: it may never arrive, or arrive with its answer lost.
           allowed: writeFaults,
         },
-        async () => {
+        outboundGate(ctx, async () => {
           const type = validEventType(args.type);
           const i = registry.instances.get(id);
           if (!i) throw new Error("instance.not_found");
@@ -218,7 +222,7 @@ export function proxyWorkflow(
             });
           }
           return null;
-        },
+        }),
         () => null,
       ),
     delete: () => unsupported("delete()"),
@@ -239,7 +243,7 @@ export function proxyWorkflow(
           // A call to the engine: it may never arrive, or arrive with its answer lost.
           allowed: writeFaults,
         },
-        async () => {
+        outboundGate(ctx, async () => {
           if (!validInstanceId(id)) throw new Error("Workflow instance has invalid id");
           if (registry.instances.has(id))
             throw new Error(
@@ -265,17 +269,17 @@ export function proxyWorkflow(
             data: { binding, id },
           });
           return handle(id);
-        },
+        }),
         () => ({ id }),
       );
     },
     async get(id: string) {
       return ctx.hooks.effect(
         { invocation: ctx.currentInvocation(), target, op: "get", args: { id }, allowed: [] },
-        async () => {
+        outboundGate(ctx, async () => {
           if (!registry.instances.has(id)) throw new Error("instance.not_found");
           return handle(id);
-        },
+        }),
         () => ({ id }),
       );
     },

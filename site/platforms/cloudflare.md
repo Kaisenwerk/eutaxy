@@ -169,7 +169,11 @@ the call, and recorded as effects of the invocation the object's code is
 running as, the call it is serving or its own work after the answer. The
 statements it runs on a D1 database and its operations on an R2 bucket
 (`this.env.DB.prepare(…).run()`, `this.env.FILES.put(…)`) are recorded
-the same way, performed on the real store. A fault can land on each: an
+the same way, performed on the real store, and so is a Workflow instance
+it creates or asks about (`this.env.RUNS.create(…)`), which runs your
+class in the model as one the Worker creates does. A call on a binding of
+a kind the simulation does not model (KV, a Queue producer) is refused
+from inside an object as it is from the Worker. A fault can land on each: an
 answer lost, a call that never left, the object reset right after it. The call leaves the object only once what the object
 wrote before it is durable, as the runtime's output gate holds an outgoing
 message until the writes before it are confirmed, so a claim the object

@@ -124,15 +124,6 @@ interface Helpers {
 
 const typed = (helpers: DurableObjectTestHelpers): Helpers => helpers as unknown as Helpers;
 
-export function isDurableObjectNamespace(value: unknown): value is DurableObjectNamespace {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    typeof (value as { idFromName?: unknown }).idFromName === "function" &&
-    typeof (value as { get?: unknown }).get === "function"
-  );
-}
-
 /** Object names by id, so snapshots and the log name objects as the Worker does. */
 export type ObjectNames = Map<string, string>;
 

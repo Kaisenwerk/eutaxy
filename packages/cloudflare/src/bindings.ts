@@ -24,13 +24,18 @@ import {
   type DurableObjectTestHelpers,
   evictObject,
   forgetHosts,
-  isDurableObjectNamespace,
   proxyNamespace,
   resetNamespace,
   runInObject,
   snapshotNamespace,
 } from "./durable-objects.ts";
-import { deliverWake, type ObjectAccess, wakeEvent, wakeSource } from "./object-access.ts";
+import {
+  deliverWake,
+  isDurableObjectNamespace,
+  type ObjectAccess,
+  wakeEvent,
+  wakeSource,
+} from "./object-access.ts";
 import type { ProxyContext } from "./proxy-context.ts";
 import { isR2, proxyR2, resetR2, snapshotR2, VersionBook } from "./r2.ts";
 import {
