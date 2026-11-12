@@ -43,6 +43,8 @@ export class Frame {
   claimed = false;
   /** The host's code this effect is the call of has started running (`Run.hostedCode`); until then the call is in transit. */
   entered = false;
+  /** Code the host runs on the call's way in (`Run.hostEntering`: its constructor's) is running now, this many times over. */
+  entering = 0;
   /** The host's code this effect is the call of has returned (`Frames.answered`): its answer is in transit. */
   answered = false;
   /**
@@ -145,6 +147,16 @@ export class Frames {
    * gate delivers calls in the order they arrived, which is the order their
    * effects entered. Without one of that op, the oldest unclaimed of any.
    */
+  /**
+   * The effect of `host`'s being performed whose call is on its way in: the
+   * oldest the host's code has not started, else the newest of its effects.
+   * Not claimed: the call's own code claims it when it starts.
+   */
+  enteringHost(host: string): Frame | undefined {
+    const live = this.byHost.get(host) ?? [];
+    return live.find((f) => !f.claimed) ?? live.at(-1);
+  }
+
   claimHost(host: string, op?: string): Frame | undefined {
     const live = this.byHost.get(host) ?? [];
     const frame =
@@ -174,7 +186,8 @@ export class Frames {
       counted++;
       if (
         frame.host === undefined ||
-        !frame.entered ||
+        // Not yet in the host's code, unless the host is running code on the call's way in.
+        !(frame.entered || frame.entering > 0) ||
         frame.answered ||
         frame.performing > 0 ||
         frame.children > 0

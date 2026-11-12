@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
-import { bin, eutaxy, root } from "./eutaxy-command.ts";
+import { bin, eutaxy, eutaxyWithin, root } from "./eutaxy-command.ts";
 
 describe("eutaxy check", () => {
   test("two checks of one scenario at once each read their own report and leave no files behind", async () => {
@@ -375,6 +375,90 @@ export default defineScenario({
       expect(r.stdout).toContain(
         "Durable Object RUNNER r was woken at the end of the run and its constructor left a timer running",
       );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 180_000);
+
+  test("a constructor that awaits a timer behind its input gate is run as the object's code: the check ends, and the call sees what it prepared", async () => {
+    // The object warms up in its constructor, holding its input gate until a timer has passed. The
+    // timer is virtual and the constructor's code is the object's: nobody else can fire it. Left
+    // outside the model, the first call never entered the object and the check never ended.
+    const dir = join(root, "examples", "payments-queue", `cli-test-ctor-${process.pid}`);
+    mkdirSync(dir, { recursive: true });
+    try {
+      writeFileSync(
+        join(dir, "wrangler.jsonc"),
+        JSON.stringify({
+          name: "cli-test-ctor",
+          main: "worker.ts",
+          compatibility_date: "2026-10-01",
+          durable_objects: { bindings: [{ name: "RUNNER", class_name: "Runner" }] },
+          migrations: [{ tag: "v1", new_sqlite_classes: ["Runner"] }],
+        }),
+      );
+      writeFileSync(
+        join(dir, "worker.ts"),
+        `import { DurableObject } from "cloudflare:workers";
+interface Env {
+  readonly RUNNER: DurableObjectNamespace<Runner>;
+}
+export class Runner extends DurableObject<Env> {
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
+    this.ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS runs (id TEXT PRIMARY KEY, status TEXT NOT NULL)");
+    void this.ctx.blockConcurrencyWhile(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      this.ctx.storage.sql.exec("INSERT OR REPLACE INTO runs (id, status) VALUES ('warm', 'ready')");
+    });
+  }
+  async start(runId: string): Promise<{ accepted: true }> {
+    const warm = this.ctx.storage.sql.exec<{ status: string }>("SELECT status FROM runs WHERE id = 'warm'").toArray()[0];
+    this.ctx.storage.sql.exec("INSERT OR IGNORE INTO runs (id, status) VALUES (?, ?)", runId, warm?.status ?? "cold");
+    return { accepted: true };
+  }
+}
+export default {
+  async fetch(request: Request, env: Env): Promise<Response> {
+    const runId = new URL(request.url).pathname.slice(1);
+    return Response.json(await env.RUNNER.get(env.RUNNER.idFromName("r")).start(runId));
+  },
+};
+`,
+      );
+      writeFileSync(
+        join(dir, "scenario.sim.ts"),
+        `import { defineScenario, durableObject, durableObjectTable, everyRow, http } from "eutaxy/cloudflare";
+export default defineScenario({
+  name: "ctor",
+  worker: { entry: "./worker.ts", config: "./wrangler.jsonc" },
+  setup: [durableObject("RUNNER", { r: {} })],
+  drive: http([{ id: "run-1", path: "/run-1", method: "POST" }], { retries: 0 }),
+  externals: [],
+  // The call entered the object only once the constructor's warm-up was done, as the gate holds it.
+  invariants: [
+    everyRow("every-run-saw-the-warm-up", durableObjectTable("RUNNER", "r", "runs"), [
+      { column: "status", op: "eq", value: "ready" },
+    ]),
+  ],
+  bounds: { maxFaultsPerRun: 1, maxRedeliveries: 0, budgetMs: 2000 },
+});
+`,
+      );
+      const r = await eutaxyWithin(
+        [
+          "check",
+          join(dir, "scenario.sim.ts"),
+          "--seed",
+          "cli",
+          "--max-runs",
+          "20",
+          "--no-regression",
+        ],
+        60_000,
+      );
+      expect(r.status, `${r.stdout}\n${r.stderr}`).toBe(0);
+      expect(r.stdout).toContain("BOUNDED  ctor");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

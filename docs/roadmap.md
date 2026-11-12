@@ -212,14 +212,15 @@ phase makes it right:
   object is woken inside the run, as its next event would wake it.
 
 - **The object's env and context from its construction.** The view over
-  `env` and the object's context are in place only once the constructor
-  has returned: a constructor that calls a service binding reaches the
-  isolate's own, unseen; one that awaits a timer is never resumed; and an
-  `env` the class keeps in a private field escapes the view for good.
-  The isolate's main module wraps each Durable Object class so that its
-  constructor is given the scenario's view of `env` and runs as the
-  object's code, as the callees' classes are wrapped today for their
-  names.
+  `env` and the object's context were in place only once the constructor
+  had returned: a constructor that awaited a timer behind its input gate
+  was never resumed, and the check did not end; one that calls a service
+  binding reaches the isolate's own, unseen; and an `env` the class keeps
+  in a private field escapes the view for good. What a constructor does
+  behind `blockConcurrencyWhile` now runs as the object's code while the
+  call is on its way in. Still to come: the scenario's view of `env` from
+  the constructor's first line, by giving the class a base that hands it
+  on, as the callees' classes are given one today for their names.
 
 Gate: an Agent whose work after its answer calls a scripted service and
 a callee, a callee's object that calls back into the caller's Worker and

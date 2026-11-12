@@ -13,7 +13,7 @@
  * fire in virtual time (see alarms.ts).
  */
 
-import { canonicalJson, type JsonValue, toJson, writeFaults } from "@eutaxy/core";
+import { canonicalJson, type JsonValue, type RunHooks, toJson, writeFaults } from "@eutaxy/core";
 import { withoutNetwork } from "@eutaxy/engine";
 import { AlarmBook, alarmControl, takenOver, takeOverAlarms } from "./alarms.ts";
 import { hostMethod, hostOf, ownEnv } from "./object-access.ts";
@@ -140,11 +140,20 @@ export type ObjectNames = Map<string, string>;
 const gateDepth = new WeakMap<object, number>();
 /** Object-state prototypes whose blockConcurrencyWhile records that depth. */
 const gateWatched = new WeakSet<object>();
+/**
+ * By object id, the host an object's code runs as and the run it runs in,
+ * noted before each entry into the object: what its constructor does on the
+ * way in has no other way to know whose code it is.
+ */
+const hostOfId = new Map<string, { readonly hooks: () => RunHooks; readonly host: string }>();
 
 /**
  * Record when an object holds its input gate with blockConcurrencyWhile,
- * on the state prototype so constructors are covered too; the wrapper only
- * records and calls the native method.
+ * on the state prototype so constructors are covered too, and run what it
+ * holds the gate for as the object's code (`RunHooks.hostEntering`): a
+ * constructor's work behind the gate has no context of the call entering
+ * the object, and a timer it awaited would be nobody's to fire. Inside a
+ * method the code is the object's already and runs as it is.
  */
 function watchGate(state: DurableObjectState): void {
   const proto = Object.getPrototypeOf(state) as {
@@ -154,14 +163,17 @@ function watchGate(state: DurableObjectState): void {
   gateWatched.add(proto);
   const native = proto.blockConcurrencyWhile;
   proto.blockConcurrencyWhile = function (this: object, callback: () => Promise<unknown>) {
-    return native.call(this, async () => {
+    const held = async (): Promise<unknown> => {
       gateDepth.set(this, (gateDepth.get(this) ?? 0) + 1);
       try {
         return await callback();
       } finally {
         gateDepth.set(this, (gateDepth.get(this) ?? 1) - 1);
       }
-    });
+    };
+    const id = (this as { id?: { toString(): string } }).id;
+    const of = id === undefined ? undefined : hostOfId.get(id.toString());
+    return native.call(this, of ? () => of.hooks().hostEntering(of.host, held) : held);
   };
 }
 
@@ -515,6 +527,8 @@ function enterObject<T>(
   state.touched.add(id);
   // Whoever enters the object constructs it, inside the run: no need to wake it at the end.
   state.dropped.delete(id);
+  // Known before the runtime constructs the instance: its constructor's work is this object's.
+  hostOfId.set(id, { hooks: () => ctx.hooks, host: hostOf(`DO:${binding}`, object) });
   return typed(helpers).runInDurableObject(stub, async (instance, live) => {
     watchGate(live);
     state.states.set(id, live);

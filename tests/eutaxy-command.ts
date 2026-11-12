@@ -57,3 +57,45 @@ export function eutaxyAsync(args: readonly string[], cwd: string = root): Promis
     child.once("close", (status) => done({ status: status ?? 1, stdout, stderr }));
   });
 }
+
+/**
+ * The same, in a process group of its own that is ended when the command has not finished within
+ * `ms`: a check that hangs must fail its test, not the suite, and must leave no runtime behind.
+ * `status` is -1 for a command that was ended.
+ */
+export function eutaxyWithin(
+  args: readonly string[],
+  ms: number,
+  cwd: string = root,
+): Promise<Ran> {
+  return new Promise((done, fail) => {
+    const child = spawn(process.execPath, [bin, ...budgeted(args)], {
+      cwd,
+      stdio: ["ignore", "pipe", "pipe"],
+      detached: true,
+    });
+    let stdout = "";
+    let stderr = "";
+    let ended = false;
+    const timer = setTimeout(() => {
+      ended = true;
+      // The whole group: the command, the test runner it started and the runtime under it.
+      if (child.pid !== undefined) process.kill(-child.pid, "SIGKILL");
+    }, ms);
+    child.stdout.on("data", (d: Buffer) => {
+      stdout += d.toString();
+    });
+    child.stderr.on("data", (d: Buffer) => {
+      stderr += d.toString();
+    });
+    child.once("error", fail);
+    child.once("close", (status) => {
+      clearTimeout(timer);
+      done({
+        status: ended ? -1 : (status ?? 1),
+        stdout,
+        stderr: ended ? `${stderr}\n(ended after ${ms} ms without finishing)` : stderr,
+      });
+    });
+  });
+}

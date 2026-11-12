@@ -125,6 +125,16 @@ export interface RunHooks {
    */
   timersPending(invocation: string): boolean;
   /**
+   * Run `code` as `host`'s own while a call is still on its way into the
+   * host: what an object's constructor does before the method the call
+   * names can run (work behind its input gate). The code is the host's,
+   * its timers virtual and the host's to be woken by, and the effects it
+   * makes the entering call's; it is not the call itself, which starts
+   * with `hostedCode`. While it runs, the entering call counts as code
+   * that may be awaiting a timer of its own.
+   */
+  hostEntering<T>(host: string, code: () => T): T;
+  /**
    * Run `code` as `host`'s own (see `EffectOptions.host`), where the runtime
    * does not carry async context into it: an object's method about to be
    * called, its alarm or WebSocket handler. `op` names the call the code is

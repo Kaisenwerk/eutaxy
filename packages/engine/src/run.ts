@@ -426,6 +426,31 @@ export class Run implements RunHooks {
     return deliveryScope?.getStore()?.id ?? this.current;
   }
 
+  hostEntering<T>(host: string, code: () => T): T {
+    // Already the host's code (a method of its holding the gate): nothing to add.
+    if (hostScope?.getStore()?.host === host) return code();
+    if (this.concurrent) this.pollHost(host);
+    const frame = this.frames.enteringHost(host);
+    // The host's code, as in `hostedCode`: its timers are virtual and the host's.
+    const run = (): T => (this.patched ? this.patched.handlerCode(code) : code());
+    if (!frame) return hostScope ? hostScope.run({ host, frame }, run) : run();
+    // While it runs the entering call is code that may be awaiting a timer of its own.
+    frame.entering++;
+    const left = (): void => {
+      frame.entering--;
+    };
+    let result: T;
+    try {
+      result = hostScope ? hostScope.run({ host, frame }, run) : run();
+    } catch (err) {
+      left();
+      throw err;
+    }
+    if (isThenable(result)) void Promise.resolve(result).then(left, left);
+    else left();
+    return result;
+  }
+
   hostedCode<T>(host: string, code: () => T, op?: string): T {
     // The host's code entering again (a method calling another of the object's): the same call.
     if (hostScope?.getStore()?.host === host) return code();

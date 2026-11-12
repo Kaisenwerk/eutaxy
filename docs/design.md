@@ -810,14 +810,21 @@ shares the reading of the limit and none of the proxy code.
   turns (the input gate holds them, so this is the runtime's behaviour);
   the object's calls on its other bindings (D1, R2) are not recorded; an
   `env` its class keeps elsewhere than `this.env` (a private field, a
-  closure of its constructor) is not reached; and what a constructor
-  itself does is the runtime's to run, on the first call of a run as in
-  a wake: the view over `env` and the object's context are in place once
-  the constructor has returned, so a call it makes through a service
-  binding reaches whatever the isolate holds, unseen, and a timer it
-  awaits before returning is nobody's to fire (the entry does not
-  complete). A constructor that creates its tables and reads its storage,
-  under `blockConcurrencyWhile` or not, the usual kind, is unaffected; an
+  closure of its constructor) is not reached. A constructor runs before
+  the method a call names, on the first call of a run as in a wake, and
+  the runtime carries no context of the call into it. What it does
+  behind its input gate (`blockConcurrencyWhile`, wrapped on the state's
+  prototype) runs as the object's code while the call is on its way in
+  (`RunHooks.hostEntering`): its timers are virtual and the object's, so
+  one it awaits is fired for it as for an object sleeping before it
+  answers, and its effects are the entering call's; the call's method
+  starts once the gate is released, as in the runtime. What the
+  constructor's own body does outside the gate is still the runtime's to
+  run: the view over `env` is in place once it has returned, so a call it
+  makes there through a service binding reaches whatever the isolate
+  holds, unseen, and a timer it sets there and does not await is the
+  calling invocation's (in a wake, where that invocation ends at once,
+  the run is `UNSUPPORTED`); an
   object reached
   only through another object's binding makes the run `UNSUPPORTED`, as do
   `jurisdiction()` namespaces (and a unique id asked for one) and a

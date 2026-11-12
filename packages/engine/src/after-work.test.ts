@@ -820,6 +820,74 @@ const spec = (concurrent: number): ScenarioSpec => ({
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+describe("code an object runs while a call is entering it", () => {
+  /**
+   * One call into the object, as a platform performs it against a runtime that constructs the
+   * object first: the constructor's work behind the gate (`entering`), then the method.
+   */
+  const enter = (hooks: RunHooks, invocation: string, entering: () => Promise<void>) =>
+    hooks.effect(
+      { invocation, target: "DO:X", op: "call", args: null, allowed: [], hostsEffects: true },
+      async () => {
+        await hooks.hostEntering(HOST, entering);
+        return hooks.hostedCode(HOST, () => "answered", "call");
+      },
+      (v) => v,
+      { host: HOST },
+    );
+
+  test.each([1, 2])(
+    "a timer it awaits is the object's to be woken by, and the call enters after it (%i in flight)",
+    async (concurrent) => {
+      const order: string[] = [];
+      const platform: Platform = {
+        name: "objects",
+        assumptions: [],
+        concurrent: true,
+        reset: async () => {},
+        initialEvents: () => [{ id: "a", attempt: 1, data: null }],
+        restrictEvents: (s) => s,
+        async deliver(event, hooks) {
+          const inv = hooks.startInvocation(`${event.id}#${event.attempt}`);
+          const outcome = await runInvocation(hooks, inv, () =>
+            enter(hooks, inv.id, async () => {
+              order.push("warming");
+              await new Promise((resolve) => setTimeout(resolve, 10));
+              // Its own effect is the entering call's.
+              await objectFetch(hooks, hooks.running(), "warm");
+              order.push("warm");
+            }),
+          );
+          order.push(`call ${outcome.status}`);
+          return { status: outcome.status, followUps: [] };
+        },
+      };
+      const spec: ScenarioSpec = {
+        version: 1,
+        name: "entering",
+        worker: { entry: "./w.ts", config: "./w.jsonc" },
+        drive: { kind: "none" },
+        setup: [],
+        externals: [],
+        invariants: [],
+        bounds: bounds(concurrent),
+      };
+      const run = new Run({ chooser: replayChooser({ seed: 1, faults: [] }), bounds: spec.bounds });
+      const log = await runOnce(spec, platform, run);
+      expect(run.unsupportedReasons).toEqual([]);
+      expect(order).toEqual(["warming", "warm", "call completed"]);
+      expect(ops(log.entries)).toEqual([
+        "a#1 call call",
+        "a#1 call warm",
+        "a#1 result warm",
+        "a#1 result call",
+      ]);
+      // The timer was the virtual clock's: time passed to it.
+      expect(run.now()).toBeGreaterThanOrEqual(virtualEpoch + 10);
+    },
+  );
+});
+
 describe("two jobs of one object after their answers, each making two effects", () => {
   /** Two calls into the object; each answers and, a timer later, makes a `plan` and then a `charge`. */
   const jobs = (): Platform => ({
