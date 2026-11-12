@@ -4,7 +4,9 @@
  * inside its `get`'s effect and handed back in an object with the same
  * fields and body methods: reading it later would be I/O the run cannot
  * see. An object's random `version` and wall-clock `uploaded` are replaced
- * by stand-ins (see `VersionBook`), so traces stay byte-identical.
+ * by stand-ins (see `VersionBook`), so traces stay byte-identical. When a
+ * Durable Object is the caller, the call leaves it behind its output gate
+ * (`outboundGate`).
  */
 
 import {
@@ -15,7 +17,7 @@ import {
   toJson,
   writeFaults,
 } from "@eutaxy/core";
-import { type ProxyContext, pointAt, refuse } from "./proxy-context.ts";
+import { outboundGate, type ProxyContext, pointAt, refuse } from "./proxy-context.ts";
 
 /** Whether a binding is an R2 bucket (Miniflare's `R2Bucket`). */
 export function isR2(value: unknown): value is R2Bucket {
@@ -175,24 +177,24 @@ export function proxyR2(
     put: (key: string, value: unknown, options?: R2PutOptions) =>
       ctx.hooks.effect(
         point("put", { key, ...(putArgs(options) as object) }, writeFaults),
-        async () => {
+        outboundGate(ctx, async () => {
           checkConditions(options?.onlyIf);
           const read = value instanceof ReadableStream ? buffered.get(value) : undefined;
           const stored = await real.put(key, (read ? read() : value) as never, options);
           return stored === null ? null : metadata(stored, book, Date.now());
-        },
+        }),
         (o) => (o === null ? { stored: false } : { stored: true, size: o.size, etag: o.etag }),
       ),
     delete: (keys: string | string[]) =>
       ctx.hooks.effect(
         point("delete", { keys: typeof keys === "string" ? [keys] : [...keys] }, writeFaults),
-        () => real.delete(keys),
+        outboundGate(ctx, () => real.delete(keys)),
         () => null,
       ),
     get: (key: string, options?: R2GetOptions) =>
       ctx.hooks.effect(
         point("get", getArgs(key, options), readFaults),
-        async () => {
+        outboundGate(ctx, async () => {
           checkConditions(options?.onlyIf);
           const o = await real.get(key, options);
           if (o === null) return null;
@@ -200,26 +202,26 @@ export function proxyR2(
           // A failed precondition answers the metadata without a body.
           if (!("body" in o)) return meta;
           return withBody(meta, new Uint8Array(await (o as R2ObjectBody).arrayBuffer()));
-        },
+        }),
         (o) => ({ ...described(o), ...(o !== null ? { body: "body" in o } : {}) }),
       ),
     head: (key: string) =>
       ctx.hooks.effect(
         point("head", { key }, readFaults),
-        async () => {
+        outboundGate(ctx, async () => {
           const o = await real.head(key);
           return o === null ? null : metadata(o, book, Date.now());
-        },
+        }),
         described,
       ),
     list: (options?: R2ListOptions) =>
       ctx.hooks.effect(
         point("list", toJson(options ?? {}), readFaults),
-        async () => {
+        outboundGate(ctx, async () => {
           const listed = await real.list(options);
           const at = Date.now();
           return { ...listed, objects: listed.objects.map((o) => metadata(o, book, at)) };
-        },
+        }),
         (l) => ({
           keys: l.objects.map((o) => o.key),
           truncated: l.truncated,

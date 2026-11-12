@@ -807,17 +807,25 @@ shares the reading of the limit and none of the proxy code.
   call crashes the call and resets the object; the run sees a crash on its
   own ticks (a wait on a crashed invocation ends with its `CrashSignal`),
   since the reset tears down the object's task, with whatever that task
-  had settled. An object's own service bindings are the scenario's. The
-  runtime hands an object the Worker's real `env`, where a service
-  binding is whatever the isolate holds under that name, so the model
-  puts the instance's `env` behind a view under which a service binding
-  is the Worker's own stub for it (for a callee's object, under the
-  callee's qualified name), resolved when first used: reading it off
-  `env` does nothing. A call the object makes through it is an effect of
-  the invocation its code is running as (the call it is serving, or its
-  own work after the answer), answered from the `service()` script or by
-  the `callee()` hosted inside it, with that binding's faults, and a
-  crash fault on it resets the object as on any effect the object makes.
+  had settled. An object's own bindings are the scenario's. The runtime
+  hands an object the Worker's real `env`, where a service binding is
+  whatever the isolate holds under that name and a database or a bucket
+  is the real one, whose calls nothing would record or fault. So the
+  model puts the instance's `env` behind a view under which a service
+  binding, a D1 database and an R2 bucket are the Worker's own proxies
+  for them (for a callee's object, under the callee's qualified name),
+  resolved when first used: reading one off `env`, or preparing a
+  statement, does nothing. A call the object makes through one is an
+  effect of the invocation its code is running as (the call it is
+  serving, the call entering it while its constructor runs, or its own
+  work after the answer), with that binding's faults: a service's
+  answered from the `service()` script or by the `callee()` hosted
+  inside it, a statement (`run`, `all`, `first`, `raw`, a `batch`, an
+  `exec`) or a bucket operation performed on the real store. A crash
+  fault on it resets the object as on any effect the object makes. That
+  is where a write outside the object and the object's own record of it
+  come apart: the store has the write, the object's storage does not
+  say so, and whatever enters the object next decides again.
   The call leaves the object only once what the object wrote before it
   is durable: the storage's `sync()` is awaited inside the effect, before
   the call is performed, as the runtime's output gate holds an outgoing
@@ -828,16 +836,15 @@ shares the reading of the limit and none of the proxy code.
   A fault that resets
   the object after the call therefore finds a claim the object recorded
   before calling, and one that keeps the call from leaving does not make
-  the writes durable. Current limits: storage operations are not
-  turns (the input gate holds them, so this is the runtime's behaviour);
-  the object's calls on its other bindings (D1, R2) are not recorded. A
-  callback behind the input gate that fails breaks the gate, and the
-  runtime resets the object: the model takes the instance for gone from
-  there, with its work and its poller, as after a crash inside it, so
-  the call that was entering fails, the next event constructs the object
-  again, and when none comes it is woken before the snapshot. An object
-  whose construction fails in more wakes than the run has faults fails
-  by itself: it is not woken again, the snapshot leaves out an object it
+  the writes durable. Storage operations are not turns (the input
+  gate holds them, so this is the runtime's behaviour). A callback
+  behind the input gate that fails breaks the gate, and the runtime
+  resets the object: the model takes the instance for gone from there,
+  with its work and its poller, as after a crash inside it, so the call
+  that was entering fails, the next event constructs the object again,
+  and when none comes it is woken before the snapshot. An object whose
+  construction fails in more wakes than the run has faults fails by
+  itself: it is not woken again, the snapshot leaves out an object it
   cannot enter, and the run is `UNSUPPORTED` with the reason. A
   constructor runs before the method a call names, on the first call of
   a run as in a wake, and the runtime carries no context of the call
@@ -858,7 +865,10 @@ shares the reading of the limit and none of the proxy code.
   there a method of a scripted service binding is answered from the
   script, unrecorded, so that a constructor that loads from one comes
   up, and anything else through a service binding is refused, never
-  passed to the isolate's own. Still outside: a class the platform is
+  passed to the isolate's own; a database or a bucket is the real one
+  there, so a constructor that reads one needs that store's setup step
+  before the object's, and what a constructor writes to one is written
+  once more by the reset, before the run. Still outside: a class the platform is
   not given (its `env` is put behind the view once its constructor has
   returned), the `env` parameter a constructor keeps for itself where
   `this.env` would do, and a timer the constructor's own body sets

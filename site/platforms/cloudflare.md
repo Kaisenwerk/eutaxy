@@ -166,9 +166,11 @@ crashes the call and resets the object.
 (`this.env.BILLING.charge(…)`) are the scenario's, as the Worker's are:
 answered from the `service()` script or by the `callee()` hosted inside
 the call, and recorded as effects of the invocation the object's code is
-running as, the call it is serving or its own work after the answer. A
-fault can land on each: an answer lost, a call that never left, the object
-reset right after it. The call leaves the object only once what the object
+running as, the call it is serving or its own work after the answer. The
+statements it runs on a D1 database and its operations on an R2 bucket
+(`this.env.DB.prepare(…).run()`, `this.env.FILES.put(…)`) are recorded
+the same way, performed on the real store. A fault can land on each: an
+answer lost, a call that never left, the object reset right after it. The call leaves the object only once what the object
 wrote before it is durable, as the runtime's output gate holds an outgoing
 message until the writes before it are confirmed, so a claim the object
 records before calling survives a reset after the call. The corpus's
@@ -178,9 +180,12 @@ covered too: `this.env` is the scenario's from its first line, and what it
 does behind `blockConcurrencyWhile` (loading its configuration from
 another Worker, waiting on a timer) runs as the object's code before the
 call's method starts. A callback there that fails resets the object, as
-the runtime does. Limits: the object's calls on its other bindings
-(D1, R2) are not recorded, and the `env` parameter a constructor keeps for
-itself, where `this.env` would do, is the runtime's.
+the runtime does. Limits: the `env` parameter a constructor keeps for
+itself, where `this.env` would do, is the runtime's; and each seeded
+object is also constructed once while it is reset before a run, with the
+real database and bucket, so put a store's setup step before the object's
+when its constructor reads it, and expect a write its constructor makes
+there to have been made once already.
 
 **SQLite storage.** For a SQLite-backed class (`new_sqlite_classes` in the
 wrangler migrations, the backend Cloudflare recommends and the Agents SDK

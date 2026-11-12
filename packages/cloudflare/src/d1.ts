@@ -1,11 +1,13 @@
 /**
  * The D1 binding proxy. Every statement execution is an effect point: the
  * engine decides the fault, the real Miniflare-backed D1 performs the query,
- * and the log records call, result and fault in the documented shape.
+ * and the log records call, result and fault in the documented shape. When
+ * a Durable Object is the caller, the query leaves it behind its output
+ * gate (`outboundGate`).
  */
 
 import { canonicalJson, type JsonValue, readFaults, toJson, writeFaults } from "@eutaxy/core";
-import { type ProxyContext, pointAt as point } from "./proxy-context.ts";
+import { outboundGate, type ProxyContext, pointAt as point } from "./proxy-context.ts";
 
 /** Whether a binding is a D1 database (what the proxies and the differential wrap). */
 export function isD1(value: unknown): value is D1Database {
@@ -60,7 +62,7 @@ class StatementProxy {
   run<T = Record<string, unknown>>(): Promise<D1Result<T>> {
     return this.ctx.hooks.effect(
       point(this.ctx, this.target, "run", this.args(), writeFaults),
-      () => this.real.run<T>(),
+      outboundGate(this.ctx, () => this.real.run<T>()),
       (r) => metaOf(r),
     );
   }
@@ -68,7 +70,7 @@ class StatementProxy {
   all<T = Record<string, unknown>>(): Promise<D1Result<T>> {
     return this.ctx.hooks.effect(
       point(this.ctx, this.target, "all", this.args(), readFaults),
-      () => this.real.all<T>(),
+      outboundGate(this.ctx, () => this.real.all<T>()),
       (r) => ({ rows: r.results.length, changes: r.meta.changes ?? 0 }),
     );
   }
@@ -82,7 +84,9 @@ class StatementProxy {
         { ...(this.args() as object), column: colName ?? null } as JsonValue,
         readFaults,
       ),
-      () => (colName === undefined ? this.real.first<T>() : this.real.first<T>(colName)),
+      outboundGate(this.ctx, () =>
+        colName === undefined ? this.real.first<T>() : this.real.first<T>(colName),
+      ),
       (r) => ({ row: toJson(r) }),
     );
   }
@@ -90,10 +94,13 @@ class StatementProxy {
   raw<T = unknown[]>(options?: { columnNames?: boolean }): Promise<T[]> {
     return this.ctx.hooks.effect(
       point(this.ctx, this.target, "raw", this.args(), readFaults),
-      () =>
-        (options
-          ? this.real.raw<T>(options as { columnNames: true })
-          : this.real.raw<T>()) as Promise<T[]>,
+      outboundGate(
+        this.ctx,
+        () =>
+          (options
+            ? this.real.raw<T>(options as { columnNames: true })
+            : this.real.raw<T>()) as Promise<T[]>,
+      ),
       (r) => ({ rows: r.length }),
     );
   }
@@ -119,7 +126,7 @@ export function proxyD1(real: D1Database, binding: string, ctx: ProxyContext): D
       };
       return ctx.hooks.effect(
         point(ctx, target, "batch", args, writeFaults),
-        () => real.batch<T>(unwrapped as D1PreparedStatement[]),
+        outboundGate(ctx, () => real.batch<T>(unwrapped as D1PreparedStatement[])),
         (rs) => ({
           changes: rs.reduce((n, r) => n + (r.meta.changes ?? 0), 0),
           statements: rs.length,
@@ -129,7 +136,7 @@ export function proxyD1(real: D1Database, binding: string, ctx: ProxyContext): D
     exec(sql: string): Promise<D1ExecResult> {
       return ctx.hooks.effect(
         point(ctx, target, "exec", { sql }, writeFaults),
-        () => real.exec(sql),
+        outboundGate(ctx, () => real.exec(sql)),
         (r) => ({ count: r.count, duration: 0 }),
       );
     },

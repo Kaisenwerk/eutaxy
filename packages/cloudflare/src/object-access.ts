@@ -17,6 +17,8 @@ import {
   type RunHooks,
 } from "@eutaxy/core";
 import { type Outcome, runInvocation } from "@eutaxy/engine";
+import { isD1 } from "./d1.ts";
+import { isR2 } from "./r2.ts";
 import type { ServiceSetup } from "./scenario.ts";
 import { isServiceBinding, scriptedError } from "./services.ts";
 
@@ -78,23 +80,27 @@ export function hostMethod(hooks: RunHooks, host: string, instance: unknown, met
 export const calleeOfEnv: unique symbol = Symbol.for("eutaxy.calleeOfEnv");
 
 /**
- * Make an object's calls through its own service bindings the scenario's.
- * The runtime hands an object the Worker's real `env`, where a service
- * binding is not the scenario's script or callee: a call through it would
- * reach whatever the isolate holds under that name and fail or answer
- * unseen. So the instance's `env` is put behind a view under which a
- * service binding is the one the Worker itself sees (`worker()`, the
- * platform's env, under the binding's qualified name): the call is an
- * effect of whichever invocation the object's code is running as, answered
- * from the `service()` script or by the `callee()` hosted inside it, with
- * that binding's faults. The binding is resolved when first used, so
- * reading it off `env` does nothing. Without the platform's env, or when it
- * holds nothing under the name, the call ends the run `UNSUPPORTED`. The
- * object's other bindings are its own to use, unrecorded. A class given
- * the platform's base (`simulateConstruction`) is constructed with the view
- * (`envView`) and this only tells it whose it is; for any other the view is
- * in place once the constructor has returned, and the `env` parameter a
- * constructor keeps for itself is out of reach either way.
+ * Make an object's calls through its own bindings the scenario's. The
+ * runtime hands an object the Worker's real `env`, where a service binding
+ * is not the scenario's script or callee (a call through it would reach
+ * whatever the isolate holds under that name and fail or answer unseen),
+ * and a database or bucket is the real one, whose calls nothing records
+ * or faults. So the instance's `env` is put behind a view under which a
+ * service binding, a D1 database and an R2 bucket are the ones the Worker
+ * itself sees (`worker()`, the platform's env, under the binding's
+ * qualified name): the call is an effect of whichever invocation the
+ * object's code is running as, with that binding's faults: a service's
+ * answered from the `service()` script or by the `callee()` hosted inside
+ * it, a statement or a bucket operation performed on the real store. The
+ * binding is resolved when first used, so reading it off `env` does
+ * nothing. Without the platform's env, or when it holds nothing under the
+ * name, a service call ends the run `UNSUPPORTED`, and a database or
+ * bucket is the object's own, unrecorded, as its remaining bindings are. A
+ * class given the platform's base (`simulateConstruction`) is constructed
+ * with the view (`envView`) and this only tells it whose it is; for any
+ * other the view is in place once the constructor has returned, and the
+ * `env` parameter a constructor keeps for itself is out of reach either
+ * way.
  *
  * A call leaves the object only once what the object wrote before it is
  * durable, as the runtime's output gate holds an outgoing message until the
@@ -135,8 +141,11 @@ export function ownEnv(
  * name there) is answered from the script as it will be in the run, so a
  * constructor that loads from one comes up; anything else through a
  * service binding (a `fetch()`, a binding with a callee or with no script)
- * is refused. The instance is evicted before the run, whose first call
- * constructs the object again, inside the run.
+ * is refused. A database or a bucket is the real one there, as it is the
+ * reset's own: what a constructor writes to one while its object is reset
+ * stays unless that store's setup step comes after the object's. The
+ * instance is evicted before the run, whose first call constructs the
+ * object again, inside the run.
  */
 export function outsideRunEnv(
   env: object,
@@ -253,10 +262,39 @@ export function envView(
     }
     return stub;
   };
+  /** The scenario's database or bucket under the object's binding `name`, or the object's own. */
+  const stores = new Map<string, object>();
+  const storeFor = (name: string, own: object): object => {
+    let store = stores.get(name);
+    if (!store) {
+      store = new Proxy(own, {
+        get(target, prop) {
+          // The Worker's own proxy for the binding, looked up now: its effects carry the run.
+          const through = worker ? (Reflect.get(worker(), qualified(name)) as unknown) : undefined;
+          if (through === null || typeof through !== "object" || through === target) {
+            const value = Reflect.get(target, prop, target) as unknown;
+            return typeof value === "function" ? value.bind(target) : value;
+          }
+          const member = Reflect.get(through, prop, through) as unknown;
+          if (typeof member !== "function") return member;
+          // A statement is executed later: that, not preparing it, is the object's call.
+          if (prop === "prepare")
+            return (...args: unknown[]) =>
+              statementView(Reflect.apply(member, through, args) as object, owner, gate);
+          return calling(member.bind(through), owner, gate);
+        },
+      });
+      stores.set(name, store);
+    }
+    return store;
+  };
   const view = new Proxy(env, {
     get(target, prop) {
       const value = Reflect.get(target, prop, target) as unknown;
-      return typeof prop === "string" && isServiceBinding(value) ? stubFor(prop) : value;
+      if (typeof prop !== "string") return value;
+      // A service binding first: in workerd it answers every duck type.
+      if (isServiceBinding(value)) return stubFor(prop);
+      return isD1(value) || isR2(value) ? storeFor(prop, value) : value;
     },
   });
   ownerOfView.set(view, owner);
@@ -264,8 +302,30 @@ export function envView(
 }
 
 /**
- * A method of a service binding as an object calls it. The call (or the
- * await of an RPC getter) starts as the object's code, which it is: in a
+ * A D1 statement as an object holds it: executing it (`run`, `all`,
+ * `first`, `raw`) is the object's call, and `bind()` gives another such
+ * statement. What `batch()` reads of it is the statement's own.
+ */
+function statementView(
+  statement: object,
+  owner: { hooks: RunHooks; binding: string; object: string },
+  gate: EnvGate | undefined,
+): object {
+  return new Proxy(statement, {
+    get(target, key) {
+      const value = Reflect.get(target, key, target) as unknown;
+      if (typeof value !== "function") return value;
+      if (key === "bind")
+        return (...values: unknown[]) =>
+          statementView(Reflect.apply(value, target, values) as object, owner, gate);
+      return calling(value.bind(target), owner, gate);
+    },
+  });
+}
+
+/**
+ * A method of a binding as an object calls it. The call (or the await of
+ * an RPC getter) starts as the object's code, which it is: in a
  * method it already runs as such, but the runtime carries no context into
  * a constructor, whose call would otherwise be a turn of nobody's inside
  * the call that is entering the object (`RunHooks.hostEntering`). And
