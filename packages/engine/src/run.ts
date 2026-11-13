@@ -129,6 +129,14 @@ const deliveryScope = asyncScope<DeliveryCell>();
 interface HostContext {
   readonly host: string;
   readonly frame: Frame | undefined;
+  /** Which instance of the host the code belongs to: how many times the host had been reset when it entered. */
+  readonly instance: number;
+}
+
+/** An instance of a host: the host, and how many times it had been reset when the instance began. */
+interface Instance {
+  readonly host: string;
+  readonly instance: number;
 }
 const hostScope = asyncScope<HostContext | undefined>();
 
@@ -227,7 +235,22 @@ export class Run implements RunHooks {
    */
   private readonly adopted = new WeakMap<Frame, InvocationState>();
   /** Per hosted invocation, the object (host) whose code it was hosted from, directly or through another: see `hosted`. */
-  private readonly hostedWithin = new Map<string, string>();
+  private readonly hostedWithin = new Map<string, Instance>();
+  /**
+   * Per host, how many times it was reset. Code belongs to the instance it
+   * entered (`HostContext.instance`); once the host is reset that instance
+   * is gone, and with it everything that ran in its context: its code makes
+   * no further effect and takes no turn, a Worker it called dies with it,
+   * what it awaited ends or goes on as another object's own work, and the
+   * calls that were inside it will not be answered (`hostAbandoned`).
+   */
+  private readonly resetCounts = new Map<string, number>();
+  /**
+   * Calls whose caller was reset while the called object's code was running
+   * (`Frame.orphaned`), each with the deadline the run timed it under once
+   * one of its loops came by (`watchOrphans`).
+   */
+  private readonly orphans = new Map<Frame, { cancel(): void } | null>();
   /**
    * Per host, its poller (concurrent runs; see `pollHost`): the waits its
    * ticks wake, and the turns released to the host's code since its last
@@ -379,6 +402,9 @@ export class Run implements RunHooks {
 
   uninstall(): void {
     if (installed === this) installed = null;
+    // The run is over: nothing of it is timed any longer.
+    for (const deadline of this.orphans.values()) deadline?.cancel();
+    this.orphans.clear();
     this.restoreFetch?.();
     this.restoreFetch = null;
     this.patched?.restore();
@@ -435,7 +461,8 @@ export class Run implements RunHooks {
     const frame = this.frames.enteringHost(host);
     // The host's code, as in `hostedCode`: its timers are virtual and the host's.
     const run = (): T => (this.patched ? this.patched.handlerCode(code) : code());
-    if (!frame) return hostScope ? hostScope.run({ host, frame }, run) : run();
+    const instance = this.instanceOf(host);
+    if (!frame) return hostScope ? hostScope.run({ host, frame, instance }, run) : run();
     // While it runs the entering call is code that may be awaiting a timer of its own, or an
     // effect of its own that is parked.
     this.frames.adjust(frame, () => {
@@ -447,7 +474,7 @@ export class Run implements RunHooks {
       });
     let result: T;
     try {
-      result = hostScope ? hostScope.run({ host, frame }, run) : run();
+      result = hostScope ? hostScope.run({ host, frame, instance }, run) : run();
     } catch (err) {
       left();
       throw err;
@@ -475,12 +502,17 @@ export class Run implements RunHooks {
       });
     // An object's code is handler code: its timers are virtual, inside a call's I/O or not.
     const run = (): T => (this.patched ? this.patched.handlerCode(code) : code());
-    const result = hostScope ? hostScope.run({ host, frame }, run) : run();
+    const instance = this.instanceOf(host);
+    const result = hostScope ? hostScope.run({ host, frame, instance }, run) : run();
     // Once the code has returned its answer is in transit: the call is no longer idle code that a
     // timer of the host's may wake (a timer it set and did not await fires after the answer), and
     // it is in flight until the answer has crossed, whatever the code left parked.
     if (frame) {
-      const answered = (): void => this.frames.answered(frame);
+      const answered = (): void => {
+        this.frames.answered(frame);
+        // Its caller was reset meanwhile: nobody is left to take the answer and end the call.
+        if (frame.orphaned) frame.end();
+      };
       if (isThenable(result)) void Promise.resolve(result).then(answered, answered);
       else answered();
     }
@@ -596,6 +628,15 @@ export class Run implements RunHooks {
     this.hostAbandoned(host);
   }
 
+  private instanceOf(host: string): number {
+    return this.resetCounts.get(host) ?? 0;
+  }
+
+  /** Whether the instance is gone: its host was reset since it began. */
+  private isGone(instance: Instance | undefined): boolean {
+    return instance !== undefined && this.instanceOf(instance.host) !== instance.instance;
+  }
+
   /**
    * The host was reset (`onAbandon` ran: a crash inside its code, an effect
    * of its that hung; or the platform dropped the instance, `hostReset`): its
@@ -604,11 +645,81 @@ export class Run implements RunHooks {
    */
   private hostAbandoned(host: string): void {
     this.hostPollers.delete(host);
+    const old = this.instanceOf(host);
+    this.resetCounts.set(host, old + 1);
+    // A Worker the instance called runs in the instance's context: its code went with it, so its
+    // invocation ends here (its timers with it, and what it had in flight inside other objects
+    // is theirs now), and nothing waits for it any longer.
+    for (const [id, within] of [...this.hostedWithin]) {
+      if (within.host !== host || within.instance !== old) continue;
+      this.invocations.get(id)?.crash();
+      this.hosts.delete(id);
+      this.hostedWithin.delete(id);
+    }
+    // A call into the host whose code had started was running in the instance that is gone: that
+    // code will not answer. Where the caller is alive the runtime fails the call and the caller
+    // ends it; one nobody is left to end (its caller was reset before) ends here.
+    for (const frame of this.frames.into(host)) {
+      if (!(frame.entered || frame.entering > 0)) continue;
+      this.frames.adjust(frame, () => {
+        frame.codeGone = true;
+      });
+      if (frame.orphaned) frame.end();
+    }
+    // What the host's code was awaiting went with it: an effect it made that is still being
+    // performed will never be seen to end. A call it made into another object whose code is
+    // running goes on there, as that object's own work from now on (what the code still does is
+    // an answer to nobody), and is ended when that code answers; anything else ends here: a
+    // call it made into itself, whose code went with it too, and a call into an object that
+    // was reset since the call entered it.
+    for (const frame of this.frames.issuedBy(host)) {
+      const elsewhere = frame.host !== undefined && frame.host !== host;
+      if (elsewhere && frame.entered && !frame.answered && !frame.codeGone) {
+        frame.orphaned = true;
+        // Its own deadline is awaited in the caller's context, which is gone or going: the run
+        // times it from now, the same wherever it runs (`watchOrphans`).
+        frame.untime();
+        if (!this.orphans.has(frame)) this.orphans.set(frame, null);
+        if (frame.host !== undefined && !this.adopted.has(frame)) {
+          const work = this.continuationOf(frame.host);
+          this.adopted.set(frame, work);
+          if (this.concurrent) this.turns.adopt(frame, work);
+        }
+      } else frame.end();
+    }
     const cont = this.continuations.get(host);
     if (!cont) return;
     this.continuations.delete(host);
     this.afterWork.delete(cont);
     cont.crash();
+  }
+
+  /**
+   * Put the orphaned calls not yet timed under the real-time budget. What
+   * timed such a call was awaiting it in its caller's context, which went
+   * with the caller, so the run times it instead, from here: its own loops
+   * ask whose timers may fire on every tick while anything is in flight,
+   * in a context no reset tears down. A call whose code never answers ends
+   * as any effect past the budget does: the run is UNSUPPORTED and the
+   * called object is reset.
+   */
+  private watchOrphans(): void {
+    for (const [frame, watched] of this.orphans) {
+      if (watched) continue;
+      const budgetMs = this.options.bounds.budgetMs;
+      const deadline = realDeadline(budgetMs);
+      this.orphans.set(frame, deadline);
+      void deadline.expired.then(() => {
+        if (!frame.active || this.orphans.get(frame) !== deadline) return;
+        this.unsupported(
+          `${frame.target} ${frame.op} did not complete within ${budgetMs} ms of real time`,
+        );
+        this.adopted.get(frame)?.crash();
+        frame.abandon();
+        frame.end();
+        if (this.concurrent) this.progressed();
+      });
+    }
   }
 
   /**
@@ -619,8 +730,9 @@ export class Run implements RunHooks {
    * them is the object's.
    */
   private leftHost(frame: Frame): void {
-    // An abandoned effect reset the object: what its code left outstanding died with the instance.
-    if (frame.host === undefined || frame.isAbandoned) return;
+    // An abandoned effect reset the object, and a reset takes the code of every call inside the
+    // object: what that code left outstanding died with the instance.
+    if (frame.host === undefined || frame.isAbandoned || frame.codeGone) return;
     this.hostFrames.set(frame.host, frame);
     const effects = frame.children > 0 || frame.performing > 0;
     if (
@@ -754,6 +866,7 @@ export class Run implements RunHooks {
    * crossing into the object, storage I/O).
    */
   private timersAllowed(): ((owner: string | null) => boolean) | null {
+    if (this.orphans.size > 0) this.watchOrphans();
     const clock = this.patched?.clock;
     if (!clock || this.firedPending() > 0) return null;
     if (this.frames.inFlight === 0) return () => true;
@@ -913,6 +1026,12 @@ export class Run implements RunHooks {
     options: EffectOptions = {},
   ): Promise<T> {
     const ctx = hostScope?.getStore();
+    // The instance whose context this code runs in, if any: an object's own code, or a Worker's
+    // that an object called. Code of an instance that was reset does not run in the runtime; where
+    // it still does (a fake one, or a timer the run fired for it) it makes no effect.
+    const inside: Instance | undefined = ctx ?? this.hostedWithin.get(point.invocation);
+    const gone = (): boolean => this.isGone(inside);
+    if (gone()) return hang();
     /** A host's code inside a call of its: that call. */
     let call: Frame | undefined;
     if (ctx !== undefined) {
@@ -979,7 +1098,7 @@ export class Run implements RunHooks {
         // called from inside an object: its code then runs in the object's I/O context, where a
         // promise settled from outside resumes it in the wrong one (workerd), so it waits on the
         // object's poller, as the object's own effects do.
-        const within = this.hostedWithin.get(point.invocation);
+        const within = this.hostedWithin.get(point.invocation)?.host;
         if (within !== undefined) this.pollHost(within);
         return this.hostedTurn(
           point,
@@ -989,6 +1108,7 @@ export class Run implements RunHooks {
           inv,
           undefined,
           host,
+          gone,
           within === undefined
             ? (park) => new Promise<boolean>((go) => park(() => go(true)))
             : async (park, crashed) => {
@@ -1018,6 +1138,7 @@ export class Run implements RunHooks {
         inv,
         enclosing,
         enclosing,
+        gone,
         async (park, crashed) => {
           // Wait by polling a flag from inside the hosted code: no promise is settled from outside
           // it (workerd refuses that for a Durable Object), and no event has to enter it (its input
@@ -1053,39 +1174,64 @@ export class Run implements RunHooks {
     inv: InvocationState,
     enclosing: Frame | undefined,
     host: Frame,
+    /** Whether the code making the effect belongs to an instance that was reset since. */
+    gone: () => boolean,
     wait: (park: (go: () => void) => void, crashed: () => boolean) => Promise<boolean>,
   ): Promise<T> {
-    this.childWaits(host);
+    this.childStarts(host);
     // Whose turn it waits for: the host's work's once the hosting effect has answered or its caller
     // crashed (`ownerOf`); adoption while parked re-points the turn (`Turns.adopt`).
     const owner = this.ownerOf(inv, enclosing);
-    const crashed = (): boolean => this.ownerOf(inv, enclosing).isCrashed();
+    const crashed = (): boolean => gone() || this.ownerOf(inv, enclosing).isCrashed();
     const attempt = this.attemptNow(enclosing, host);
-    if (!(await wait((go) => this.turns.park(owner, point.target, go, host, attempt), crashed))) {
-      this.childLeaves(host, true);
+    // The scheduler marks the turn as on its way to the code (`Frame.arriving`) when it gives it.
+    let given = false;
+    let over = false;
+    const arrived = (): void => this.frames.adjust(host, () => host.arriving--);
+    const came = await wait(
+      (go) =>
+        this.turns.park(
+          owner,
+          point.target,
+          () => {
+            given = true;
+            // Given to code that stopped waiting (its invocation crashed): nothing is on its way.
+            if (over) arrived();
+            go();
+          },
+          host,
+          attempt,
+          gone,
+        ),
+      crashed,
+    );
+    over = true;
+    // The turn has arrived, or will not be taken: either way it is on its way no longer. From here to
+    // the effect performing (or dying of its fault) nothing else runs.
+    if (given) arrived();
+    // Code whose instance was reset does nothing more, its own bookkeeping included: in the runtime
+    // this line is never reached in it, so nothing may depend on it being reached anywhere. The
+    // call the code was inside of is the caller's to end (`Frame.codeGone`).
+    if (gone()) return hang();
+    if (!came) {
+      this.childEnds(host);
       return hang();
     }
     try {
       return await this.performEffect(point, perform, summarize, options, inv, enclosing, host);
     } finally {
-      this.childLeaves(host, false);
+      this.childEnds(host);
     }
   }
 
-  /** A child of `host` started and waits for its turn (the scheduler clears the wait when it comes). */
-  private childWaits(host: Frame): void {
-    this.frames.adjust(host, () => {
-      host.children++;
-      host.waitingChildren++;
-    });
+  /** A child of `host` started: an effect waiting for its turn under it, or an invocation hosted inside it. */
+  private childStarts(host: Frame): void {
+    this.frames.adjust(host, () => host.children++);
   }
 
-  /** A child of `host` ended; `stillWaiting` when its turn never came. */
-  private childLeaves(host: Frame, stillWaiting: boolean): void {
-    this.frames.adjust(host, () => {
-      host.children--;
-      if (stillWaiting) host.waitingChildren--;
-    });
+  /** A child of `host` ended. */
+  private childEnds(host: Frame): void {
+    this.frames.adjust(host, () => host.children--);
   }
 
   /** The effect once it has its turn: the fault, the perform under its deadline, the record. */
@@ -1125,8 +1271,22 @@ export class Run implements RunHooks {
     frame.onHostAbandoned = (h) => this.hostAbandoned(h);
     frame.parent = host;
     frame.attempt = this.attemptNow(enclosing, host);
+    // A host's code, or a Worker's hosted from inside one: it runs in that object's context.
+    frame.issuer = (hostScope?.getStore() ?? this.hostedWithin.get(made.invocation))?.host;
     this.frames.enter(frame);
-    if (enclosing) enclosing.performing++;
+    if (enclosing) this.frames.adjust(enclosing, () => enclosing.performing++);
+    let ended = false;
+    frame.untime = () => deadline.cancel();
+    frame.end = (): void => {
+      if (ended) return;
+      ended = true;
+      deadline.cancel();
+      this.orphans.get(frame)?.cancel();
+      this.orphans.delete(frame);
+      if (enclosing) this.frames.adjust(enclosing, () => enclosing.performing--);
+      this.frames.leave(frame);
+      this.leftHost(frame);
+    };
     try {
       const inside = (): Promise<T> => (effectScope ? effectScope.run(frame, perform) : perform());
       // The library's own timers inside the I/O are real; the handler's stay virtual.
@@ -1143,13 +1303,18 @@ export class Run implements RunHooks {
       // `perform` threw before returning a promise.
       settled = { ok: false, error: err };
     } finally {
-      deadline.cancel();
-      if (enclosing) enclosing.performing--;
-      this.frames.leave(frame);
-      this.leftHost(frame);
+      frame.end();
       this.patched?.clock.advance(effectLatencyMs);
       if (this.concurrent) this.progressed();
     }
+    // A crash inside it: whichever of the signal and the perform's own end woke this line (the reset
+    // of the object the crash happened in rejects the call into it, and in the runtime that
+    // rejection can arrive first where the signal was raised in another object's context), the
+    // effect ended by the crash, so what encloses it ends too and nothing is recorded as its result.
+    if (frame.wasCrashed) settled = "nested_crash";
+    // Its caller was reset while the called object's code ran: nobody is left to take the answer,
+    // here as where the runtime tore the caller's context down and this line is never reached.
+    if (frame.orphaned) return hang();
     if (settled === "expired") {
       this.unsupported(
         `${point.target} ${point.op} did not complete within ${this.options.bounds.budgetMs} ms of real time`,
@@ -1343,7 +1508,10 @@ export class Run implements RunHooks {
       throw new Error("hosting an invocation needs AsyncLocalStorage (node:async_hooks)");
     // The object whose code is hosting it, if any (an object calling another Worker), or the one
     // the invocation hosting it runs inside of: the hosted code runs in that object's I/O context.
-    const within = hostScope?.getStore()?.host ?? this.hostedWithin.get(frame.invocation);
+    const here = hostScope?.getStore();
+    const within: Instance | undefined = here
+      ? { host: here.host, instance: here.instance }
+      : this.hostedWithin.get(frame.invocation);
     const run = async (): Promise<T> => {
       // Tracked, not made the running one: the hosted code is known by its own cell, so the caller's
       // code that goes on meanwhile (a second call awaited together) stays the caller's.
@@ -1351,11 +1519,11 @@ export class Run implements RunHooks {
       if (this.concurrent) this.turns.started(id);
       this.hosts.set(id, frame);
       if (within !== undefined) this.hostedWithin.set(id, within);
-      this.childWaits(frame);
+      this.childStarts(frame);
       try {
         return await work(inv);
       } finally {
-        this.childLeaves(frame, true);
+        this.childEnds(frame);
         this.hosts.delete(id);
         this.hostedWithin.delete(id);
       }

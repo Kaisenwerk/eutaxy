@@ -3,8 +3,10 @@
  * another's perform (an object calling out during a call) is nested in it;
  * a hosting effect (`hostsEffects`) runs user code that makes effects of its
  * own. The in-flight count is what the settle loop and the concurrent
- * scheduler wait on: real I/O pending, minus hosting effects that are only
- * waiting on parked effects of their own.
+ * scheduler wait on: real I/O pending, minus hosting effects whose code is
+ * only waiting on effects of its own, each of which is parked or counted
+ * itself. The rule is the same at every depth: an object's call nested in
+ * another object's call is counted as a call from the Worker is.
  */
 
 import type { EffectOptions, EffectPoint } from "@eutaxy/core";
@@ -35,9 +37,11 @@ export class Frame {
   readonly mayPark: () => boolean;
   /** The hosting effect this one was made inside of and waited for a turn under, if any. */
   parent: Frame | undefined;
-  /** Effects the hosted code made that are parked or running now. */
+  /** Effects the hosted code made as turns, parked or running now, and invocations hosted inside it. */
   children = 0;
-  /** Effects nested in this one (made inside its perform, not as turns) being performed now. */
+  /** Of those, the ones given their turn that have not started performing yet: on their way. */
+  arriving = 0;
+  /** Effects made inside this one's perform being performed now, its children that run included. */
   performing = 0;
   /** A host's effect whose call the host's code has started (`Frames.claimHost`). */
   claimed = false;
@@ -52,9 +56,31 @@ export class Frame {
    * the effect hosts is that attempt's code too, late once the attempt is.
    */
   attempt: { readonly late: boolean } | undefined;
-  /** Of those, the ones parked, or running but only waiting on parked effects of their own. */
-  waitingChildren = 0;
+  /**
+   * The host whose code made this effect, when a host's did. What awaits
+   * the effect runs in that host's context and goes with it when the host
+   * is reset (the runtime tears the context down), so the run ends the
+   * effect itself then (`Run.hostAbandoned`).
+   */
+  issuer: string | undefined;
+  /**
+   * Its issuer was reset while the code it hosts was running: that code
+   * goes on in its own object, so the effect stays until the code answers
+   * or crashes, and is ended there.
+   */
+  orphaned = false;
+  /**
+   * The instance of its host whose code this call entered was reset: that
+   * code is gone and will not answer, whatever it left outstanding died
+   * with it, and nothing of it is the new instance's work.
+   */
+  codeGone = false;
+  /** End the effect's bookkeeping; set by the run, and safe to call again. */
+  end: () => void = () => {};
+  /** Stop the deadline its perform is awaited under; set by the run, which times an orphan itself. */
+  untime: () => void = () => {};
   private abandoned = false;
+  private struck = false;
   private wake: () => void = () => {};
   readonly crashed = new Promise<"nested_crash">((resolve) => {
     this.wake = () => resolve("nested_crash");
@@ -73,30 +99,52 @@ export class Frame {
   }
 
   /**
-   * Its hosted code is only waiting on effects of its own that are parked
-   * (however deep). A call into a host (an object) waits only once its code
-   * is running there: one whose constructor left an effect parked and whose
-   * method has not started is still on its way in, and taking it for
-   * waiting would let another call enter the host's code ahead of it.
+   * Its hosted code is only waiting on effects of its own, and each of
+   * those is accounted for: parked for a turn, or being performed and so
+   * counted itself (a call into another object the code awaits, whose own
+   * code may be idle, waiting or busy in its turn). One given its turn and
+   * not yet performing is on its way, so the code is not covered then. A
+   * call into a host (an object) is covered only once its code is running
+   * there: one whose constructor left an effect parked and whose method has
+   * not started is still on its way in, and taking it for covered would let
+   * another call enter the host's code ahead of it. Only an effect that
+   * hosts code is ever covered: another effect's own perform is real I/O
+   * whatever it makes meanwhile.
    */
-  isWaiting(): boolean {
+  isCovered(): boolean {
     const inside = this.host === undefined || this.entered || this.entering > 0;
-    return inside && this.children > 0 && this.waitingChildren === this.children;
+    const outstanding = this.children > 0 || (this.hosts && this.performing > 0);
+    // Code that went with its instance covers nothing: what it left counted will never be
+    // uncounted by it, and the call is the runtime's to fail and its caller's to end.
+    return inside && outstanding && this.arriving === 0 && !this.codeGone;
   }
 
   /**
-   * Whether it counts as real I/O pending: unless its hosted code is only
-   * waiting on parked effects of its own; once that code has answered, the
-   * answer is on its way whatever it left parked, so the effect counts again
-   * until it ends.
+   * Whether it counts as real I/O pending: unless its hosted code is covered;
+   * once that code has answered, the answer is on its way whatever it left
+   * outstanding, so the effect counts again until it ends.
    */
   inFlight(): boolean {
-    return this.answered || !this.isWaiting();
+    return this.answered || !this.isCovered();
+  }
+
+  /**
+   * Whether a crash inside it was signalled (`crash`). Read after the
+   * perform settles, not only raced against it: the signal is raised where
+   * the crash happened, which may be another object's context, and what
+   * then wakes the code awaiting the effect may be the runtime's own
+   * rejection of a call into the object the crash reset.
+   */
+  get wasCrashed(): boolean {
+    return this.struck;
   }
 
   crash(): void {
+    this.struck = true;
     this.wake();
     this.abandon();
+    // Nothing is left awake to end it.
+    if (this.orphaned) this.end();
   }
 
   /** Whether the effect was abandoned: a crash in its hosted code, or its I/O past the budget; the host was reset. */
@@ -143,6 +191,16 @@ export class Frames {
     return this.byHost.get(host)?.at(-1);
   }
 
+  /** The effects being performed now that are calls into `host`, oldest first. */
+  into(host: string): Frame[] {
+    return [...(this.byHost.get(host) ?? [])];
+  }
+
+  /** The effects `host`'s code made that are being performed now, innermost first. */
+  issuedBy(host: string): Frame[] {
+    return this.stack.filter((f) => f.issuer === host).reverse();
+  }
+
   /** The effects of `invocation`'s being performed now that host an object's code (`EffectOptions.host`). */
   hostingOf(invocation: string): Frame[] {
     return this.stack.filter((f) => f.invocation === invocation && f.host !== undefined);
@@ -179,23 +237,28 @@ export class Frames {
    * on its way), with no effect of it performing or waiting for a turn,
    * nothing hosted inside it and no real work tracked. Such code can only
    * be awaiting a timer of its own (an object sleeping before it answers),
-   * which the run may fire for it. Null while anything else is in flight,
-   * or nothing is: a call still crossing into its object is on its way, and
-   * waiting for it keeps the order in which calls enter the object the
-   * schedule's, not real time's (two timers due together fire by the order
-   * they were set).
+   * which the run may fire for it. An effect whose code is covered (an
+   * object awaiting its call into another) is not in flight and has no say:
+   * what it awaits is judged in its own right, so the object asleep at the
+   * end of a chain of calls is found however long the chain. Null while
+   * anything else is in flight, or nothing is: a call still crossing into
+   * its object is on its way, and waiting for it keeps the order in which
+   * calls enter the object the schedule's, not real time's (two timers due
+   * together fire by the order they were set).
    */
   idleHosts(): Set<string> | null {
     let counted = 0;
     const hosts = new Set<string>();
     for (const frame of this.stack) {
-      if (frame.isWaiting()) continue;
+      if (!frame.inFlight()) continue;
       counted++;
       if (
         frame.host === undefined ||
         // Not yet in the host's code, unless the host is running code on the call's way in.
         !(frame.entered || frame.entering > 0) ||
         frame.answered ||
+        // Not idle code: the instance it ran in is gone, and the runtime is failing the call.
+        frame.codeGone ||
         frame.performing > 0 ||
         frame.children > 0
       )
@@ -282,32 +345,22 @@ export class Frames {
       const frames = this.byHost.get(frame.host);
       frames?.splice(frames.lastIndexOf(frame), 1);
     }
-    // A frame only waiting on parked effects already counts as not in flight, and as waiting for
-    // its parent: undo both as it ends.
+    // A covered frame already counts as not in flight.
     if (frame.inFlight()) this.inFlight--;
-    if (frame.isWaiting() && frame.parent) {
-      const parent = frame.parent;
-      this.adjust(parent, () => parent.waitingChildren--);
-    }
     frame.active = false;
     frame.parent = undefined;
   }
 
   /**
-   * Change a hosting frame's children and keep `inFlight` in step: a frame
-   * counts in flight unless it is only waiting on parked effects of its own,
-   * and a frame that starts or stops waiting does so for its parent too.
+   * Change what a frame's hosted code has outstanding (or where its call
+   * is) and keep `inFlight` in step: a frame counts in flight unless its
+   * code is covered.
    */
   adjust(frame: Frame, change: () => void): void {
-    const waitingBefore = frame.isWaiting();
-    const inFlightBefore = frame.inFlight();
+    const before = frame.inFlight();
     change();
-    const waiting = frame.isWaiting();
-    if (frame.active && inFlightBefore !== frame.inFlight()) this.inFlight += waiting ? -1 : 1;
-    if (waitingBefore === waiting) return;
-    const parent = frame.parent;
-    if (frame.active && parent)
-      this.adjust(parent, () => (parent.waitingChildren += waiting ? 1 : -1));
+    const now = frame.inFlight();
+    if (frame.active && before !== now) this.inFlight += now ? 1 : -1;
   }
 
   private hostingFrames(invocation: string): Frame[] {

@@ -52,6 +52,8 @@ interface Parked {
    * turn is offered like any other, but holds nothing (see `takeTurn`).
    */
   readonly attempt: { readonly late: boolean } | undefined;
+  /** Whether the code that parked here is gone (an object's instance that was reset): its turn is nobody's. */
+  readonly gone?: () => boolean;
   /** The turn as a choice: its label and the target of the effect it performs. */
   readonly option: ChoiceOption;
 }
@@ -148,9 +150,18 @@ export class Turns {
     go: () => void,
     host?: Frame,
     attempt?: { readonly late: boolean },
+    gone?: () => boolean,
   ): void {
     const option = { label: `${inv.id}@${inv.parks++}`, invocation: inv.id, target };
-    this.parked.push({ inv, seq: this.parkSeq++, go, option, attempt, ...(host ? { host } : {}) });
+    this.parked.push({
+      inv,
+      seq: this.parkSeq++,
+      go,
+      option,
+      attempt,
+      ...(host ? { host } : {}),
+      ...(gone ? { gone } : {}),
+    });
     this.rested();
   }
 
@@ -287,7 +298,7 @@ export class Turns {
   ): "turn" | "start" | "timer" | "none" {
     const order = (inv: Turner) => this.startOrder.get(inv.id) ?? 0;
     this.parked = this.parked
-      .filter((p) => !p.inv.isCrashed())
+      .filter((p) => !p.inv.isCrashed() && !p.gone?.())
       .sort((a, b) => order(a.inv) - order(b.inv) || a.seq - b.seq);
     const waiting =
       canWait &&
@@ -328,8 +339,9 @@ export class Turns {
     this.turnTarget = chosen.option.target ?? null;
     this.runAs(chosen.inv.id);
     const host = chosen.host;
-    // Hosted code resumes: its host counts in flight again from now, before the code runs.
-    if (host) this.frames.adjust(host, () => host.waitingChildren--);
+    // Hosted code resumes: its turn is on its way to it, so its host counts in flight from now,
+    // before the code runs, until the effect performs (`Run.hostedTurn`).
+    if (host) this.frames.adjust(host, () => host.arriving++);
     chosen.go();
     return "turn";
   }
