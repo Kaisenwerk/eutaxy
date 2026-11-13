@@ -20,7 +20,10 @@ verified when it was only explored or sampled.
 `UNSUPPORTED` names its cause: an unproxied binding, a request to an
 undeclared host, an invocation waiting on something outside the
 simulation, module-level state that leaked between runs, a run that did not
-replay. It is never a quiet pass.
+replay. It is never a quiet pass. It also carries the schedule of the run
+that reached it (the seed and the faults, as the run had them, not
+shrunk): pass it to `replay()` to get that run's log and see how it got
+there. The text report lists it; `--json` has it as `verdict.schedule`.
 
 ## Spec verdicts
 

@@ -373,11 +373,17 @@ export async function explore(
     ...done(),
     ...(exhaustive ? { exhaustive: exhaustive.reached } : {}),
   });
-  const unsupported = (cause: UnsupportedCause, reason: string): ScenarioVerdict => ({
+  /** `schedule`: the run's that reached it, when a run did. */
+  const unsupported = (
+    cause: UnsupportedCause,
+    reason: string,
+    schedule?: Schedule,
+  ): ScenarioVerdict => ({
     ...base,
     kind: "UNSUPPORTED",
     cause,
     reason,
+    ...(schedule === undefined ? {} : { schedule }),
     reached: doneNow(),
   });
 
@@ -437,6 +443,7 @@ export async function explore(
         return unsupported(
           "not_replayable",
           `exhaustive exploration needs deterministic runs: ${exhaustive.mismatch}`,
+          run.schedule,
         );
       if (!exhaustive.ran(() => run.turnsMayNotCommute)) continue;
     }
@@ -445,7 +452,7 @@ export async function explore(
     if (witnesses.length < leakCheckRuns) witnesses.push({ schedule: run.schedule, log });
 
     if (run.unsupportedReasons.length > 0)
-      return unsupported("unsupported_api", run.unsupportedReasons.join("; "));
+      return unsupported("unsupported_api", run.unsupportedReasons.join("; "), run.schedule);
 
     const violations = checkInvariants(log, spec.invariants);
     const violation = violations[0];
@@ -456,12 +463,13 @@ export async function explore(
       reached.runs++;
       // A replay that reached something unsupported says so itself; one that differs says where.
       if (replayedRun.unsupportedReasons.length > 0)
-        return unsupported("unsupported_api", replayedRun.unsupportedReasons.join("; "));
+        return unsupported("unsupported_api", replayedRun.unsupportedReasons.join("; "), schedule);
       const differed = whatDiffered(log, replayed);
       if (differed)
         return unsupported(
           "not_replayable",
           `the violating run of seed ${schedule.seed} did not reproduce on replay: ${differed}`,
+          schedule,
         );
       // Shrink within the scenario's budget (a second budget's worth at most), then report.
       const shrunk = await shrink(spec, platform, schedule, violation, replayed, {
@@ -492,12 +500,13 @@ export async function explore(
     const again = await replayRun(spec, platform, witness.schedule);
     reached.runs++;
     if (again.unsupportedReasons.length > 0)
-      return unsupported("unsupported_api", again.unsupportedReasons.join("; "));
+      return unsupported("unsupported_api", again.unsupportedReasons.join("; "), witness.schedule);
     const differed = whatDiffered(witness.log, again.log);
     if (differed)
       return unsupported(
         "module_state_leak",
         `run seed ${witness.schedule.seed} produced a different log when replayed after other runs: state is leaking between runs (module-level variables, or a binding Eutaxy does not reset); ${differed}`,
+        witness.schedule,
       );
   }
   return { ...base, kind: "BOUNDED", bounds: spec.bounds, reached: doneNow() };

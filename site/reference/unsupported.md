@@ -7,7 +7,8 @@ description: Every reason a check reports UNSUPPORTED, what it means and what to
 
 A check is `UNSUPPORTED` when a run reached something Eutaxy does not
 model, so it cannot say whether the invariants hold. It is never a pass:
-the command exits 2, and the report names the cause and the reason. This
+the command exits 2, and the report names the cause, the reason and the
+schedule of the run that reached it (to `replay()` and read its log). This
 page lists every reason the code can give, in the words the report uses
 (a name in angle brackets, `<binding>`, stands for the name in your
 scenario), with what it means and what to do. A test keeps the page and

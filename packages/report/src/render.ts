@@ -8,6 +8,7 @@ import {
   type EffectLog,
   type JsonValue,
   type ScenarioVerdict,
+  type Schedule,
   type SpecVerdict,
 } from "@eutaxy/core";
 
@@ -161,7 +162,18 @@ export function renderTrace(log: EffectLog, evidence: readonly number[] = []): s
   return [line(header), ...rows.map(line)].join("\n");
 }
 
-/** A readable report: verdict, what it rests on, and for a violation the schedule and trace. */
+/** A schedule's faults, one a line, as a report lists them. */
+function faultLines(schedule: Schedule): string[] {
+  if (schedule.faults.length === 0) return ["  no injected faults"];
+  return schedule.faults.map(
+    (f) => `  ${f.fault} at ${f.invocation} effect #${f.ordinal} (${f.target} ${f.op})`,
+  );
+}
+
+/**
+ * A readable report: verdict, what it rests on, for a violation the schedule and trace, and for a
+ * scenario that could not be decided the schedule of the run that reached that.
+ */
 export function renderText(verdict: ScenarioVerdict): string {
   const out: string[] = [];
   const r = verdict.reached;
@@ -177,10 +189,7 @@ export function renderText(verdict: ScenarioVerdict): string {
       out.push(
         `Schedule (run seed ${verdict.schedule.seed}), events kept: ${verdict.keptEvents.join(", ")}`,
       );
-      if (verdict.schedule.faults.length === 0) out.push("  no injected faults");
-      for (const f of verdict.schedule.faults) {
-        out.push(`  ${f.fault} at ${f.invocation} effect #${f.ordinal} (${f.target} ${f.op})`);
-      }
+      out.push(...faultLines(verdict.schedule));
       out.push(
         `Shrunk: ${verdict.shrunk.eventsRemoved} event(s) and ${verdict.shrunk.faultsRemoved} fault(s) removed in ${verdict.shrunk.runs} run(s)`,
       );
@@ -201,6 +210,18 @@ export function renderText(verdict: ScenarioVerdict): string {
     case "UNSUPPORTED": {
       out.push("");
       out.push(`Eutaxy could not decide this scenario (${verdict.cause}): ${verdict.reason}`);
+      if (verdict.schedule) {
+        out.push("");
+        out.push(
+          `Schedule of the run that reached it (run seed ${verdict.schedule.seed}), as it ran, not shrunk:`,
+        );
+        out.push(...faultLines(verdict.schedule));
+        // The turns an exhaustive run picked are part of the schedule; too many to print.
+        if (verdict.schedule.turns)
+          out.push(
+            `  ${verdict.schedule.turns.length} turn(s) picked; the JSON report has them, to replay the run`,
+          );
+      }
       break;
     }
   }

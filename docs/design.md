@@ -91,6 +91,17 @@ Assumptions include opaque callees, the platform model, declared externals,
 and engine-level choices such as how `number` is modelled, reported as the
 engine states them. `CONFLICT` is never resolved automatically.
 
+An `UNSUPPORTED` verdict that a run reached carries that run's schedule
+too: its seed and faults, and the turns an exhaustive run picked. A
+reason says what the run met; the schedule says which run, so it can be
+replayed and its log read to see how it got there, which a `VIOLATED`
+verdict's trace shows by itself. The schedule is the run's own, not
+shrunk: shrinking needs a property to keep violated, and "could not be
+decided" is not one the shrinker holds. A run that ended on real time
+(an effect that outlasted the budget, code waiting on something outside
+the simulation) may not end at the same place when replayed. Where no
+run was made (bounds the platform cannot meet) there is no schedule.
+
 ## Architecture and module layout
 
 One repository of small modules with one rule: dependencies point down into

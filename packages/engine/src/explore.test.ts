@@ -8,7 +8,7 @@ import {
 } from "@eutaxy/core";
 import { describe, expect, test } from "vitest";
 import { replayChooser } from "./chooser.ts";
-import { explore, replay } from "./explore.ts";
+import { explore, replay, replayRun } from "./explore.ts";
 import { buggyConsumer, createFakePlatform } from "./fake-platform.ts";
 import { Run } from "./run.ts";
 import { restrictSpec } from "./shrink.ts";
@@ -141,6 +141,33 @@ describe("explore", () => {
     if (verdict.kind === "UNSUPPORTED") expect(verdict.cause).toBe("unsupported_api");
   });
 
+  test("an UNSUPPORTED verdict carries the schedule of the run that reached it: replayed, the run ends the same way", async () => {
+    // Only where its insert fails does this consumer reach a host the scenario does not declare.
+    const onFault = createFakePlatform(async (message, env) => {
+      const body = message.body as { orderId: string };
+      try {
+        await env.insert(body.orderId);
+      } catch {
+        await fetch("https://late.test/hook");
+      }
+      message.ack();
+    });
+    const scenario = { ...spec, invariants: [once] };
+    const verdict = await explore(scenario, onFault, { seed: "schedule", now: fixedClock() });
+    expect(verdict.kind).toBe("UNSUPPORTED");
+    if (verdict.kind !== "UNSUPPORTED") return;
+    expect(verdict.reason).toContain("late.test");
+    // The schedule names the fault that led there.
+    expect(verdict.schedule?.faults).toHaveLength(1);
+    expect(verdict.schedule?.faults[0]).toMatchObject({ target: "D1:DB", op: "run" });
+    if (!verdict.schedule) return;
+    const again = await replayRun(scenario, onFault, verdict.schedule);
+    expect(again.unsupportedReasons.join("; ")).toBe(verdict.reason);
+    // The same seed without the fault does not get there: the schedule is what reproduces it.
+    const without = await replayRun(scenario, onFault, { seed: verdict.schedule.seed, faults: [] });
+    expect(without.unsupportedReasons).toEqual([]);
+  });
+
   test("more than one concurrent invocation is UNSUPPORTED on a platform that delivers one at a time", async () => {
     const verdict = await explore(
       { ...spec, bounds: { ...spec.bounds, maxConcurrentInvocations: 2 } },
@@ -151,6 +178,8 @@ describe("explore", () => {
     if (verdict.kind === "UNSUPPORTED") {
       expect(verdict.cause).toBe("unsupported_bounds");
       expect(verdict.reason).toContain("fake platform");
+      // No run was made: there is no schedule to give.
+      expect(verdict.schedule).toBeUndefined();
     }
   });
 
@@ -298,6 +327,8 @@ describe("module-state leak detection", () => {
     // The reason names the first record the replay recorded differently.
     expect(verdict.reason).toMatch(/at seq \d+ the run recorded call D1:DB run/);
     expect(verdict.reason).toContain("-late");
+    // The schedule is the one of the run the reason names.
+    expect(verdict.reason).toContain(`run seed ${verdict.schedule?.seed} `);
   });
 
   test("a replay that reaches something unsupported reports that, not a leak", async () => {
@@ -343,6 +374,7 @@ describe("module-state leak detection", () => {
     expect(verdict.cause).toBe("not_replayable");
     expect(verdict.reason).toMatch(/did not reproduce on replay: at seq \d+ the run recorded/);
     expect(verdict.reason).toContain("-again");
+    expect(verdict.reason).toContain(`run of seed ${verdict.schedule?.seed} `);
   });
 
   test("two records of one effect that differ in a value say which value, by its path", async () => {

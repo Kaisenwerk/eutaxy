@@ -175,6 +175,45 @@ describe("renderText", () => {
       assumptions: [],
     };
     expect(renderText(u)).toContain("(unsupported_api): binding KV is not proxied");
+    // No run reached it with a schedule to show.
+    expect(renderText(u)).not.toContain("Schedule");
+  });
+
+  test("UNSUPPORTED shows the schedule of the run that reached it, and the JSON report carries it", () => {
+    const u: Unsupported = {
+      kind: "UNSUPPORTED",
+      scenario: "s",
+      seed: "gate",
+      cause: "unsupported_api",
+      reason: "invocation a#1 is waiting on something Eutaxy cannot see",
+      schedule: {
+        seed: 2423031316,
+        faults: [
+          { invocation: "a#1", ordinal: 1, fault: "crash_after", target: "DO:POOL", op: "start" },
+        ],
+      },
+      reached: { runs: 53, effectPoints: 576, faultsInjected: 43, elapsedMs: 5 },
+      assumptions: [],
+    };
+    expect(renderText(u)).toContain(
+      [
+        "Schedule of the run that reached it (run seed 2423031316), as it ran, not shrunk:",
+        "  crash_after at a#1 effect #1 (DO:POOL start)",
+        "",
+        "Explored: 53 run(s)",
+      ].join("\n"),
+    );
+    const report = JSON.parse(renderJson(u)) as { verdict: { schedule: unknown } };
+    expect(report.verdict.schedule).toEqual(u.schedule);
+    // A run without faults says so, and an exhaustive run's picked turns are pointed to, not printed.
+    const picked: Unsupported = { ...u, schedule: { seed: 7, faults: [], turns: [0, 1, 1] } };
+    expect(renderText(picked)).toContain(
+      [
+        "Schedule of the run that reached it (run seed 7), as it ran, not shrunk:",
+        "  no injected faults",
+        "  3 turn(s) picked; the JSON report has them, to replay the run",
+      ].join("\n"),
+    );
   });
 });
 

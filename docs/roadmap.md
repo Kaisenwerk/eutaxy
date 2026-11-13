@@ -186,6 +186,12 @@ proof cache are v0.18's and wait for it unless a target needs one sooner):
   verdict under every fault placement with nothing `UNSUPPORTED`, and
   the planted bug behind such a call
   (`object-machine-booted-off-record`) is caught.
+- An `UNSUPPORTED` verdict carries the schedule of the run that reached
+  it, as `0.17.1`; in. A reason says what a run met and not which run:
+  without the schedule, seeing how a run got there meant opening the
+  engine, which an adopter of the published package cannot do. A test
+  the command writes to replay such a run, as it writes one for a
+  violation, waits to be decided with pinned schedules (the candidates).
 - A configurable number of `TESTED` draws on the command line (the API
   takes `inputs`).
 - The command loads the spec reader and the engines only where specs are

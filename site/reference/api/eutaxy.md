@@ -82,7 +82,7 @@ Spec verdicts as text: one line each, a counterexample under a refutation. [Sour
 
 `function renderText(verdict: ScenarioVerdict): string`
 
-A readable report: verdict, what it rests on, and for a violation the schedule and trace. [Source](https://github.com/Kaisenwerk/eutaxy/blob/main/packages/report/src/render.ts)
+A readable report: verdict, what it rests on, for a violation the schedule and trace, and for a scenario that could not be decided the schedule of the run that reached that. [Source](https://github.com/Kaisenwerk/eutaxy/blob/main/packages/report/src/render.ts)
 
 ### `renderTrace`
 

@@ -66,6 +66,14 @@ export interface Unsupported extends VerdictBase {
   readonly kind: "UNSUPPORTED";
   readonly cause: UnsupportedCause;
   readonly reason: string;
+  /**
+   * The schedule of the run that reached it, to replay; absent where no run
+   * was made (`unsupported_bounds`). It is the run's own, not shrunk. A run
+   * that ended on real time (an effect that outlasted the budget, code
+   * waiting on something outside the simulation) may not end at the same
+   * place when replayed.
+   */
+  readonly schedule?: Schedule;
 }
 
 /** A scenario's verdict: `VIOLATED`, `BOUNDED` or `UNSUPPORTED`. */
