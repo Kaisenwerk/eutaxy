@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.17.1](https://github.com/Kaisenwerk/eutaxy/compare/v0.17.0...v0.17.1) (2026-11-13)
+
+
+### Features
+
+* **cloudflare:** a Durable Object namespace can be scripted ([1c0751e](https://github.com/Kaisenwerk/eutaxy/commit/1c0751e67699877fc952d0573d05b808b2a62784))
+* **cloudflare:** an object's call into another object is the scenario's ([15c763e](https://github.com/Kaisenwerk/eutaxy/commit/15c763eddfdfc529a2665391a78c4a019f346e8c))
+* **engine:** an UNSUPPORTED verdict carries the schedule of the run that reached it ([78c8412](https://github.com/Kaisenwerk/eutaxy/commit/78c8412a8c6c178bbd3dd3f7e7f1fa6bb77542c6))
+
+
+### Bug Fixes
+
+* **engine:** a call nested in another call, and a reset under it, are what they are from the Worker ([fcf2d35](https://github.com/Kaisenwerk/eutaxy/commit/fcf2d359920530b7418e100fd48b81a7749a8830))
+* **engine:** a crash passed on where nothing could move abandons no invocation in that step ([4bbc298](https://github.com/Kaisenwerk/eutaxy/commit/4bbc2989a7d93134bed9e1775b205561459d0b37))
+
 ## [0.17.0](https://github.com/Kaisenwerk/eutaxy/compare/v0.16.1...v0.17.0) (2026-11-12)
 
 
