@@ -1461,6 +1461,25 @@ describe("an object's timers and effects around its answer", () => {
     await expect(outcome).resolves.toEqual({ status: "crashed" });
   });
 
+  test("a crash passed on where nothing could move abandons no invocation in that step: what waited on it has yet to hear", async () => {
+    const run = new Run({ chooser: replayChooser({ seed: 1, faults: [] }), bounds: bounds(2) });
+    const outer = run.startInvocation("i#1");
+    // A Worker the invocation called, which crashed inside an object: the crash's own promise woke
+    // nobody there, so the outer invocation, waiting on the call, looks as if it could not move.
+    const inner = run.startInvocation("i#1/PEER.call");
+    const wait = run.settle(new Promise<never>(() => {}), "i#1/PEER.call");
+    const heard = expect(wait).rejects.toThrow(CrashSignal);
+    (inner as unknown as { crash(): void }).crash();
+    expect(run.abandon(["i#1"])).toBe(1);
+    expect(outer.isCrashed()).toBe(false);
+    expect(run.unsupportedReasons).toEqual([]);
+    await heard;
+    // With no crash left to pass on, an invocation that still cannot move is abandoned.
+    expect(run.abandon(["i#1"])).toBe(1);
+    expect(outer.isCrashed()).toBe(true);
+    expect(run.unsupportedReasons).toHaveLength(1);
+  });
+
   test("a crash in one of two effects the object awaits during the call resets it: the other dies with the instance", async () => {
     let reset = 0;
     const ran: string[] = [];

@@ -1695,21 +1695,22 @@ export class Run implements RunHooks {
 
   /**
    * Concurrent runs: nothing can make progress; abandon these invocations so
-   * the run can end. Returns how many were still alive, or whose delivery
-   * ends now: one that crashed inside an object (the object's reset tears
-   * down the task the crash settled its promise in, so the delivery never
-   * saw it) has its settle released here, on the run's own step.
+   * the run can end. Returns how many were still alive, or how many crashes
+   * were passed on first: an invocation that crashed inside an object (the
+   * object's reset tears down the task the crash settled its promise in, so
+   * what waited on it never saw it) has its settle released here, on the
+   * run's own step. A crash released here is on its way to whatever waited
+   * on it, which may be one of `ids` (an invocation waiting on a Worker it
+   * called, which crashed inside an object): none of them is stuck until
+   * that has landed, so nothing is abandoned in the same step.
    */
   abandon(ids: readonly string[]): number {
-    let abandoned = 0;
     const released = this.releaseCrashed();
+    if (released.size > 0) return released.size;
+    let abandoned = 0;
     for (const id of ids) {
       const inv = this.invocations.get(id);
-      if (!inv) continue;
-      if (inv.isCrashed()) {
-        if (released.has(id)) abandoned++;
-        continue;
-      }
+      if (!inv || inv.isCrashed()) continue;
       this.unsupported(waitingUnseen(id));
       inv.crash();
       abandoned++;

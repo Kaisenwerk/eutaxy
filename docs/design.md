@@ -872,7 +872,13 @@ shares the reading of the limit and none of the proxy code.
   happened, and what wakes the code awaiting the call in another
   object's context may be the runtime's rejection of the call into the
   reset object, which must not decide whether the objects further out
-  are reset. A call's plain result reaches its caller as a
+  are reset. Where the crash ended a Worker that another invocation
+  called (the object was that Worker's), the caller hears of it on the
+  run's own step, the signal having woken nobody in the reset object's
+  context: when a concurrent run finds nothing that can move, it first
+  passes on every such crash and calls no invocation stuck in the same
+  step, since one of them may be waiting on exactly that. A call's plain
+  result reaches its caller as a
   copy, the runtime's own result disposed: an object that hands the
   result on as its own answer (`return stub.method()`) would otherwise
   keep the called object referenced past the run, where the next run's
