@@ -154,7 +154,9 @@ next instance's work is `/after#2`). A sequential run lets it run to rest
 before the next event; a concurrent run explores the other orders, a second
 call entering the object while the first's work awaits its model among
 them, which is where a lost update in such work hides. The timing of the
-work around the answer does not matter to the model: an object that awaits
+work around the answer does not matter to the model, nor does how deep the
+call is (an object called by another object, or by a Worker an object
+called, is treated as one the scenario's Worker called): an object that awaits
 a timer of its own before answering is woken by it; an effect it issued
 before its answer and did not await, like a timer it set or real work it
 started (a digest), is the object's once the call has answered, so the
@@ -171,8 +173,11 @@ statements it runs on a D1 database and its operations on an R2 bucket
 (`this.env.DB.prepare(…).run()`, `this.env.FILES.put(…)`) are recorded
 the same way, performed on the real store, and so is a Workflow instance
 it creates or asks about (`this.env.RUNS.create(…)`), which runs your
-class in the model as one the Worker creates does. A call on a binding of
-a kind the simulation does not model (KV, a Queue producer) is refused
+class in the model as one the Worker creates does. A call into another
+object (`this.env.SHELF.get(id).take(…)`), into itself, or back into an
+object that is waiting on it, is the stub call it is from the Worker,
+with what the called object does recorded inside it. A call on a binding
+of a kind the simulation does not model (KV, a Queue producer) is refused
 from inside an object as it is from the Worker. A fault can land on each: an
 answer lost, a call that never left, the object reset right after it. The call leaves the object only once what the object
 wrote before it is durable, as the runtime's output gate holds an outgoing
@@ -181,7 +186,13 @@ records before calling survives a reset after the call. The corpus's
 `object-charge-twice-after-answer` is an object that bills a run in work
 after its answer and records the charge after making it, and
 `object-entry-twice-across-crash` an object that writes a ledger row to D1
-and records the deposit in its own storage after it. A constructor is
+and records the deposit in its own storage after it, and
+`object-unit-twice-across-objects` a shelf object that gives a cart
+object a second unit when the answer to the first was lost. A crash
+inside an object another object called ends the whole invocation and
+resets every object the call went through; the faults that let the
+calling object carry on are the call's own (it never arrived, or its
+answer was lost). A constructor is
 covered too: `this.env` is the scenario's from its first line, and what it
 does behind `blockConcurrencyWhile` (loading its configuration from
 another Worker, waiting on a timer) runs as the object's code before the
@@ -191,7 +202,9 @@ itself, where `this.env` would do, is the runtime's; and each seeded
 object is also constructed once while it is reset before a run, with the
 real database and bucket, so put a store's setup step before the object's
 when its constructor reads it, and expect a write its constructor makes
-there to have been made once already.
+there to have been made once already; a constructor's call into another
+object or on a Workflow binding fails there, so make such a call from a
+method.
 
 **SQLite storage.** For a SQLite-backed class (`new_sqlite_classes` in the
 wrangler migrations, the backend Cloudflare recommends and the Agents SDK
@@ -310,7 +323,8 @@ Eutaxy refuses to pass a run it cannot control:
 - `WeakRef` and `FinalizationRegistry`, which are not virtualised.
 - An invocation waiting on something Eutaxy cannot see, or an effect whose
   real I/O outlasts the budget.
-- Durable Objects: an object reached only through another object's binding,
+- Durable Objects: an object another object called through the `env` parameter
+  its constructor kept (use `this.env`),
   `jurisdiction()` namespaces (and `newUniqueId` with a jurisdiction), a
   namespace without a `durableObject` setup, a result that is not plain data (an RPC
   capability), `setAlarm` inside `transactionSync()`.

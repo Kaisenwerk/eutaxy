@@ -140,10 +140,12 @@ not wait for. That work would run after the snapshot, so the run is not
 decided. Start such work from a method or an alarm, or make a later event
 of the scenario enter the object.
 
-**`Durable Object <binding> <object> was reached without a call Eutaxy saw (through another object's binding); calls between objects are not proxied yet`**
-One object called another through its own `env`. Calls between objects
-are not effects yet; drive the second object from the Worker in the
-scenario.
+**`Durable Object <binding> <object> was reached without a call Eutaxy saw: another object called it through an env the simulation does not stand behind (the env parameter its constructor kept, or a class the platform was not given)`**
+A call one object makes into another through `this.env` is an effect.
+This one was made another way: through the `env` parameter a constructor
+kept for itself, or by an object whose class is not among the Worker's
+exports the platform was given. Call through `this.env`, and pass the
+module's exports (`eutaxy check` does).
 
 **`Durable Object <binding> <object> called the service binding <name> through its own env, and the scenario's env holds no service binding <name> to answer it`**
 An object's calls through its own service bindings are answered by the

@@ -280,7 +280,7 @@ export function durableObjectBinding(
         stateFor(binding).seededSql,
         (object) =>
           unsupported(
-            `Durable Object ${binding} ${object} was reached without a call Eutaxy saw (through another object's binding); calls between objects are not proxied yet`,
+            `Durable Object ${binding} ${object} was reached without a call Eutaxy saw: another object called it through an env the simulation does not stand behind (the env parameter its constructor kept, or a class the platform was not given)`,
           ),
         unsupported,
         deps.snapshotAll === true,

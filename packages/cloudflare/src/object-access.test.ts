@@ -211,6 +211,30 @@ describe("outsideRunEnv: a Workflow binding", () => {
   });
 });
 
+describe("outsideRunEnv: another object's namespace", () => {
+  test("a constructor's call into another object while its object is reset is refused, and that object is not reached", async () => {
+    let reached = 0;
+    const id = { toString: () => "id-a" };
+    const real = {
+      idFromName: () => id,
+      get: () => ({ id, bump: async () => void reached++ }),
+    };
+    type Stub = { id: unknown; bump: (() => Promise<unknown>) & PromiseLike<unknown> };
+    const env = outsideRunEnv({ OTHER: real }) as {
+      OTHER: { idFromName(n: string): unknown; get(id: unknown): Stub };
+    };
+    // Naming an object and getting its stub is nothing.
+    const stub = env.OTHER.get(env.OTHER.idFromName("a"));
+    expect(stub.id).toBe(id);
+    await expect(stub.bump()).rejects.toThrow(
+      /called bump on an object of OTHER while the scenario's objects were being reset/,
+    );
+    // An RPC property awaited without a call is refused the same way.
+    await expect(Promise.resolve(stub.bump)).rejects.toThrow(/outside a run/);
+    expect(reached).toBe(0);
+  });
+});
+
 describe("outboundGate", () => {
   test("takes the gate out of the slot: nothing is left for a later call when the object's code ends without unwinding", async () => {
     const order: string[] = [];

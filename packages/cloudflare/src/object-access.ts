@@ -98,18 +98,19 @@ export const calleeOfEnv: unique symbol = Symbol.for("eutaxy.calleeOfEnv");
  * a database or bucket is the real one, whose calls nothing records or
  * faults, and a Workflow binding is the local engine, which would run the
  * class on the real clock. So the instance's `env` is put behind a view
- * under which every binding but a Durable Object namespace is the one the
+ * under which every binding is the one the
  * Worker itself sees (`worker()`, the platform's env, under the binding's
  * qualified name): the call is an effect of whichever invocation the
  * object's code is running as, with that binding's faults: a service's
  * answered from the `service()` script or by the `callee()` hosted inside
  * it, a statement or a bucket operation performed on the real store, a
- * Workflow instance created in the model; and a call on a binding of a
+ * Workflow instance created in the model, a call into another object the
+ * stub call it is from the Worker; and a call on a binding of a
  * kind the model does not cover is refused as it is from the Worker, never
  * passed on. The binding is resolved when first used, so reading it off
  * `env` does nothing. Without the platform's env, or when it holds nothing
  * under the name, a service call ends the run `UNSUPPORTED`, and any other
- * binding is the object's own, unrecorded, as a namespace is either way. A
+ * binding is the object's own, unrecorded. A
  * class given the platform's base (`simulateConstruction`) is constructed
  * with the view (`envView`) and this only tells it whose it is; for any
  * other the view is in place once the constructor has returned, and the
@@ -155,8 +156,9 @@ export function ownEnv(
  * name there) is answered from the script as it will be in the run, so a
  * constructor that loads from one comes up; anything else through a
  * service binding (a `fetch()`, a binding with a callee or with no script)
- * is refused, and so is a call on a Workflow binding, which would start
- * an instance in the local engine. A database or a bucket is the real one
+ * is refused, and so are a call on a Workflow binding, which would start
+ * an instance in the local engine, and a call into another object, which
+ * would run that object for real and leave it up. A database or a bucket is the real one
  * there, as it is the reset's own: what a constructor writes to one while
  * its object is reset stays unless that store's setup step comes after the
  * object's. The
@@ -229,12 +231,54 @@ export function outsideRunEnv(
     }
     return flow;
   };
+  /**
+   * A namespace whose stubs refuse every call: the object called would run
+   * for real, on the real clock, and stay up into the run with what the
+   * call left in it. Ids are the namespace's own.
+   */
+  const namespaces = new Map<string, object>();
+  const namespaceFor = (name: string, own: object): object => {
+    let namespace = namespaces.get(name);
+    if (!namespace) {
+      const refused = (method: string): object => {
+        const call = async (): Promise<never> => {
+          throw new Error(
+            `eutaxy: a Durable Object's constructor called ${method} on an object of ${name} while the scenario's objects were being reset, outside a run, where a call into another object is not made`,
+          );
+        };
+        return Object.assign(call, {
+          // biome-ignore lint/suspicious/noThenProperty: an RPC property is awaitable as well as callable
+          then: (onFulfilled?: (v: unknown) => unknown, onRejected?: (e: unknown) => unknown) =>
+            call().then(onFulfilled, onRejected),
+        });
+      };
+      namespace = new Proxy(own, {
+        get(target, prop) {
+          const value = Reflect.get(target, prop, target) as unknown;
+          if (typeof value !== "function") return value;
+          if (prop !== "get" && prop !== "getByName") return value.bind(target);
+          return (...args: unknown[]) =>
+            new Proxy(Reflect.apply(value, target, args) as object, {
+              get(stub, key) {
+                // The stub is not a promise; its id and name are its own.
+                if (typeof key !== "string" || key === "then" || key === "id" || key === "name")
+                  return key === "then" ? undefined : (Reflect.get(stub, key, stub) as unknown);
+                return refused(key);
+              },
+            });
+        },
+      });
+      namespaces.set(name, namespace);
+    }
+    return namespace;
+  };
   return new Proxy(env, {
     get(target, prop) {
       const value = Reflect.get(target, prop, target) as unknown;
       if (typeof prop !== "string") return value;
       // A service binding first: in workerd it answers every duck type.
       if (isServiceBinding(value)) return stubFor(prop);
+      if (isDurableObjectNamespace(value)) return namespaceFor(prop, value);
       return isWorkflowBinding(value) ? flowFor(prop, value) : value;
     },
   });
@@ -343,6 +387,39 @@ export function envView(
     }
     return through;
   };
+  /**
+   * The scenario's namespace under the object's binding `name`, or the
+   * object's own: a call on a stub it gives is the object's call into
+   * another object (or into itself, as the runtime allows).
+   */
+  const namespaces = new Map<string, object>();
+  const namespaceFor = (name: string, own: object): object => {
+    let namespace = namespaces.get(name);
+    if (!namespace) {
+      namespace = new Proxy(own, {
+        get(target, prop) {
+          const model = worker ? (Reflect.get(worker(), qualified(name)) as unknown) : undefined;
+          const through = model === null || typeof model !== "object" ? target : model;
+          const member = Reflect.get(through, prop, through) as unknown;
+          if (typeof member !== "function") return member;
+          if (through === target || (prop !== "get" && prop !== "getByName"))
+            return member.bind(through);
+          return (...args: unknown[]) => {
+            const stub = Reflect.apply(member, through, args) as object;
+            return new Proxy(stub, {
+              get(to, key) {
+                const value = Reflect.get(to, key, to) as unknown;
+                // Unbound: the stub's members are callable and awaitable as they are.
+                return typeof value === "function" ? calling(value, owner, gate) : value;
+              },
+            });
+          };
+        },
+      });
+      namespaces.set(name, namespace);
+    }
+    return namespace;
+  };
   const view = new Proxy(env, {
     get(target, prop) {
       const value = Reflect.get(target, prop, target) as unknown;
@@ -351,8 +428,8 @@ export function envView(
       if (isServiceBinding(value)) return stubFor(prop);
       if (isD1(value) || isR2(value)) return modelledFor(prop, value, false);
       if (isWorkflowBinding(value)) return modelledFor(prop, value, true);
-      // Another object's namespace is the object's own.
-      if (isDurableObjectNamespace(value) || !worker) return value;
+      if (isDurableObjectNamespace(value)) return namespaceFor(prop, value);
+      if (!worker) return value;
       // Anything else is what the Worker sees under the name: a binding of a kind the model does not
       // cover with every call refused, a var as it is.
       const seen = Reflect.get(worker(), qualified(prop)) as unknown;

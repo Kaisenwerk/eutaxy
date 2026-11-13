@@ -17,7 +17,7 @@ import { canonicalJson, type JsonValue, type RunHooks, toJson, writeFaults } fro
 import { withoutNetwork } from "@eutaxy/engine";
 import { AlarmBook, alarmControl, takenOver, takeOverAlarms } from "./alarms.ts";
 import { envView, hostMethod, hostOf, outsideRunEnv, ownEnv } from "./object-access.ts";
-import type { ProxyContext } from "./proxy-context.ts";
+import { outboundGate, type ProxyContext } from "./proxy-context.ts";
 import type { DurableObjectSqlSeed, ServiceSetup } from "./scenario.ts";
 
 /** Seeds by object name: key-value entries, and SQL for SQLite-backed objects. */
@@ -389,6 +389,36 @@ export function isPlainData(value: unknown, depth = 0): boolean {
   return Object.values(value).every((v) => isPlainData(v, depth + 1));
 }
 
+/**
+ * A call's plain result as the caller gets it: a copy, with the runtime's
+ * own result disposed. The runtime's result keeps the call's session open
+ * until it is disposed or collected, and an object that hands it on as its
+ * own answer (`return stub.method()`) would keep the object it called
+ * referenced past the run, where the next run's reset cannot evict it. A
+ * `Response` is the caller's as it is.
+ */
+function released<T>(result: T): T {
+  if (result === null || typeof result !== "object" || result instanceof Response) return result;
+  let copy: T;
+  try {
+    copy = structuredClone(result);
+  } catch {
+    // Something inside does not clone (a Response): the caller keeps the runtime's own.
+    return result;
+  }
+  const dispose =
+    disposer === undefined ? undefined : (result as Record<symbol, unknown>)[disposer];
+  if (disposer !== undefined && typeof dispose === "function") {
+    // Code that disposes its results (`using`) still can.
+    Object.defineProperty(copy, disposer, { value: () => {}, enumerable: false });
+    dispose.call(result);
+  }
+  return copy;
+}
+
+/** `Symbol.dispose`, where the host has it (the compile target's library does not name it). */
+const disposer = (Symbol as unknown as { readonly dispose?: symbol }).dispose;
+
 /** An RPC result as effect-log data; a Response becomes its status. */
 function summarize(result: unknown): JsonValue {
   if (result instanceof Response) return { status: result.status, ok: result.ok };
@@ -426,14 +456,15 @@ export function proxyNamespace(
       }
     }
 
-    /** A result passed back to the Worker; one that is not plain data cannot be followed. */
+    /** A result passed back to the caller; one that is not plain data cannot be followed. */
     function plain<T>(result: T): T {
       if (!isPlainData(result)) {
         ctx.hooks.unsupported(
           `Durable Object ${binding} ${object} returned something that is not plain data (an RPC capability or an object with methods); calls on it would bypass Eutaxy`,
         );
+        return result;
       }
-      return result;
+      return released(result);
     }
 
     /**
@@ -473,7 +504,8 @@ export function proxyNamespace(
           allowed: writeFaults,
           hostsEffects: true,
         },
-        perform,
+        // From another object the call leaves once that object's earlier writes are durable.
+        outboundGate(ctx, perform),
         summarize,
         {
           // The object's code is the host's: inside the call its effects are the call's; after the

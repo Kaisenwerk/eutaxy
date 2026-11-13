@@ -797,7 +797,19 @@ shares the reading of the limit and none of the proxy code.
   object, storage I/O); the caller's own timers stay the caller's and do
   not fire while its call is in flight, and once the object's code has
   returned its call is in flight until the answer has crossed, so a timer
-  it set and did not await fires after the answer. Work the object's
+  it set and did not await fires after the answer. The rule is the same
+  at every depth. A call that hosts code counts as in flight only while
+  something that code is waiting on is unaccounted for: code whose every
+  outstanding effect is parked for a turn or being performed (and so
+  counted itself) is covered, and has no say. So an object awaiting its
+  call into another object, or into a called Worker, is not what the run
+  waits on; what it called is, judged in its own right, and the object
+  asleep at the end of a chain of calls is woken however long the chain.
+  An effect given its turn and not yet performing keeps its host in
+  flight, since the code that makes it is on its way. Rejected: counting
+  a hosting call as waiting only when all its effects are parked, which
+  is right one level deep and leaves a call nested in an object's call
+  in flight for good, so the object it called was never taken for idle. Work the object's
   code has outstanding when the call answers (an effect it issued and did
   not await, performing or waiting for its turn; a timer; real work such as
   a Web Crypto digest) is the object's from then on: the run waits for it,
@@ -813,12 +825,12 @@ shares the reading of the limit and none of the proxy code.
   is the real one, whose calls nothing would record or fault, and a
   Workflow binding is the local engine, which would run the class on the
   real clock. So the model puts the instance's `env` behind a view under
-  which every binding but another object's namespace is what the Worker
-  sees under that name (for a callee's object, under the callee's
-  qualified name): a service binding, a D1 database, an R2 bucket and a
-  Workflow binding are the Worker's own proxies for them, resolved when
-  first used (reading one off `env`, or preparing a statement, does
-  nothing), and a binding of a kind the model does not cover is the
+  which every binding is what the Worker sees under that name (for a
+  callee's object, under the callee's qualified name): a service
+  binding, a D1 database, an R2 bucket, a Workflow binding and a Durable
+  Object namespace are the Worker's own proxies for them, resolved when
+  first used (reading one off `env`, preparing a statement, or getting a
+  stub does nothing), and a binding of a kind the model does not cover is the
   Worker's stand-in for it, whose every call is refused and makes the
   run `UNSUPPORTED`, never passed on. A call the object makes through one is an
   effect of the invocation its code is running as (the call it is
@@ -829,7 +841,42 @@ shares the reading of the limit and none of the proxy code.
   `exec`) or a bucket operation performed on the real store, a Workflow
   instance created, found or asked for its status in the model, where
   it runs the scenario's class as an event of the run (a call on the
-  instance the binding gave is the object's call as well). A crash
+  instance the binding gave is the object's call as well), a call into
+  another object (or into itself, or back into an object waiting on it:
+  the input gate of an object awaiting a call is open) the stub call it
+  is from the Worker, hosting what the called object does. A crash
+  inside the called object ends the invocation, as one inside any object
+  does, and so resets every object the call went through, innermost
+  first; the fault points of the call itself are the ones that let the
+  calling object go on (`error`: it never arrived; `ambiguous`: the
+  called object acted and the answer was lost). An object reset while a
+  call it made is still in flight (one it did not await) takes what
+  awaited that call with it: the runtime tears its context down, so the
+  model ends the call's effect there, except that a called object whose
+  code is already running goes on as its own work, and the effect ends
+  when that code answers, with no result recorded, since nobody is left
+  to take it; if it never answers, the effect ends at the real-time
+  budget as any other does (`UNSUPPORTED`, the called object reset),
+  timed by the run itself, because the deadline the call was made under
+  was awaited in the context that is gone. Behind this is one notion:
+  the engine knows which instance of an object each piece of code
+  belongs to (the object's own code, and a Worker's that the object
+  called, which runs in the object's context), and a reset ends the
+  instance. Its code makes no further effect and takes no turn; the
+  runtime does not run it at all, so the engine counts on nothing in it
+  running, its own bookkeeping included. A call that was inside the
+  instance will not be answered: it stays in flight until the runtime's
+  failure of it reaches its caller, and ends at once where the caller is
+  gone too. A crash inside a call is read as a fact once the call's
+  effect settles, not raced against it: the crash is signalled where it
+  happened, and what wakes the code awaiting the call in another
+  object's context may be the runtime's rejection of the call into the
+  reset object, which must not decide whether the objects further out
+  are reset. A call's plain result reaches its caller as a
+  copy, the runtime's own result disposed: an object that hands the
+  result on as its own answer (`return stub.method()`) would otherwise
+  keep the called object referenced past the run, where the next run's
+  reset cannot evict it. A crash
   fault on it resets the object as on any effect the object makes. That
   is where a write outside the object and the object's own record of it
   come apart: the store has the write, the object's storage does not
@@ -872,9 +919,10 @@ shares the reading of the limit and none of the proxy code.
   runtime. The reset constructs each seeded object too, outside any run:
   there a method of a scripted service binding is answered from the
   script, unrecorded, so that a constructor that loads from one comes
-  up, and anything else through a service binding, and any call on a
-  Workflow binding, is refused, never passed to the isolate's own; a
-  database or a bucket is the real one
+  up, and anything else through a service binding, any call on a
+  Workflow binding and any call into another object (which would run
+  for real and stay up into the run) is refused, never passed to the
+  isolate's own; a database or a bucket is the real one
   there, so a constructor that reads one needs that store's setup step
   before the object's, and what a constructor writes to one is written
   once more by the reset, before the run. Still outside: a class the platform is
@@ -884,8 +932,8 @@ shares the reading of the limit and none of the proxy code.
   outside the gate and does not await, which is the calling
   invocation's (in a wake, where that invocation ends at once, the run
   is `UNSUPPORTED`); an
-  object reached
-  only through another object's binding makes the run `UNSUPPORTED`, as do
+  object another object reached through an env the model does not stand
+  behind (those two cases) makes the run `UNSUPPORTED`, as do
   `jurisdiction()` namespaces (and a unique id asked for one) and a
   namespace the scenario does not reset (no `durableObject` setup).
   `newUniqueId()` is drawn from the run's random stream, as a named id
