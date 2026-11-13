@@ -1,0 +1,8 @@
+{
+  "expect": {
+    "verdict": "VIOLATED",
+    "invariant": "one-unit-a-cart"
+  },
+  "fault": "anything that keeps the cart from keeping an item whose unit the shelf gave: the shelf's answer lost on its way back to the cart (ambiguous on the cart's call into the shelf), or the cart reset right after the call (crash_after); the caller's resend makes the cart ask again and the shelf gives a second unit",
+  "description": "A cart object takes a unit of an item from the item's shelf, another object, through its own env, and keeps the item once the shelf has answered. The shelf gives a unit for every call, so a take whose answer the cart never acted on is made a second time when the cart's caller resends."
+}

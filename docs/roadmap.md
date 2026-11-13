@@ -162,23 +162,27 @@ Notes on releases along the way:
 Work that changes no phase's gate ships as a patch release of the current
 minor, each item when a target needs it (the performance items and the
 proof cache are v0.18's and wait for it unless a target needs one sooner):
-- **Calls between Durable Objects and a scripted Durable Object**, first,
-  as `0.17.1`. One object calling another through its own `env` becomes
-  an effect hosting the second object's turn, with the faults a stub
-  call has, in place of the run ending `UNSUPPORTED`. A call nested in
-  another object's call meets everything a call from the Worker does
-  (a timer the called object awaits before it answers, work it goes on
-  with after, a reset of either object while the call is in flight), so
-  it is done when each of those is tested nested as it is tested from
-  the Worker, not when one gate entry passes. A scripted object is a
-  namespace whose objects answer their methods from the scenario, as
-  `service()` answers a Worker, each call an effect, from the Worker and
-  from another object: for an object the isolate cannot run (one backed
-  by a container) or one the scenario does not want to explore; an
-  adopter's second flow waits on it. Done when an object calling a
-  second real object and a scripted one each end in a verdict under
-  every fault placement with no `UNSUPPORTED`, a planted bug in each is
-  caught, and the real one has its differential entry.
+- **A scripted Durable Object**, first, as `0.17.1`: a namespace whose
+  objects answer their methods from the scenario, as `service()` answers
+  a Worker, each call an effect, from the Worker and from another object.
+  For an object the isolate cannot run (one backed by a container) or one
+  the scenario does not want to explore; an adopter's second flow waits
+  on it. Done when an object calling a scripted one ends in a verdict
+  under every fault placement with no `UNSUPPORTED` and a planted bug
+  behind such a call is caught. Calls between Durable Objects, the other
+  half of what v0.17 first held, are in: one object calling another
+  through its own `env` is an effect hosting the second object's code,
+  with the faults a stub call has. A call nested in another call meets
+  everything a call from the Worker does, so it was held until each
+  timing was tested nested as it is tested from the Worker: the engine
+  runs every timing directly and inside each nesting (an object, two
+  objects, a called Worker, and their mixes) under every fault placement
+  and compares the runs (`packages/engine/src/nested-calls.test.ts`), and
+  `corpus/gates/v0-17-nested-object-timing` holds the v0.16 timings
+  nested against the real runtime, beside the gate entry
+  (`v0-17-object-calls-object`), the planted bug
+  (`object-unit-twice-across-objects`) and the differential entry
+  (`object-calls-object`).
 - A configurable number of `TESTED` draws on the command line (the API
   takes `inputs`).
 - The command loads the spec reader and the engines only where specs are

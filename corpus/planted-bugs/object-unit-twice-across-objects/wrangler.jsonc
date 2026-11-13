@@ -1,0 +1,13 @@
+{
+  "name": "planted-object-unit-twice-across-objects",
+  "main": "worker.ts",
+  "compatibility_date": "2026-10-01",
+  "durable_objects": {
+    "bindings": [
+      { "name": "CART", "class_name": "Cart" },
+      { "name": "SHELF", "class_name": "Shelf" },
+      { "name": "SAFE_SHELF", "class_name": "FixedShelf" }
+    ]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Cart", "Shelf", "FixedShelf"] }]
+}
