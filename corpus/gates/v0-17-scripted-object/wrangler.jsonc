@@ -1,0 +1,13 @@
+{
+  "name": "gate-v0-17-scripted-object",
+  "main": "worker.ts",
+  "compatibility_date": "2026-10-01",
+  "durable_objects": {
+    "bindings": [
+      { "name": "POOL", "class_name": "Pool" },
+      // Scripted by the scenario: no object of this namespace is constructed.
+      { "name": "MACHINE", "class_name": "Machine" }
+    ]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Pool", "Machine"] }]
+}

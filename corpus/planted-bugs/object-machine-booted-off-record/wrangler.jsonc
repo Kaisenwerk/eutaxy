@@ -1,0 +1,14 @@
+{
+  "name": "planted-object-machine-booted-off-record",
+  "main": "worker.ts",
+  "compatibility_date": "2026-10-01",
+  "durable_objects": {
+    "bindings": [
+      { "name": "POOL", "class_name": "Pool" },
+      { "name": "SAFE_POOL", "class_name": "FixedPool" },
+      // Scripted by the scenario: no object of this namespace is constructed.
+      { "name": "MACHINE", "class_name": "Machine" }
+    ]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Pool", "FixedPool", "Machine"] }]
+}

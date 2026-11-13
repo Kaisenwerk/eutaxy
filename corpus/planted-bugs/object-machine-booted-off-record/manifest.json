@@ -1,0 +1,8 @@
+{
+  "expect": {
+    "verdict": "VIOLATED",
+    "invariant": "a-booted-machine-is-on-record"
+  },
+  "fault": "anything that keeps the pool from recording a machine that booted: the pool reset right after the call (crash_after on the boot), or the call's answer lost (ambiguous)",
+  "description": "An object runs each job on an object of another namespace, a container-backed machine the scenario scripts, and records the job after the machine has booted. A boot that happened and was not recorded leaves a machine running that no record names."
+}
