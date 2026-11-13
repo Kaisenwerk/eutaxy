@@ -18,7 +18,7 @@ import { withoutNetwork } from "@eutaxy/engine";
 import { AlarmBook, alarmControl, takenOver, takeOverAlarms } from "./alarms.ts";
 import { envView, hostMethod, hostOf, outsideRunEnv, ownEnv } from "./object-access.ts";
 import { outboundGate, type ProxyContext } from "./proxy-context.ts";
-import type { DurableObjectSqlSeed, ServiceSetup } from "./scenario.ts";
+import type { DurableObjectSqlSeed, ScriptedObjectSetup, ServiceSetup } from "./scenario.ts";
 
 /** Seeds by object name: key-value entries, and SQL for SQLite-backed objects. */
 type Seeds = { readonly [name: string]: { readonly [key: string]: JsonValue } };
@@ -172,11 +172,14 @@ export function forgetHosts(): void {
   hostOfId.clear();
 }
 
-/** The scenario's service scripts by binding, for what a constructor calls while its object is reset. */
-let scriptedOutsideRuns: (binding: string) => ServiceSetup | undefined = () => undefined;
+/** The scenario's scripts by binding (a service's, a namespace's), for what a constructor calls while its object is reset. */
+let scriptedOutsideRuns: (binding: string) => ServiceSetup | ScriptedObjectSetup | undefined = () =>
+  undefined;
 
-/** Tell which service bindings the scenario being reset scripts (see `outsideRunEnv`). */
-export function scriptsOutsideRuns(scripted: (binding: string) => ServiceSetup | undefined): void {
+/** Tell which service bindings and namespaces the scenario being reset scripts (see `outsideRunEnv`). */
+export function scriptsOutsideRuns(
+  scripted: (binding: string) => ServiceSetup | ScriptedObjectSetup | undefined,
+): void {
   scriptedOutsideRuns = scripted;
 }
 
@@ -628,6 +631,29 @@ export function proxyNamespace(
       }
     },
   });
+}
+
+/**
+ * The objects of a namespace that are running now, each evicted: eviction
+ * only succeeds on a running object. For a namespace none of whose objects
+ * should have run.
+ */
+export async function evictRunning(
+  real: DurableObjectNamespace,
+  helpers: DurableObjectTestHelpers,
+): Promise<DurableObjectId[]> {
+  const running: DurableObjectId[] = [];
+  const ids = await typed(helpers).listDurableObjectIds(real);
+  for (const id of [...ids].sort((a, b) => (a.toString() < b.toString() ? -1 : 1))) {
+    const evicted = await typed(helpers)
+      .evictDurableObject(real.get(id))
+      .then(
+        () => true,
+        () => false,
+      );
+    if (evicted) running.push(id);
+  }
+  return running;
 }
 
 /** Drop an object's instance from outside it; one that is not running has nothing to drop. */

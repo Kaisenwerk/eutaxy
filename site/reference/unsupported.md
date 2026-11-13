@@ -230,6 +230,29 @@ Await the call, then read the field.
 **`service binding <binding>: connect() (a raw TCP socket) is not modelled`**
 Keep TCP sockets out of the scenario's path.
 
+**`scripted Durable Object <binding> <object>: no scripted reply for method <method>; add it to the scriptedObject("<binding>") setup's methods`** and
+**`scripted Durable Object <binding> <object>: no scripted reply for fetch <method> <path>; add it to the scriptedObject("<binding>") setup's fetch`**
+The scripted namespace's object was asked something its
+`scriptedObject()` step does not answer. Add the reply, or run the real
+objects with `durableObject()`.
+
+**`scripted Durable Object <binding> <object>: the scripted reply to <method> <path> is a 101, and a scripted object accepts no WebSocket`**
+A script holds no connection. Run the real object for a WebSocket.
+
+**`<binding>.newUniqueId({ jurisdiction }) is not modelled for a scripted namespace; use newUniqueId() without one`** and
+**`<binding>.jurisdiction() is not modelled for a scripted namespace; use the namespace itself`**
+Use the namespace as it is.
+
+**`Durable Object <binding> <object>, of a namespace the scenario scripts, ran for real: something called it through an env the simulation does not stand behind (the env parameter a constructor kept, or a class the platform was not given)`**
+A call reached the namespace's real object past the script: through the
+`env` parameter a constructor kept for itself, or from an object whose
+class is not among the exports the platform was given. Call through
+`this.env`, and pass the module's exports (`eutaxy check` does).
+
+The redirect, promise pipelining and `connect()` reasons above appear
+for a scripted object too, under `scripted Durable Object <binding>
+<object>`.
+
 **`callee <binding>: the arguments of <method> are not plain data (a stub, a function, a stream or a class instance); RPC carries plain data only`**,
 **`callee <binding>: the arguments of <method> cannot be copied as RPC copies them`**,
 **`callee <binding>: <method> returned something that is not plain data (a stub, a function or a stream); RPC capabilities are not modelled`**

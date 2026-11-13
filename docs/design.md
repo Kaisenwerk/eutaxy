@@ -462,6 +462,42 @@ final reply, or fetch with `redirect: "manual"`), promise pipelining and
 callees were scripted. A callee the scenario runs for real is the next
 paragraph; the scripted boundary stays for the Workers it does not.
 
+**A Durable Object namespace can be scripted the same way.** An object
+the test's isolate cannot run (its class is backed by a container, which
+the local runtime does not give) or one the scenario does not explore is
+declared with `scriptedObject(binding, { methods, fetch })`: every object
+of the namespace answers its RPC methods and its `fetch()` from the
+script, as a scripted Worker does, and none is constructed. A stub is
+made as it is from the real namespace (`get(id)`, `getByName(name)`; the
+ids are the namespace's own, a unique id drawn from the run's random
+stream), and each call on it is one effect, `DO:<binding>`, with the
+object's name in its arguments and the faults of a stub call into a real
+object: `crash_before` and `error` mean the call never reached the
+object, `ambiguous` that the object acted and the answer was lost,
+`crash_after` that the caller died after it. The caller is the Worker or
+another object, whose call leaves it once its earlier writes are
+durable, as any of its calls does. The target is the one a real object's
+calls have, so an invariant over the calls (`objectCall`) reads the same
+whether the namespace is scripted or real; in one scenario a namespace
+is one or the other. A script is not an object: every call gets its
+scripted reply whatever came before, so a property of the called
+object's own state needs the real object (an invariant that reads a
+scripted namespace's storage is a scenario error), and a script holds no
+WebSocket (a `101` reply is `UNSUPPORTED`) and has no alarm. A method
+the script lacks, an unmatched `fetch()`, a redirect the runtime would
+follow, promise pipelining, `connect()` and a jurisdiction make the run
+`UNSUPPORTED`, and the verdict's assumptions say what a scripted
+namespace is. That no object ran is checked, not assumed: a call that
+goes round the script (through the `env` parameter a constructor kept,
+or from a class the platform was not given) reaches the real object, so
+the end of each run looks for an object of the namespace that is
+running, as a real namespace's snapshot does, evicts it and makes the
+run `UNSUPPORTED` (one that another scenario left running, having run
+the namespace's real objects, is evicted before the run and is not
+the run's). The check needs the Cloudflare test helpers, so a
+scripted namespace without them is refused at setup, as the real
+objects' setup is.
+
 **Workers calling each other, for real (v0.14).** A system split by
 business context is several Workers, each with its own bindings, calling
 one another through service bindings; a bug that crosses two of them (a
@@ -928,7 +964,9 @@ shares the reading of the limit and none of the proxy code.
   up, and anything else through a service binding, any call on a
   Workflow binding and any call into another object (which would run
   for real and stay up into the run) is refused, never passed to the
-  isolate's own; a database or a bucket is the real one
+  isolate's own, except a method of an object whose namespace the
+  scenario scripts, answered from that script; a database or a bucket is
+  the real one
   there, so a constructor that reads one needs that store's setup step
   before the object's, and what a constructor writes to one is written
   once more by the reset, before the run. Still outside: a class the platform is

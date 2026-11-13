@@ -179,6 +179,15 @@ function readTransport(reportPath: string): CheckTransport | null {
   return null;
 }
 
+/**
+ * Whether a regression test for a scenario with these setup steps is given the Cloudflare test
+ * helpers: real objects are reset and snapshotted through them, and a scripted namespace is watched
+ * through them for an object that ran after all.
+ */
+export function needsObjectHelpers(setup: readonly { readonly kind: string }[]): boolean {
+  return setup.some((s) => s.kind === "durable_object" || s.kind === "scripted_object");
+}
+
 function toPosix(p: string): string {
   const s = p.split("\\").join("/");
   return s.startsWith(".") ? s : `./${s}`;
@@ -414,9 +423,7 @@ export async function runCheck(o: CheckOptions): Promise<number> {
               ...(transport.aliases === undefined ? {} : { aliases: transport.aliases }),
             }),
         ...(o.budgetMs === undefined ? {} : { budgetMs: o.budgetMs }),
-        ...(transport.setup.some((s) => s.kind === "durable_object")
-          ? { durableObjects: true }
-          : {}),
+        ...(needsObjectHelpers(transport.setup) ? { durableObjects: true } : {}),
         ...(transport.setup.some((s) => s.kind === "workflow") ||
         (transport.drive?.kind === "rpc" && transport.drive["entrypoint"] !== undefined)
           ? { exports: true }

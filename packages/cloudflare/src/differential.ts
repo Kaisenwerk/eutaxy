@@ -551,6 +551,11 @@ export async function runDifferential(
     throw new Error(
       "runDifferential keeps to the binding proxies: a scenario with a callee() has no raw side; script the service for the differential entry",
     );
+  // A scripted namespace's objects are never run; the raw side would run the real ones.
+  if (spec.setup.some((s) => s.kind === "scripted_object"))
+    throw new Error(
+      "runDifferential keeps to the binding proxies: a scenario with a scriptedObject() has no raw side",
+    );
   const stored = storedBindings(options);
   const { unsupported, ...eutaxy } = await eutaxySide(spec, options, stored);
   const raw = await rawSide(spec, options, stored);

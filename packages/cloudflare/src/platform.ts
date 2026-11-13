@@ -24,6 +24,7 @@ import {
   durableObjectBinding,
   ownedSetups,
   r2Binding,
+  scriptedObjectBinding,
   serviceBinding,
   workflowBinding,
 } from "./bindings.ts";
@@ -39,7 +40,13 @@ import { deliverRequest } from "./http.ts";
 import { type ProxyContext, refuse } from "./proxy-context.ts";
 import { deliverMessage } from "./queues.ts";
 import { deliverCall, entrypointClass } from "./rpc.ts";
-import { type Drive, driveEvents, restrictDrive, type ServiceSetup } from "./scenario.ts";
+import {
+  type Drive,
+  driveEvents,
+  restrictDrive,
+  type ScriptedObjectSetup,
+  type ServiceSetup,
+} from "./scenario.ts";
 import { deliverTick } from "./scheduled.ts";
 import { Connections, deliverWebSocket } from "./websocket.ts";
 
@@ -125,6 +132,7 @@ const assumptions: readonly string[] = [
   "message.timestamp is the virtual clock's time at delivery",
   "only D1, Durable Object, R2, Workflow and scripted service bindings are proxied; a call on any other binding, from the Worker or from a Durable Object through this.env, makes the run UNSUPPORTED (reading one off env does not)",
   "service bindings are scripted callees unless the scenario names a callee for them: the Worker behind a scripted binding is never called; each RPC method call or fetch() through it is one effect answered from the scenario's service() setup, where crash_before and error mean the call never reached the callee, ambiguous that it acted and the answer was lost, and crash_after that the caller died after it (developers.cloudflare.com/workers/runtime-apis/bindings/service-bindings/); Cloudflare does not retry such a call",
+  "a Durable Object namespace with a scriptedObject() setup is scripted: none of its objects is run (one found running at the end of a run makes it UNSUPPORTED); each RPC method call or fetch() on a stub of it, from the Worker or from another object, is one effect on DO:<binding> answered from the script, the same reply whatever was called before, with the faults of a stub call (crash_before and error: it never reached the object; ambiguous: the object acted and the answer was lost; crash_after: the caller died after it) (developers.cloudflare.com/durable-objects/best-practices/create-durable-object-stubs-and-send-requests/)",
   "a callee that is the scenario's own Worker, called back by a Worker it called, runs with the scenario's env under its own names; a binding named as an alias of another (the same database, the same Durable Object namespace, in two Workers' configs) is that binding: its effects and snapshot carry the other's name, and a callee's Workflow runs the callee's class with the callee's env",
   "a service binding with a callee() setup runs that Worker's real code in the caller's simulation, in the same isolate, as Cloudflare runs both Workers on one thread (developers.cloudflare.com/workers/runtime-apis/bindings/service-bindings/): each RPC method call or fetch() through it is one effect hosting the callee's invocation (<caller invocation>/<binding>.<method>), which constructs the entrypoint anew with a fresh ExecutionContext and the callee's env (its bindings under <worker name>/<binding>) and answers with the return value, plain data by copy, or the Response as it is; what the callee throws reaches the caller as a new error with its name, message and serializable own properties, a built-in class as itself (developers.cloudflare.com/workers/runtime-apis/rpc/error-handling/); the callee's waitUntil work finishes before its answer crosses; crash_before means the call never reached the callee, ambiguous that it acted and the answer was lost, crash_after that the caller died after it, and a fault that crashes the callee ends its invocation and throws an Error to the caller; Cloudflare retries nothing",
   "R2 buckets are Miniflare's real ones, emptied and seeded before each run and snapshotted after it; R2 is strongly consistent and the last writer wins (developers.cloudflare.com/r2/reference/consistency/); each put, delete, get, head and list is one effect, a body is read inside its get, and an object's version and upload time are stand-ins so traces repeat; multipart uploads and conditions on the upload time are not modelled",
@@ -182,6 +190,8 @@ export function createCloudflarePlatform(options: CloudflarePlatformOptions): Pl
     calleeBinding({ callees: options.callees, env: () => proxiedEnv }),
     serviceBinding(),
     d1Binding(options.schemas),
+    // A namespace the scenario scripts, before the real objects' record.
+    scriptedObjectBinding(options.durableObjects),
     durable,
     r2Binding(),
     workflowBinding({
@@ -288,9 +298,14 @@ export function createCloudflarePlatform(options: CloudflarePlatformOptions): Pl
       for (const binding of bindings) binding.clear();
       // From here to the cleanup, a Durable Object is constructed with the scenario's env.
       simulatingConstruction(true);
-      // What a constructor calls while its object is reset is answered from the scenario's scripts.
+      // What a constructor calls while its object is reset is answered from the scenario's scripts,
+      // found under the name the binding is set up by, as inside a run.
       scriptsOutsideRuns((name) =>
-        spec.setup.find((s): s is ServiceSetup => s.kind === "service" && s["binding"] === name),
+        spec.setup.find(
+          (s): s is ServiceSetup | ScriptedObjectSetup =>
+            (s.kind === "service" || s.kind === "scripted_object") &&
+            s["binding"] === canonical(name),
+        ),
       );
       for (const [binding, setup] of ownedSetups(spec.setup, bindings)) {
         // One resource is set up once, under the name it is known by.

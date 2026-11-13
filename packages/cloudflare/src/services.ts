@@ -100,10 +100,18 @@ export interface ServiceAnswers {
 /**
  * The stub a Worker sees under a service binding's name: methods callable
  * and awaitable, `fetch`, and the guards against what is not modelled
- * (promise pipelining, `connect()`), with the answers supplied.
+ * (promise pipelining, `connect()`), with the answers supplied. A scripted
+ * Durable Object's stub is the same thing under its own name (`what`) with
+ * members of its own (`own`: its `id` and `name`).
  */
-export function serviceStub(binding: string, ctx: ProxyContext, answers: ServiceAnswers): object {
-  const unsupported = (what: string): never => refuse(ctx, `service binding ${binding}: ${what}`);
+export function serviceStub(
+  binding: string,
+  ctx: ProxyContext,
+  answers: ServiceAnswers,
+  what = `service binding ${binding}`,
+  own: Readonly<Record<string, unknown>> = {},
+): object {
+  const unsupported = (reason: string): never => refuse(ctx, `${what}: ${reason}`);
 
   /**
    * The promise a call returns. On the real stub it is an RPC promise that
@@ -118,7 +126,7 @@ export function serviceStub(binding: string, ctx: ProxyContext, answers: Service
           return typeof value === "function" ? value.bind(target) : value;
         }
         ctx.hooks.unsupported(
-          `service binding ${binding}: RPC promise pipelining (reading .${prop} on ${method}()'s promise) is not supported; await the call first`,
+          `${what}: RPC promise pipelining (reading .${prop} on ${method}()'s promise) is not supported; await the call first`,
         );
         return undefined;
       },
@@ -137,7 +145,7 @@ export function serviceStub(binding: string, ctx: ProxyContext, answers: Service
         if (key === "then") return awaitable;
         if (typeof key === "symbol") return Reflect.get(fn, key);
         ctx.hooks.unsupported(
-          `service binding ${binding}: RPC promise pipelining (reading .${method}.${key}) is not supported; await .${method} first`,
+          `${what}: RPC promise pipelining (reading .${method}.${key}) is not supported; await .${method} first`,
         );
         return undefined;
       },
@@ -154,6 +162,7 @@ export function serviceStub(binding: string, ctx: ProxyContext, answers: Service
       get(_stub, prop) {
         // The stub is not a promise.
         if (prop === "then" || typeof prop === "symbol") return undefined;
+        if (Object.hasOwn(own, prop)) return own[prop];
         if (prop === "fetch") return fetchThrough;
         if (prop === "connect")
           return () => unsupported("connect() (a raw TCP socket) is not modelled");

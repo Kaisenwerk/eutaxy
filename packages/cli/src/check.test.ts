@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { SpecVerdict } from "@eutaxy/core";
 import type { Prover } from "@eutaxy/prover";
 import { afterAll, describe, expect, test } from "vitest";
-import { proveSpecs } from "./check.ts";
+import { needsObjectHelpers, proveSpecs } from "./check.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "eutaxy-prove-"));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -60,5 +60,13 @@ describe("proveSpecs", () => {
     );
     expect(seen).toEqual([["f"]]);
     expect(out[0]).toMatchObject({ kind: "PROVEN", engine: { name: "fake" }, tested: 100 });
+  });
+});
+
+describe("needsObjectHelpers", () => {
+  test("a regression test gets the test helpers for real objects and for a scripted namespace, not otherwise", () => {
+    expect(needsObjectHelpers([{ kind: "d1" }, { kind: "durable_object" }])).toBe(true);
+    expect(needsObjectHelpers([{ kind: "scripted_object" }])).toBe(true);
+    expect(needsObjectHelpers([{ kind: "d1" }, { kind: "service" }])).toBe(false);
   });
 });

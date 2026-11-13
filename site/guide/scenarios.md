@@ -175,6 +175,7 @@ Setup steps run before every run, so each run starts from the same state.
 | `durableObject(binding, objects?, { alarmsPerObject })` | Clears the namespace, seeds the named objects' storage, evicts them; snapshots storage after the run |
 | `r2Bucket(binding, objects?)`                           | Empties the bucket and seeds these objects; snapshots it after the run                               |
 | `workflow(binding, className, { name })`                | Names the class (an export of the Worker module) a Workflow binding's instances run                  |
+| `scriptedObject(binding, { methods, fetch })`           | Scripts a Durable Object namespace: every object of it answers its methods and `fetch()` from the script; none runs |
 | `service(binding, { methods, fetch })`                  | Scripts the Worker behind a service binding: each method's reply, the replies to `fetch()`; never calls it |
 | `callee(binding, { entry, config, entrypoint? })` | Runs the Worker behind a service binding for real, from its module and wrangler config; its bindings are set up under `<name>/<binding>` |
 
@@ -201,6 +202,23 @@ Each call is one effect (`Service:<binding>`, the method as op) with the
 faults of a Durable Object stub call: the call never reached the callee, it
 acted and the answer was lost, or the caller died after it.
 `serviceCall(binding, method)` selects the calls for invariants.
+
+A Durable Object namespace is scripted the same way, for a class the
+test's isolate cannot run (one backed by a container) or objects the
+scenario does not explore:
+
+```ts
+const machines = scriptedObject("MACHINE", {
+  methods: { boot: { returns: { address: "10.0.0.7" } } },
+  fetch: [{ method: "POST", path: "/warm", status: 200 }],
+});
+```
+
+Every object of the namespace answers from the script and none is
+constructed. Each call is one effect (`DO:<binding>`, the method as op,
+the object's name in its arguments) with the same faults, whether the
+Worker makes it or another object does. `objectCall(binding, method,
+object)` selects the calls into a namespace, scripted or real.
 
 Where a bug could cross the two Workers, the callee runs for real instead:
 

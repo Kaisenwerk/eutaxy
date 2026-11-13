@@ -8,7 +8,7 @@ outline: 2
 
 # `eutaxy/cloudflare`
 
-`import { … } from "eutaxy/cloudflare";` 45 functions and values, 37 types; each links to the file that declares it.
+`import { … } from "eutaxy/cloudflare";` 47 functions and values, 38 types; each links to the file that declares it.
 
 ## Functions, classes and values
 
@@ -168,6 +168,12 @@ Selects the responses the Worker returned for a path (`ok` narrows to 2xx or to 
 
 Every selected effect has a row whose column equals the effect's key. [Source](https://github.com/Kaisenwerk/eutaxy/blob/main/packages/cloudflare/src/scenario.ts)
 
+### `objectCall`
+
+`function objectCall(binding: string, method?: string, object?: string): EffectSelector`
+
+Selects the calls into a Durable Object namespace that completed (real objects' or scripted ones'), one method's or all; `object` keeps those into the object of that name. [Source](https://github.com/Kaisenwerk/eutaxy/blob/main/packages/cloudflare/src/scenario.ts)
+
 ### `queue`
 
 `function queue(name: string, messages: readonly QueueMessage[]): QueueDrive`
@@ -227,6 +233,12 @@ Selects the answers an RPC method gave (`ok` narrows to values returned or to er
 `function runDifferential(spec: ScenarioSpec, options: CloudflarePlatformOptions): Promise<DifferentialResult>`
 
 Run both sides and compare. [Source](https://github.com/Kaisenwerk/eutaxy/blob/main/packages/cloudflare/src/differential.ts)
+
+### `scriptedObject`
+
+`function scriptedObject(binding: string, options: { readonly methods?: { readonly [method: string]: ScriptedReply }; readonly fetch?: readonly ServiceResponse[]; } = {}): ScriptedObjectSetup`
+
+Script a Durable Object namespace: its objects' RPC methods answer from `methods` and their `fetch()` from `fetch`, and no object of it runs. [Source](https://github.com/Kaisenwerk/eutaxy/blob/main/packages/cloudflare/src/scenario.ts)
 
 ### `service`
 
@@ -433,6 +445,12 @@ A type alias, not an interface, so it is assignable to the JSON shape of `Platfo
 `interface RpcDrive`
 
 Drive a `WorkerEntrypoint` of the Worker with these method calls, one invocation per attempt, the entrypoint constructed anew for each. [Source](https://github.com/Kaisenwerk/eutaxy/blob/main/packages/cloudflare/src/scenario.ts)
+
+### `ScriptedObjectSetup`
+
+`interface ScriptedObjectSetup`
+
+Script the objects of a Durable Object namespace: every object of the namespace answers its RPC methods from `methods` and its `fetch()` from `fetch`, as a scripted service does (see `ServiceSetup`), and no object of the namespace is constructed or run. [Source](https://github.com/Kaisenwerk/eutaxy/blob/main/packages/cloudflare/src/scenario.ts)
 
 ### `ScriptedReply`
 

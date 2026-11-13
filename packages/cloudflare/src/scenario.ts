@@ -565,6 +565,105 @@ export function service(
 }
 
 /**
+ * Script the objects of a Durable Object namespace: every object of the
+ * namespace answers its RPC methods from `methods` and its `fetch()` from
+ * `fetch`, as a scripted service does (see `ServiceSetup`), and no object
+ * of the namespace is constructed or run. For a class the test's isolate
+ * cannot run (one backed by a container) or one the scenario does not
+ * explore. Each call is one effect, `DO:<binding>`, with the object's name
+ * in its arguments and the faults of a Durable Object stub call.
+ */
+export interface ScriptedObjectSetup extends PlatformData {
+  readonly kind: "scripted_object";
+  readonly binding: string;
+  readonly methods?: { readonly [method: string]: ScriptedReply };
+  readonly fetch?: readonly ServiceResponse[];
+}
+
+/**
+ * Script a Durable Object namespace: its objects' RPC methods answer from `methods` and their `fetch()`
+ * from `fetch`, and no object of it runs. See `ScriptedObjectSetup`.
+ */
+export function scriptedObject(
+  binding: string,
+  options: {
+    readonly methods?: { readonly [method: string]: ScriptedReply };
+    readonly fetch?: readonly ServiceResponse[];
+  } = {},
+): ScriptedObjectSetup {
+  return {
+    kind: "scripted_object",
+    binding,
+    ...(options.methods === undefined ? {} : { methods: options.methods }),
+    ...(options.fetch === undefined ? {} : { fetch: [...options.fetch] }),
+  };
+}
+
+/** The snapshot targets an invariant reads state from. */
+function stateTargets(invariant: Invariant): readonly string[] {
+  switch (invariant.kind) {
+    case "everyRow":
+    case "unique":
+      return [invariant.query.target];
+    case "implies":
+      return [invariant.state.target];
+    case "references":
+      return [invariant.query.target, invariant.in.target];
+    default:
+      return [];
+  }
+}
+
+/**
+ * A namespace is the real objects or a script, not both; one script per
+ * namespace; and a script has no storage for an invariant to read.
+ */
+function validateScriptedObjectSetups(
+  setup: ScenarioSpec["setup"],
+  invariants: readonly Invariant[],
+): string[] {
+  const errors: string[] = [];
+  const real = new Set(
+    setup.filter((s) => s.kind === "durable_object").map((s) => String(s["binding"])),
+  );
+  const seen = new Set<string>();
+  for (const step of setup) {
+    if (step.kind !== "scripted_object") continue;
+    const binding = String(step["binding"]);
+    if (!step["binding"]) errors.push("scriptedObject() needs a binding name");
+    if (real.has(binding))
+      errors.push(
+        `Durable Object binding ${JSON.stringify(binding)} has both a durableObject() setup and a scriptedObject() script; keep one`,
+      );
+    if (seen.has(binding))
+      errors.push(
+        `Durable Object binding ${JSON.stringify(binding)} has two scriptedObject() steps`,
+      );
+    seen.add(binding);
+  }
+  for (const invariant of invariants)
+    for (const target of stateTargets(invariant))
+      if (target.startsWith("DO:") && seen.has(target.slice(3)))
+        errors.push(
+          `invariant ${JSON.stringify(invariant.name)} reads the storage of ${target.slice(3)}, a namespace the scenario scripts: a script has no storage; select its calls with objectCall()`,
+        );
+  return errors;
+}
+
+/**
+ * Selects the calls into a Durable Object namespace that completed (real objects' or scripted ones'), one
+ * method's or all; `object` keeps those into the object of that name.
+ */
+export function objectCall(binding: string, method?: string, object?: string): EffectSelector {
+  return {
+    target: `DO:${binding}`,
+    ...(method === undefined ? {} : { op: method }),
+    kind: "result",
+    ...(object === undefined ? {} : { where: { "args.object": object } }),
+  };
+}
+
+/**
  * The Worker behind a service binding, run for real: its module and wrangler
  * config, relative to the scenario, in place of a script. The `name` in that
  * config qualifies the callee's bindings (`orders/DB`) in effect targets,
@@ -709,6 +808,7 @@ export interface CloudflareScenarioInput {
     | R2Setup
     | WorkflowSetup
     | ServiceSetup
+    | ScriptedObjectSetup
   )[];
   readonly externals?: readonly ExternalDecl[];
   readonly invariants: readonly Invariant[];
@@ -1090,6 +1190,7 @@ export function defineScenario(input: CloudflareScenarioInput): ScenarioSpec {
     ...validateScenario(spec),
     ...validateDurableObjectSetups(spec.setup),
     ...validateCalleeSetups(spec.setup),
+    ...validateScriptedObjectSetups(spec.setup, spec.invariants),
     ...(drive.kind === "http" ? validateHttpDrive(drive) : []),
     ...(drive.kind === "rpc" ? validateRpcDrive(drive) : []),
     ...(drive.kind === "cron" ? validateCronDrive(drive) : []),

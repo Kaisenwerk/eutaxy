@@ -34,22 +34,27 @@ const realPeer = () => ({
   },
 });
 
+/** Constructor calls that were refused: outside a run, one the scenario does not script. */
+let refused = 0;
+
 /**
- * An object that loads its configuration from another Worker as it is constructed. A class of its
- * own per run: the base the platform gives a class stays on it.
+ * An object that loads its configuration from another Worker as it is constructed, through the
+ * binding `key`. A class of its own per run: the base the platform gives a class stays on it.
  */
-const makeLoader = () =>
-  class Loader extends DurableObject<{ CONFIG: Config }> {
+const makeLoader = (key: "CONFIG" | "CFG" = "CONFIG") =>
+  class Loader extends DurableObject<{ CONFIG: Config; CFG?: Config }> {
     limit = 0;
     readonly loaded: Promise<void>;
-    constructor(ctx: DurableObject["ctx"], env: { CONFIG: Config }) {
+    constructor(ctx: DurableObject["ctx"], env: { CONFIG: Config; CFG?: Config }) {
       super(ctx, env);
-      this.loaded = this.env.CONFIG.load().then(
+      this.loaded = (this.env[key] as Config).load().then(
         (config) => {
           this.limit = config.limit;
         },
         // Constructed outside a run too (the reset), where a call the scenario does not script is refused.
-        () => {},
+        () => {
+          refused++;
+        },
       );
     }
     async read(): Promise<number> {
@@ -115,10 +120,15 @@ const handler: WorkerHandler = {
 /** What `runWith` last built, to construct the same class again outside any run. */
 let lastBuilt: { cls: LoaderClass; env: object } | undefined;
 
-async function runWith(exports: Record<string, unknown> | undefined) {
+/** `alias`: the object reaches the Worker through `CFG`, a second name of the binding `CONFIG`. */
+async function runWith(exports: Record<string, unknown> | undefined, alias = false) {
   reachedTheRealPeer = 0;
-  const cls = makeLoader();
-  const env: Record<string, unknown> = { CONFIG: realPeer() };
+  refused = 0;
+  const cls = makeLoader(alias ? "CFG" : "CONFIG");
+  const env: Record<string, unknown> = {
+    CONFIG: realPeer(),
+    ...(alias ? { CFG: realPeer() } : {}),
+  };
   const { namespace, helpers } = fakeNamespace(cls, env);
   env["LOADER"] = namespace;
   lastBuilt = { cls, env };
@@ -127,6 +137,7 @@ async function runWith(exports: Record<string, unknown> | undefined) {
     handler,
     schemas: {},
     durableObjects: helpers,
+    ...(alias ? { aliases: { CFG: "CONFIG" } } : {}),
     ...(exports === undefined ? {} : { exports: { ...exports, Loader: cls } }),
   });
   const s: ScenarioSpec = {
@@ -174,6 +185,17 @@ describe("an object's env from its construction", () => {
       "req-1#1 result Service:CONFIG load",
       "req-1#1 result DO:LOADER read",
     ]);
+  });
+
+  test("through a second name of the binding the script answers too, while the object is reset as inside the run", async () => {
+    const { log, run } = await runWith({}, true);
+    expect(run.unsupportedReasons).toEqual([]);
+    // The reset constructed the seeded object outside the run: its call was answered, not refused.
+    expect(refused).toBe(0);
+    expect(limit(log)).toBe(7);
+    expect(reachedTheRealPeer).toBe(0);
+    // Inside the run the call is the binding's, under the name it is set up by.
+    expect(lines(log)).toContain("req-1#1 result Service:CONFIG load");
   });
 
   test("outside the platform's runs the class is constructed with the runtime's env, as a comparison against the real bindings needs", async () => {

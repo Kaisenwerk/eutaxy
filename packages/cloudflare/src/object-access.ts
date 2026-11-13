@@ -19,7 +19,7 @@ import {
 import { type Outcome, runInvocation } from "@eutaxy/engine";
 import { isD1 } from "./d1.ts";
 import { isR2 } from "./r2.ts";
-import type { ServiceSetup } from "./scenario.ts";
+import type { ScriptedObjectSetup, ServiceSetup } from "./scenario.ts";
 import { isServiceBinding, scriptedError } from "./services.ts";
 import { isWorkflowBinding } from "./workflows.ts";
 
@@ -158,7 +158,9 @@ export function ownEnv(
  * service binding (a `fetch()`, a binding with a callee or with no script)
  * is refused, and so are a call on a Workflow binding, which would start
  * an instance in the local engine, and a call into another object, which
- * would run that object for real and leave it up. A database or a bucket is the real one
+ * would run that object for real and leave it up, unless the scenario
+ * scripts that object's namespace: then its methods answer from the
+ * script, as a service's do. A database or a bucket is the real one
  * there, as it is the reset's own: what a constructor writes to one while
  * its object is reset stays unless that store's setup step comes after the
  * object's. The
@@ -167,7 +169,7 @@ export function ownEnv(
  */
 export function outsideRunEnv(
   env: object,
-  scripted: (binding: string) => ServiceSetup | undefined = () => undefined,
+  scripted: (binding: string) => ServiceSetup | ScriptedObjectSetup | undefined = () => undefined,
 ): object {
   const callee = (env as { readonly [calleeOfEnv]?: unknown })[calleeOfEnv];
   const qualified = (name: string): string =>
@@ -180,7 +182,7 @@ export function outsideRunEnv(
         const answer = async (): Promise<unknown> => {
           const script = scripted(qualified(name));
           const reply =
-            script === undefined || method === "fetch" || method === "connect"
+            script?.kind !== "service" || method === "fetch" || method === "connect"
               ? undefined
               : script.methods === undefined
                 ? { returns: null }
@@ -241,10 +243,23 @@ export function outsideRunEnv(
     let namespace = namespaces.get(name);
     if (!namespace) {
       const refused = (method: string): object => {
-        const call = async (): Promise<never> => {
-          throw new Error(
-            `eutaxy: a Durable Object's constructor called ${method} on an object of ${name} while the scenario's objects were being reset, outside a run, where a call into another object is not made`,
-          );
+        const call = async (): Promise<unknown> => {
+          const script = scripted(qualified(name));
+          // A scripted namespace's method answers as it will in the run; nothing of it would run.
+          const reply =
+            script?.kind !== "scripted_object" || method === "fetch" || method === "connect"
+              ? undefined
+              : script.methods === undefined
+                ? { returns: null }
+                : Object.hasOwn(script.methods, method)
+                  ? script.methods[method]
+                  : undefined;
+          if (reply === undefined)
+            throw new Error(
+              `eutaxy: a Durable Object's constructor called ${method} on an object of ${name} while the scenario's objects were being reset, outside a run, where a call into another object is not made${script?.kind === "scripted_object" ? " and the scriptedObject() script does not answer it" : ""}`,
+            );
+          if ("throws" in reply) throw scriptedError(reply.throws);
+          return structuredClone(reply.returns);
         };
         return Object.assign(call, {
           // biome-ignore lint/suspicious/noThenProperty: an RPC property is awaitable as well as callable

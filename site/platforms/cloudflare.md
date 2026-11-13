@@ -22,6 +22,7 @@ the verdict's assumptions cite.
 | Cron Triggers     | the `cron` drive  | `no_retry`, background work                   | One invocation per tick attempt at the tick's virtual time; the declared re-runs of a failed tick, none after `noRetry()` |
 | Outbound `fetch`  | `external`        | each request                                  | Answered from the declared externals; never reaches the network                                                  |
 | Durable Objects   | `durableObject`   | each stub call, each alarm                    | The real objects: storage, transactions, input and output gates are the runtime's own                            |
+| Durable Objects, scripted | `scriptedObject` | each stub call, each `fetch()`          | No object runs: replies from the setup; faults as a stub call into a real object                                 |
 | R2                | `r2Bucket`        | `put`, `delete`, `get`, `head`, `list`        | Miniflare's buckets; strongly consistent, last writer wins, conditional operations as documented                 |
 | Workflows         | `workflow`        | `create`; two points per `step.do` attempt    | A model of the engine: step retries with backoff, restarts that re-run `run()` with persisted step results       |
 | Service bindings  | `service`         | each RPC call, each `fetch()`                 | The callee scripted: replies from the setup; faults as a Durable Object stub call; never retried by Cloudflare   |
@@ -69,6 +70,28 @@ each at its virtual time, so `scheduledTime` and the clock agree. Cloudflare
 documents `noRetry()` but not how a failed invocation is retried, so the
 drive declares the re-runs; `noRetry()` is recorded as a decision and ends
 them. `L`, `W` and `#` in an expression are not modelled.
+
+### Scripted Durable Objects
+
+A namespace whose class the test's isolate cannot run (one backed by a
+container), or whose objects the scenario does not explore, is scripted:
+the `scriptedObject` setup names each method's reply and the replies to
+`fetch()`, as `service` does for a Worker, and every object of the
+namespace answers from it. No object of the namespace is constructed.
+Each call on a stub, from the Worker or from another object, is one
+effect, `DO:<binding>`, with the object's name in its arguments and the
+faults of a stub call into a real object: the call never reached the
+object, it acted and the answer was lost, or the caller died after it.
+A script has no state, so every call gets its scripted reply whatever
+came before; it holds no WebSocket and has no alarm. In one scenario a
+namespace is scripted or real, not both. A call that goes round the
+script and reaches the real object (through the `env` parameter a
+constructor kept for itself) is found at the end of the run, which is
+then `UNSUPPORTED`. The corpus's
+`object-machine-booted-off-record` is a pool object that boots a
+container-backed machine and records the job after: a boot that
+happened and was not recorded leaves a machine running that no record
+names.
 
 ### Service bindings
 

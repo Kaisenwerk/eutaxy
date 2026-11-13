@@ -23,6 +23,7 @@ import {
   BindingState,
   type DurableObjectTestHelpers,
   evictObject,
+  evictRunning,
   forgetHosts,
   proxyNamespace,
   resetNamespace,
@@ -44,9 +45,11 @@ import {
   type DurableObjectSetup,
   defaultAlarmsPerObject,
   type R2Setup,
+  type ScriptedObjectSetup,
   type ServiceSetup,
   type WorkflowSetup,
 } from "./scenario.ts";
+import { proxyScriptedNamespace } from "./scripted-objects.ts";
 import { isServiceBinding, proxyService } from "./services.ts";
 import {
   deliverWorkflow,
@@ -521,6 +524,63 @@ export function serviceBinding(): Binding<object, ServiceSetup> {
       scripts.set(step.binding, step);
     },
     async snapshot() {
+      return null;
+    },
+  };
+}
+
+/**
+ * A Durable Object namespace the scenario scripts: never its objects, a
+ * namespace whose stubs answer from the `scriptedObject` setup, each call
+ * one effect. Nothing to reset, and no storage to snapshot: the end of the
+ * run only looks for an object of the namespace that is running, which a
+ * call the simulation did not stand behind reached (the real namespace's
+ * snapshot looks for the same). A namespace without that step is not this
+ * record's: it is the real objects'.
+ */
+export function scriptedObjectBinding(
+  helpers: DurableObjectTestHelpers | undefined,
+): Binding<DurableObjectNamespace, ScriptedObjectSetup> {
+  /** The namespaces the current scenario scripts. */
+  let scripts = new Map<string, ScriptedObjectSetup>();
+  /** Per binding, the namespace for the current run's script. */
+  const proxies = new Map<string, DurableObjectNamespace>();
+  return {
+    kind: "scripted_object",
+    target: "DO",
+    is: isDurableObjectNamespace,
+    proxy(name, real, ctx) {
+      const script = scripts.get(name);
+      if (!script) return undefined;
+      let p = proxies.get(name);
+      if (!p) {
+        p = proxyScriptedNamespace(real, name, ctx, script);
+        proxies.set(name, p);
+      }
+      return p;
+    },
+    clear() {
+      scripts = new Map();
+      proxies.clear();
+    },
+    async reset(step, real) {
+      // Without them nothing could tell that a real object of the namespace ran after all, whichever
+      // way it was reached: no run is made, as with the real objects' setup.
+      if (!helpers)
+        throw new Error(
+          'scriptedObject setup needs the Cloudflare test helpers, to see that none of the namespace\'s objects ran: createCloudflarePlatform({ ..., durableObjects: await import("cloudflare:test") })',
+        );
+      scripts.set(step.binding, step);
+      // What runs before the run is not the run's: an object another scenario left up, where that
+      // one ran the namespace's real objects.
+      if (isDurableObjectNamespace(real)) await evictRunning(real, helpers);
+    },
+    async snapshot(step, real, unsupported) {
+      if (!helpers || !isDurableObjectNamespace(real)) return null;
+      for (const id of await evictRunning(real, helpers))
+        unsupported(
+          `Durable Object ${step.binding} ${id.name ?? id.toString()}, of a namespace the scenario scripts, ran for real: something called it through an env the simulation does not stand behind (the env parameter a constructor kept, or a class the platform was not given)`,
+        );
       return null;
     },
   };
