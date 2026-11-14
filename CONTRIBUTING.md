@@ -12,7 +12,11 @@ behaviour change, zero runtime dependencies, one package per concern.
 ## Workflow
 
 1. Fork and branch from `main`.
-2. Run `pnpm install`, make the change, and keep `pnpm check` green.
+2. Run `pnpm install`, make the change, and keep `pnpm check` green. The
+   tests inject faults on purpose, and workerd logs each rejection they leave
+   unhandled as an uncaught exception: a run that passes prints only how many
+   there were, one that fails prints them all at its end, and
+   `EUTAXY_TEST_LOGS=all pnpm test` prints them as they come.
 3. Every behaviour change comes with a test. Bug fixes start with a failing
    test.
 4. Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/)
