@@ -171,7 +171,7 @@ proof cache are v0.18's and wait for it unless a target needs one sooner):
   Worker: the engine runs every timing directly and inside each nesting
   (an object, two objects, a called Worker, and their mixes) under every
   fault placement and compares the runs
-  (`packages/engine/src/nested-calls.test.ts`), and
+  (`packages/engine/src/nested-calls*.test.ts`), and
   `corpus/gates/v0-17-nested-object-timing` holds the v0.16 timings
   nested against the real runtime, beside the gate entry
   (`v0-17-object-calls-object`), the planted bug
