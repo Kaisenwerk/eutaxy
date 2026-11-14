@@ -18,8 +18,10 @@ does, so each timing is checked nested as it is checked from the Worker:
   effect before it asks the model; the run waits for it.
 
 A crash inside the runner during the call ends the request and resets both
-objects. Every scenario must be `BOUNDED` with nothing unsupported, without
-a fault and under every placement of one, at one invocation and at two in
-flight. The engine's own `nested-calls.test.ts` runs many more timings and
-nestings against a fake runtime; this entry holds the ones above against
-the real one, where an object's code has no async context of its caller's.
+objects. Every scenario must be `BOUNDED` with nothing unsupported: without
+a fault in every order, at one invocation and at two in flight; under every
+placement of a fault at one in flight; and under a fault placed by the seed
+at two, where every placement is some eight hundred schedules. The engine's
+own `nested-calls*.test.ts` files run many more timings and nestings
+against a fake runtime; this entry holds the ones above against the real
+one, where an object's code has no async context of its caller's.

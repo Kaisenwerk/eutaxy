@@ -15,7 +15,8 @@ an object's calls through its own service bindings are the scenario's.
   answer. The call leaves the object once its earlier writes are durable,
   as behind the output gate.
 - **The cells**: one and two invocations in flight, up to two faults,
-  each `BOUNDED` with nothing unsupported; every schedule with one fault,
+  each `BOUNDED` with nothing unsupported; every schedule with one fault at
+  one in flight, and every order of two in flight without a fault,
   exhaustively.
 - **The replays**: where the object's calls are recorded; the same seed
   giving the same run, and two in flight interleaving the object's calls

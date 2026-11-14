@@ -23,7 +23,9 @@ After the step, the flow sleeps ten minutes and confirms the turn's row on
 the object, as a real flow reads back what it did.
 
 Every cell must be `BOUNDED` with nothing unsupported: naps of 0 and 3
-minutes, one and two invocations in flight, up to one and two faults a run.
+minutes, one and two invocations in flight, up to two faults a run (which
+runs schedules with one fault too), and every schedule with one fault at
+one in flight, exhaustively.
 A late start's turns hold nothing, so its fetch inside the object can land
 after the confirming read and take a crash fault there: the object is then
 reset by the run's last event, and woken inside the run for the snapshot.

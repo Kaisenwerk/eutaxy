@@ -58,9 +58,12 @@ const settled = {
   runs: ["run-a complete", "run-b complete"],
 };
 
+// A sampled run places up to two faults: none in a tenth of the runs, else the first at an effect
+// drawn from those a fault-free run makes, so these runs cover schedules with none or one too. Every
+// schedule with one fault at one in flight, and 150 seeded runs without a fault at two, are the checks below.
 describe.each([1, 2] as const)("with %i invocation(s) in flight", (concurrency) => {
-  test.each([0, 1, 2])("up to %i fault(s): BOUNDED, nothing unsupported", async (faults) => {
-    const verdict = await check(jobs(concurrency, faults), platform(), {
+  test("up to 2 faults a run: BOUNDED, nothing unsupported", async () => {
+    const verdict = await check(jobs(concurrency, 2), platform(), {
       seed: "gate",
       budgetMs: 30_000,
       maxRuns: 150,
@@ -77,6 +80,16 @@ test("every schedule with one fault holds, exhaustively", async () => {
   });
   expect(verdict.kind, renderText(verdict)).toBe("BOUNDED");
   expect(verdict.reached.exhaustive?.complete).toBe(true);
+});
+
+test("with 2 invocations in flight and no fault, 150 seeded runs: BOUNDED, nothing unsupported", async () => {
+  // Every order without a fault at two in flight is too many to run each.
+  const verdict = await check(jobs(2, 0), platform(), {
+    seed: "gate",
+    budgetMs: 30_000,
+    maxRuns: 150,
+  });
+  expect(verdict.kind, renderText(verdict)).toBe("BOUNDED");
 });
 
 describe("where the object's calls on its Workflow binding are recorded", () => {

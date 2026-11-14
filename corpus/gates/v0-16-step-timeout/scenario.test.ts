@@ -55,11 +55,12 @@ async function replayed(napMs: number, concurrency: 1 | 2, schedule: Schedule) {
   return { log, lines: ops(log), turns: turns(log) };
 }
 
+// A sampled run places up to two faults (none in a tenth of the runs, else one or two), so these
+// runs cover schedules with one fault too; every schedule with one fault at one in flight is the
+// exhaustive check below.
 describe.each([1, 2] as const)("with %i invocation(s) in flight", (concurrency) => {
   test.each([
-    [0, 1],
     [0, 2],
-    [180_000, 1],
     [180_000, 2],
   ])(
     "a start napping %i ms, up to %i fault(s): BOUNDED, nothing unsupported",
@@ -74,6 +75,20 @@ describe.each([1, 2] as const)("with %i invocation(s) in flight", (concurrency) 
     },
   );
 });
+
+test.each([0, 180_000])(
+  "a start napping %i ms, one invocation in flight: every schedule with one fault holds, exhaustively",
+  async (napMs) => {
+    const verdict = await check(turn(napMs, 1, 1), platform(), {
+      seed: "gate",
+      budgetMs: 30_000,
+      exhaustive: true,
+      maxRuns: 1_000,
+    });
+    expect(verdict.kind, renderText(verdict)).toBe("BOUNDED");
+    expect(verdict.reached.exhaustive?.complete).toBe(true);
+  },
+);
 
 describe("an attempt that outlives its timeout from its start (the fault)", () => {
   test("runs on late while the step is retried: both starts reach the object, the retry's answer is the step's", async () => {

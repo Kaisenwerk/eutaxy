@@ -5,8 +5,9 @@
  * of its own is woken though the object awaiting it is in flight too; an
  * effect it issued and did not await, and the real work it starts after
  * its answer, are its own work once its call ended; and a crash inside it
- * ends the invocation, resetting both objects. Every fault placement ends
- * in a verdict, with nothing unsupported.
+ * ends the invocation, resetting both objects. Every order ends in a
+ * verdict with nothing unsupported, and so does every fault placement with
+ * one invocation in flight; with two, a seed places the faults.
  */
 
 import * as cloudflareTest from "cloudflare:test";
@@ -56,22 +57,35 @@ async function replayed(method: Timing, concurrency: 1 | 2, schedule: Schedule) 
 
 describe.each([1, 2] as const)("with %i invocation(s) in flight", (concurrency) => {
   describe.each(["slow", "eager", "hashed"] as const)("%s", (method) => {
-    test("both runs finish, each to a new total: BOUNDED, nothing unsupported", async () => {
+    test("both runs finish, each to a new total, in every order: BOUNDED, nothing unsupported", async () => {
       const verdict = await check(nested(method, concurrency), platform(), {
         seed: "gate",
         budgetMs: 30_000,
+        exhaustive: true,
+        maxRuns: 1_000,
       });
       expect(verdict.kind, renderText(verdict)).toBe("BOUNDED");
+      expect(verdict.reached.exhaustive?.complete).toBe(true);
     });
 
-    test("under every placement of a fault: BOUNDED, nothing unsupported", async () => {
-      const verdict = await check(nested(method, concurrency, 1), platform(), {
-        seed: "gate",
-        budgetMs: 30_000,
-        maxRuns: 150,
-      });
-      expect(verdict.kind, renderText(verdict)).toBe("BOUNDED");
-    });
+    // With one in flight every placement of a fault is some thirty schedules; with two, every order
+    // and placement is some eight hundred, 20 s to 40 s a timing, so a seed places the faults.
+    test(
+      concurrency === 1
+        ? "under every placement of a fault: BOUNDED, nothing unsupported"
+        : "under a fault placed by the seed, 150 runs: BOUNDED, nothing unsupported",
+      async () => {
+        const verdict = await check(
+          nested(method, concurrency, 1),
+          platform(),
+          concurrency === 1
+            ? { seed: "gate", budgetMs: 30_000, exhaustive: true, maxRuns: 1_000 }
+            : { seed: "gate", budgetMs: 30_000, maxRuns: 150 },
+        );
+        expect(verdict.kind, renderText(verdict)).toBe("BOUNDED");
+        if (concurrency === 1) expect(verdict.reached.exhaustive?.complete).toBe(true);
+      },
+    );
   });
 });
 

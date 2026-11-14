@@ -19,8 +19,9 @@ the Worker.
   output gate; the instance runs the scenario's class as an event of the
   run (`workflow:RUNS:run-a#1`), never in the local engine.
 - **The cells**: one and two invocations in flight, up to two faults,
-  each `BOUNDED` with nothing unsupported; every schedule with one fault,
-  exhaustively.
+  each `BOUNDED` with nothing unsupported; every schedule with one fault at
+  one in flight, exhaustively; and two in flight without a fault, 150
+  seeded runs.
 - **The replays**: where the object's calls are recorded; the same seed
   giving the same run, and two in flight interleaving them by the seed;
   the instance created and its answer lost (the resend's create is

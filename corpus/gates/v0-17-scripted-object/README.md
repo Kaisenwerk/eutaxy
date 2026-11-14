@@ -19,7 +19,8 @@ the test's isolate cannot run.
   the Worker. No machine is constructed: the class counts its
   constructions, and the count stays at zero.
 - **The cells**: one and two invocations in flight, up to two faults,
-  each `BOUNDED` with nothing unsupported; every schedule with one fault,
+  each `BOUNDED` with nothing unsupported; every schedule with one fault at
+  one in flight, and every order of two in flight without a fault,
   exhaustively.
 - **The replays**: where the calls are recorded, a scripted error
   reaching the pool as the error it is, and a fetch recorded with its

@@ -19,7 +19,8 @@ own `env` is the scenario's.
   durable. A crash inside a called object ends the invocation and resets
   every object the call went through.
 - **The cells**: one and two invocations in flight, up to two faults,
-  each `BOUNDED` with nothing unsupported; every schedule with one fault,
+  each `BOUNDED` with nothing unsupported; every schedule with one fault at
+  one in flight, and every order of two in flight without a fault,
   exhaustively.
 - **The replays**: where the calls are recorded; the same seed giving
   the same run, and two in flight interleaving them by the seed; the

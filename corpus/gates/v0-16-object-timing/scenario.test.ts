@@ -44,13 +44,16 @@ async function replayed(method: Timing, concurrency: 1 | 2, schedule: Schedule) 
 
 describe.each([1, 2] as const)("with %i call(s) in flight", (concurrency) => {
   test.each(["slow", "eager", "hashed"] as const)(
-    "%s: both runs finish, each to a new total: BOUNDED, nothing unsupported",
+    "%s: both runs finish, each to a new total, in every order: BOUNDED, nothing unsupported",
     async (method) => {
       const verdict = await check(timing(method, concurrency), platform(), {
         seed: "gate",
         budgetMs: 30_000,
+        exhaustive: true,
+        maxRuns: 1_000,
       });
       expect(verdict.kind, renderText(verdict)).toBe("BOUNDED");
+      expect(verdict.reached.exhaustive?.complete).toBe(true);
     },
   );
 });

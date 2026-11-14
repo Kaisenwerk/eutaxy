@@ -65,9 +65,12 @@ async function withFault(invocation: string, fault: FaultKind, target: string, o
   return replayed(1, { seed: 0, faults: [{ invocation, ordinal, fault, target, op }] });
 }
 
+// A sampled run places up to two faults: none in a tenth of the runs, else the first at an effect
+// drawn from those a fault-free run makes, so these runs cover schedules with none or one too. Every
+// schedule with one fault at one in flight, and every order without a fault at two, are the checks below.
 describe.each([1, 2] as const)("with %i invocation(s) in flight", (concurrency) => {
-  test.each([0, 1, 2])("up to %i fault(s): BOUNDED, nothing unsupported", async (faults) => {
-    const verdict = await check(carts(concurrency, faults), platform(), {
+  test("up to 2 faults a run: BOUNDED, nothing unsupported", async () => {
+    const verdict = await check(carts(concurrency, 2), platform(), {
       seed: "gate",
       budgetMs: 30_000,
       maxRuns: 150,
@@ -81,6 +84,17 @@ test("every schedule with one fault holds, exhaustively", async () => {
     seed: "gate",
     budgetMs: 100_000,
     exhaustive: true,
+  });
+  expect(verdict.kind, renderText(verdict)).toBe("BOUNDED");
+  expect(verdict.reached.exhaustive?.complete).toBe(true);
+});
+
+test("every order of two in flight without a fault holds, exhaustively", async () => {
+  const verdict = await check(carts(2, 0), platform(), {
+    seed: "gate",
+    budgetMs: 60_000,
+    exhaustive: true,
+    maxRuns: 1_000,
   });
   expect(verdict.kind, renderText(verdict)).toBe("BOUNDED");
   expect(verdict.reached.exhaustive?.complete).toBe(true);

@@ -20,7 +20,7 @@ brought the object to.
   before it asks the model. The run waits for that work: the model call after
   it is the object's own.
 
-Every scenario must be `BOUNDED` with nothing unsupported, at one call and
-at two calls in flight; the other tests replay the traces and the fault
-placements. The companion `v0-16-object-work-after-answer` holds the gate's
+Every scenario must be `BOUNDED` with nothing unsupported in every order,
+at one call and at two calls in flight; the other tests replay the traces
+and the fault placements. The companion `v0-16-object-work-after-answer` holds the gate's
 object whose work starts a tick after the answer.
