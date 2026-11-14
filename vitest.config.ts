@@ -90,6 +90,28 @@ const workerdProjects = corpora.flatMap((root) =>
     })),
 );
 
+/** One workerd project per package test of the real runtime (`packages/<name>/workerd/<test>`). */
+const packageWorkerdProjects = readdirSync("packages", { withFileTypes: true })
+  .filter((p) => p.isDirectory() && existsSync(join("packages", p.name, "workerd")))
+  .flatMap((p) =>
+    readdirSync(join("packages", p.name, "workerd"), { withFileTypes: true })
+      .filter((d) => d.isDirectory() && !["dist", "node_modules"].includes(d.name))
+      .map((d) => {
+        const dir = `packages/${p.name}/workerd/${d.name}`;
+        // A test without its Worker's config would get no project and never run, silently.
+        if (!existsSync(join(dir, "wrangler.jsonc")))
+          throw new Error(`${dir} has no wrangler.jsonc, so its tests would never run`);
+        return {
+          plugins: [cloudflareTest({ wrangler: { configPath: `./${dir}/wrangler.jsonc` } })],
+          test: {
+            name: `${p.name}:${d.name}`,
+            include: [`${dir}/*.test.ts`],
+            testTimeout: 120_000,
+          },
+        };
+      }),
+  );
+
 export default defineConfig({
   test: {
     projects: [
@@ -108,6 +130,7 @@ export default defineConfig({
         },
       },
       ...workerdProjects,
+      ...packageWorkerdProjects,
     ],
   },
 });

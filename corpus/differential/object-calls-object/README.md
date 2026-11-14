@@ -18,4 +18,4 @@ The cart copies the shelf's answer rather than returning it as it came.
 In the raw run the runtime's own result would keep the call into the
 shelf open until it is collected, and the shelf could not be evicted for
 the next run; under Eutaxy an object is handed a copy either way (the
-gate entry `v0-17-object-calls-object` hands one on).
+package's workerd test `object-calls-object` hands one on).

@@ -26,6 +26,11 @@ the differential runner iterate the records and know no kind by name.
 State invariants: `d1Rows`, `durableObjectRows`, `r2Rows`, `workflowRows`, `everyRow`, `implies`,
 `unique`, `references`, `queueAck`; `snapshotD1`.
 
+**Tests.** `src/*.test.ts` run in Node, against fakes where a binding
+needs the runtime. `workerd/<test>/` holds a Worker, its wrangler config and
+a scenario, run inside workerd against the real runtime, one Vitest project
+each (`vitest.config.ts`); they import this package by its own name.
+
 **Effect conventions** (what the proxies record, and what selectors match):
 
 | Target               | Op                                     | `call` payload                                                                                                                                                                                                                                                                                                 | `result` payload                                                                                                                                                                                   |
@@ -66,6 +71,7 @@ with `result.changes` of at least 1.
 **May import.** `@eutaxy/engine`, `@eutaxy/core`. Only these are declared in `package.json`, and
 pnpm links only declared workspace dependencies, so an import of any other
 package does not resolve. The project references in `tsconfig.json` mirror the
-list; a test keeps the two in sync with the design.
+list, and those of `workerd/tsconfig.json` are the list and this package; a
+test keeps them in sync with the design.
 
 **Phase.** v0.4 onward. See `docs/design.md` and `docs/roadmap.md`.

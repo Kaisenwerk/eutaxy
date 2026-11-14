@@ -9,7 +9,7 @@
  * module resolution is exactly what package code sees, and run `tsc -b` on it.
  */
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "vitest";
@@ -129,6 +129,15 @@ describe("declared dependencies match the design", () => {
         .map((r) => r.path.replace(/^\.\.\//, ""))
         .sort();
       expect(refs).toEqual([...deps].sort());
+      // A package's tests in workerd have a project of their own: it references the package and
+      // what the package may import, nothing else.
+      const workerd = join(dir, "workerd", "tsconfig.json");
+      if (existsSync(workerd)) {
+        const own = ((readJson(workerd)["references"] as { path: string }[] | undefined) ?? [])
+          .map((r) => (r.path === ".." ? pkg : r.path.replace(/^\.\.\/\.\.\//, "")))
+          .sort();
+        expect(own, `packages/${pkg}/workerd/tsconfig.json`).toEqual([pkg, ...deps].sort());
+      }
     });
   }
 });

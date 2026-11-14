@@ -5,7 +5,7 @@ import {
   http,
   references,
   unique,
-} from "eutaxy/cloudflare";
+} from "@eutaxy/cloudflare";
 
 const holds = (cart: string) =>
   // An item a cart keeps is a unit its shelf gave that cart.
@@ -27,7 +27,7 @@ const holds = (cart: string) =>
  */
 export const carts = (concurrency: 1 | 2, faults: number) =>
   defineScenario({
-    name: "v0-17-object-calls-object",
+    name: "object-calls-object",
     worker: { entry: "./worker.ts", config: "./wrangler.jsonc" },
     setup: [
       durableObject("CART", { c1: {}, c2: {} }),

@@ -12,7 +12,16 @@ can rely on it.
 ## As of now
 
 The phases through v0.17 are done; `docs/design.md` describes what they
-built, and each phase's gate keeps running in CI on every change.
+built. A phase's gate is its go/no-go and passed in CI when the phase
+closed; after the release what a gate entry holds is protection against
+regressions, which belongs with the code it protects. So an entry moves,
+one at a time, from `corpus/gates` into the package that owns its feature
+(`packages/<name>/workerd/<test>`, run inside workerd on every change):
+its replays as they are, and its exploration cut to one check per claim
+(exhaustive where the schedules are few, a short seeded sample where not)
+in place of the gate's matrix of cells. Calls between objects are there
+(`packages/cloudflare/workerd/object-calls-object`); the other entries run
+from the corpus.
 - **v0.4, the simulator.** A Worker's queue consumer run under explored
   schedules: faults at every effect, redelivery as Cloudflare Queues
   does, invariants over the effect log, shrinking, a regression test per
@@ -173,8 +182,8 @@ proof cache are v0.18's and wait for it unless a target needs one sooner):
   fault placement and compares the runs
   (`packages/engine/src/nested-calls*.test.ts`), and
   `corpus/gates/v0-17-nested-object-timing` holds the v0.16 timings
-  nested against the real runtime, beside the gate entry
-  (`v0-17-object-calls-object`), the planted bug
+  nested against the real runtime, beside the calls' own workerd tests
+  (`packages/cloudflare/workerd/object-calls-object`), the planted bug
   (`object-unit-twice-across-objects`) and the differential entry
   (`object-calls-object`). A scripted namespace (`scriptedObject()`)
   answers its objects' methods and `fetch()` from the scenario, as

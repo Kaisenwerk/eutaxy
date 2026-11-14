@@ -1,19 +1,36 @@
 /**
- * Runs inside workerd: the part of the v0.17 gate for calls between
- * objects. A call one object makes into another through its own env is
- * the scenario's: an effect of the invocation the calling object's code
- * runs as, hosting what the called object does, and open to faults: the
- * call never arriving, its answer lost, the calling object dying after
- * it, and a crash inside the called object, which ends the invocation
- * and resets every object the call went through.
+ * Calls between Durable Objects, in workerd: a call one object makes into
+ * another through its own env is the scenario's, an effect of the
+ * invocation the calling object's code runs as, hosting what the called
+ * object does, leaving the calling object once its earlier writes are
+ * durable, and open to a stub call's faults. A crash inside a called object
+ * ends the invocation and resets every object the call went through.
+ *
+ * The objects: a cart takes a unit of an item from the item's shelf and
+ * keeps the item once the shelf has answered. The shelf holds one unit,
+ * keys a take by the cart, and before it gives a unit asks the cart, which
+ * is waiting on it, how many it may hold. After its answer it tells an
+ * auditor what it gave, and the auditor calls back into the shelf to say it
+ * has it; a watchdog alarm tells the auditor again whatever stayed
+ * unaudited. A cart asked for its size asks itself through its own
+ * namespace. The invariants: an item a cart keeps is a unit the shelf gave
+ * that cart, what the shelf marked as audited the auditor has, and the one
+ * unit has one holder. Each request calls one object: two calls awaited
+ * together race in real time when one invocation runs at a time.
+ *
+ * The checks: every schedule with one fault at one invocation in flight is
+ * BOUNDED, exhaustively, and so are 50 seeded runs of two in flight with up
+ * to two faults a run (runs with two faults at one in flight are not
+ * explored here). The replays pin where each call is recorded and what each
+ * fault on one does.
  */
 
 import * as cloudflareTest from "cloudflare:test";
 import { env } from "cloudflare:workers";
+import { check, createCloudflarePlatform } from "@eutaxy/cloudflare";
 import type { EffectLog, FaultKind, Schedule } from "@eutaxy/core";
 import { lastSnapshot } from "@eutaxy/core";
-import { renderText, replay } from "eutaxy";
-import { check, createCloudflarePlatform } from "eutaxy/cloudflare";
+import { replay } from "@eutaxy/engine";
 import { describe, expect, test } from "vitest";
 import { carts } from "./scenario.sim.ts";
 import * as worker from "./worker.ts";
@@ -65,39 +82,27 @@ async function withFault(invocation: string, fault: FaultKind, target: string, o
   return replayed(1, { seed: 0, faults: [{ invocation, ordinal, fault, target, op }] });
 }
 
-// A sampled run places up to two faults: none in a tenth of the runs, else the first at an effect
-// drawn from those a fault-free run makes, so these runs cover schedules with none or one too. Every
-// schedule with one fault at one in flight, and every order without a fault at two, are the checks below.
-describe.each([1, 2] as const)("with %i invocation(s) in flight", (concurrency) => {
-  test("up to 2 faults a run: BOUNDED, nothing unsupported", async () => {
-    const verdict = await check(carts(concurrency, 2), platform(), {
-      seed: "gate",
-      budgetMs: 30_000,
-      maxRuns: 150,
-    });
-    expect(verdict.kind, renderText(verdict)).toBe("BOUNDED");
-  });
-});
+/** A verdict as the assertion's message: what a failed check reached and why. */
+const told = (verdict: unknown) => JSON.stringify(verdict, null, 1).slice(0, 4000);
 
-test("every schedule with one fault holds, exhaustively", async () => {
+test("every schedule with one fault, one invocation in flight, holds exhaustively", async () => {
   const verdict = await check(carts(1, 1), platform(), {
-    seed: "gate",
-    budgetMs: 100_000,
-    exhaustive: true,
-  });
-  expect(verdict.kind, renderText(verdict)).toBe("BOUNDED");
-  expect(verdict.reached.exhaustive?.complete).toBe(true);
-});
-
-test("every order of two in flight without a fault holds, exhaustively", async () => {
-  const verdict = await check(carts(2, 0), platform(), {
-    seed: "gate",
+    seed: "calls",
     budgetMs: 60_000,
     exhaustive: true,
     maxRuns: 1_000,
   });
-  expect(verdict.kind, renderText(verdict)).toBe("BOUNDED");
+  expect(verdict.kind, told(verdict)).toBe("BOUNDED");
   expect(verdict.reached.exhaustive?.complete).toBe(true);
+});
+
+test("two invocations in flight, up to two faults a run, 50 seeded runs: BOUNDED", async () => {
+  const verdict = await check(carts(2, 2), platform(), {
+    seed: "calls",
+    budgetMs: 30_000,
+    maxRuns: 50,
+  });
+  expect(verdict.kind, told(verdict)).toBe("BOUNDED");
 });
 
 describe("where the calls between objects are recorded", () => {

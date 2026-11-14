@@ -12,4 +12,5 @@ Each entry is a directory with `worker.ts`, `wrangler.jsonc`, `schema.sql`
 (runs `eutaxy check` from Node, for a config only the command's isolate
 can load, such as one naming a callee by its real name), and `README.md`
 (what the Worker exercises and which gate it is). `harness.test.ts` checks
-every entry is complete.
+every entry is complete. The entries move, one at a time, to the package
+that owns their feature (`docs/roadmap.md`, "As of now").

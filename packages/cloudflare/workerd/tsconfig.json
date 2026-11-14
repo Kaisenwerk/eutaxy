@@ -1,0 +1,21 @@
+{
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "outDir": "dist",
+    "types": ["@cloudflare/workers-types", "@cloudflare/vitest-plugin/types", "node"]
+  },
+  "include": ["**/*.ts"],
+  "exclude": ["dist"],
+  "references": [
+    {
+      "path": ".."
+    },
+    {
+      "path": "../../core"
+    },
+    {
+      "path": "../../engine"
+    }
+  ]
+}
