@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.17.2](https://github.com/Kaisenwerk/eutaxy/compare/v0.17.1...v0.17.2) (2026-11-14)
+
+
+### Features
+
+* **cli:** eutaxy check says why Vitest failed its run ([57ac468](https://github.com/Kaisenwerk/eutaxy/commit/57ac468096cddfe4deb5a858be56f3fef65510fa))
+* **cli:** install Lean through elan, and check the toolchain's files against a pinned digest ([7ce1feb](https://github.com/Kaisenwerk/eutaxy/commit/7ce1feb67adaef28df0e9949662767bc20103ce4))
+
+
+### Bug Fixes
+
+* **cli:** take only Z3's solver from its zip, and refuse tar links that leave on disk ([ad13ae8](https://github.com/Kaisenwerk/eutaxy/commit/ad13ae80289ddf84ba6e4330e3308fbacd607ebf))
+
 ## [0.17.1](https://github.com/Kaisenwerk/eutaxy/compare/v0.17.0...v0.17.1) (2026-11-13)
 
 
