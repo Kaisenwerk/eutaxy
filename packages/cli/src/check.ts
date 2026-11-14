@@ -39,6 +39,7 @@ import { checkTestSource, metaKey, vitestConfigSource } from "./generate.ts";
 import { globKey } from "./keys.ts";
 import { cloudflareRegressionTest } from "./regression.ts";
 import { findSpecModules, type SpecModule, specFiles, specKey } from "./specs.ts";
+import { unhandledErrorsFile, vitestFailure } from "./vitest-failure.ts";
 import type { CheckTransport } from "./workerd.ts";
 
 export interface CheckOptions {
@@ -344,7 +345,14 @@ export async function runCheck(o: CheckOptions): Promise<number> {
     const { code, output } = await runVitest(vitestBin(dir), configPath, dir);
     const transport = code === 0 ? readTransport(reportPath) : null;
     if (!transport) {
-      o.stderr(`eutaxy check could not read a verdict from Vitest (exit ${code}):\n${output}\n`);
+      const left = (path: string) => (existsSync(path) ? readFileSync(path, "utf8") : undefined);
+      const why = vitestFailure({
+        report: left(reportPath),
+        unhandled: left(unhandledErrorsFile(reportPath)),
+      });
+      o.stderr(
+        `eutaxy check could not read a verdict from Vitest (exit ${code}):\n${why}Vitest's output:\n${output}\n`,
+      );
       return exitCodes.error;
     }
     if (transport.specErrors && transport.specErrors.length > 0) {

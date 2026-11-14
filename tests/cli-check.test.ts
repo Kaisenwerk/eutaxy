@@ -668,6 +668,68 @@ export default defineScenario({
     }
   }, 240_000);
 
+  test("a run Vitest fails says why: a Worker that throws as it loads, an error nothing handled", async () => {
+    const scenario = `import { atMostOncePerKey, defineScenario, external, fetchCall, http } from "eutaxy/cloudflare";
+export default defineScenario({
+  name: "why",
+  worker: { entry: "./worker.ts", config: "./wrangler.jsonc" },
+  setup: [],
+  drive: http([{ id: "a", path: "/a", method: "POST" }], { retries: 0 }),
+  externals: [external("model", "model.example", { responses: [{ status: 200, body: {} }] })],
+  invariants: [atMostOncePerKey("once", fetchCall("model", "POST"), "args.body.id")],
+  bounds: { maxFaultsPerRun: 0, maxRedeliveries: 0, budgetMs: 2000 },
+});
+`;
+    const workers = {
+      // Only in workerd: Node reads the scenario, and with it the Worker, first.
+      load: `if (navigator.userAgent === "Cloudflare-Workers") throw new Error("eutaxy-test: the Worker throws as it loads");
+export default { async fetch(): Promise<Response> { return new Response("ok"); } };
+`,
+      unhandled: `export default {
+  async fetch(): Promise<Response> {
+    void Promise.reject(new Error("eutaxy-test: a rejection nothing handles"));
+    return new Response("ok");
+  },
+};
+`,
+    };
+    const run = async (kind: keyof typeof workers) => {
+      const dir = join(root, "examples", "payments-queue", `cli-test-why-${kind}-${process.pid}`);
+      mkdirSync(dir, { recursive: true });
+      try {
+        writeFileSync(
+          join(dir, "wrangler.jsonc"),
+          JSON.stringify({
+            name: `why-${kind}`,
+            main: "worker.ts",
+            compatibility_date: "2026-10-01",
+          }),
+        );
+        writeFileSync(join(dir, "worker.ts"), workers[kind]);
+        writeFileSync(join(dir, "scenario.sim.ts"), scenario);
+        const r = await eutaxyWithin(
+          ["check", join(dir, "scenario.sim.ts"), "--seed", "cli", "--no-regression"],
+          120_000,
+        );
+        expect(existsSync(join(dir, ".eutaxy")), "the run's files are gone").toBe(false);
+        return r;
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    };
+    const [load, unhandled] = await Promise.all([run("load"), run("unhandled")]);
+    expect(load.status, load.stderr).toBe(3);
+    expect(load.stderr).toContain("eutaxy check could not read a verdict from Vitest (exit 1)");
+    expect(load.stderr).toContain(
+      "the check's test file could not run: eutaxy-test: the Worker throws as it loads",
+    );
+    expect(unhandled.status, unhandled.stderr).toBe(3);
+    expect(unhandled.stderr).toContain("its test passed");
+    expect(unhandled.stderr).toMatch(
+      /Unhandled Rejection \(\d+ times\): Error: eutaxy-test: a rejection nothing handles\n {6}at Object\.fetch/,
+    );
+  }, 240_000);
+
   test("fails clearly without a scenario or a wrangler config", () => {
     expect(eutaxy(["check"]).status).toBe(3);
     const bad = eutaxy([

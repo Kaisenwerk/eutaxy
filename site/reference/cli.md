@@ -146,4 +146,9 @@ closes.
 
 An error includes an unknown engine name, a spec file that does not read,
 a listed module that is missing, and, for `report`, no spec files found or
-a flag only `check` takes.
+a flag only `check` takes. For `check` it includes a run Vitest failed,
+and the command says why: the check's test file could not run (the Worker
+threw as it loaded, say) or failed outside its test (in a hook or the
+pool's teardown), its test failed or left no verdict, or there were errors
+nothing handled, each told once with how often it came. Vitest fails a run on an
+error nothing handled even when the check's test passed.

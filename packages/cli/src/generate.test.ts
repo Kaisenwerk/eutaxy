@@ -40,8 +40,10 @@ describe("generated check test", () => {
     expect(src).toContain('include: ["/p/.eutaxy/x.check.test.ts"]');
     // Vite's cache goes with the generated files, not into the project's node_modules.
     expect(src).toContain('cacheDir: "/p/.eutaxy/.vite"');
-    expect(src).toContain('reporters: ["json"]');
+    expect(src).toContain('reporters: ["json", ');
     expect(src).toContain('outputFile: "/p/.eutaxy/r.json"');
+    // Errors nothing handled fail the run but are not in the JSON report: a reporter keeps them.
+    expect(src).toContain('"/p/.eutaxy/r.unhandled.json"');
   });
 
   test("holds no logic: the globs and one typed call, importing only checkInWorkerd from eutaxy", () => {
