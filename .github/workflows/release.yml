@@ -56,11 +56,14 @@ jobs:
       - name: Cache the pinned prover toolchains
         uses: actions/cache@v6
         with:
-          path: ~/.cache/eutaxy/toolchains
-          key: provers-${{ runner.os }}-${{ hashFiles('packages/prover-lean/src/lean.ts', 'packages/prover-smt/src/z3.ts') }}
+          path: |
+            ~/.cache/eutaxy/toolchains
+            ~/.cache/eutaxy/elan
+          key: provers-${{ runner.os }}-${{ hashFiles('packages/prover-lean/src/lean.ts', 'packages/prover-lean/src/elan.ts', 'packages/prover-smt/src/z3.ts') }}
       - name: Install the pinned provers with eutaxy prover install (the v0.11 gate)
-        # The command, from the sources: the Lean and Z3 releases the engines are pinned to (leanDownloads,
-        # z3Downloads), checksum-verified, into the cache the engines look in first. Nothing else installs them.
+        # The command, from the sources: the pinned Lean through elan (elan's pinned installer put in the cache,
+        # the toolchain's files checked against leanDigests) and the pinned Z3 (z3Downloads, checksum-verified),
+        # into the cache the engines look in first. Nothing else installs them.
         run: |
           node packages/eutaxy/bin/eutaxy.mjs prover install lean
           node packages/eutaxy/bin/eutaxy.mjs prover install smt

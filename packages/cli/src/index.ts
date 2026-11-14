@@ -20,13 +20,18 @@ export {
 } from "./draft.ts";
 export { checkTestSource, metaKey, vitestConfigSource } from "./generate.ts";
 export {
+  type Engine,
+  type Exec,
+  type ExecResult,
+  engines,
   InstallError,
   type InstallOptions,
   type InstallResult,
+  installLean,
   installToolchain,
+  type LeanInstallOptions,
   type RunInstallOptions,
   runInstall,
-  toolchains,
 } from "./install.ts";
 export { type Io, main } from "./main.ts";
 export {

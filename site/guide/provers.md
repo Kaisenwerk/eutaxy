@@ -37,33 +37,42 @@ npx eutaxy prover install lean
 npx eutaxy prover install smt
 ```
 
-It downloads the release file for your platform (Linux and macOS on x64
-and arm64, Windows on x64) from the upstream GitHub release, checks its
-SHA-256 against the one Eutaxy ships before unpacking anything, and
-unpacks it into Eutaxy's cache (`EUTAXY_CACHE_DIR`, else `~/.cache/eutaxy`
-on Linux, `~/Library/Caches/eutaxy` on macOS, `%LOCALAPPDATA%\eutaxy\Cache`
-on Windows), where `--prover` looks first. Lean's release is about 600 MB
-to download and 2.8 GB unpacked, the same as elan installs. Z3's is 54 to
-71 MB to download, and only the solver is taken from it: `z3` (on Windows
-`z3.exe` with the Visual C++ runtime DLLs the release ships beside it),
-19 to 42 MB on disk. Behind a proxy or offline,
-`--from <url or directory>` names a mirror or a directory holding the same
-file under its upstream name; the checksum check is the same. `--json`
-prints what was installed, from where, and the checksum. A toolchain
-already in the cache is reported and not downloaded again; to reinstall,
-delete its directory under `toolchains/` in the cache.
+Both work on Linux and macOS on x64 and arm64, and Windows on x64, and
+use Eutaxy's cache (`EUTAXY_CACHE_DIR`, else `~/.cache/eutaxy` on Linux,
+`~/Library/Caches/eutaxy` on macOS, `%LOCALAPPDATA%\eutaxy\Cache` on
+Windows). `--json` prints what was installed and what was checked. A
+toolchain already installed is reported and not downloaded again.
 
-A toolchain installed another way still serves, after the cache:
-- **Lean**: [elan](https://elan.lean-lang.org), Lean's toolchain manager,
-  with the pinned release (`elan toolchain install leanprover/lean4:v4.35.0`),
-  or a `lean` of exactly that version on the `PATH`.
-- **Z3**: version 5.3.2 on the `PATH` (or `EUTAXY_Z3`), from the
-  [Z3 releases](https://github.com/Z3Prover/z3/releases/tag/z3-5.3.2) or
-  `brew install z3`. The Linux releases need glibc 2.39 (x64) or 2.38
-  (arm64).
+**Lean** is installed through [elan](https://elan.lean-lang.org), Lean's
+toolchain manager. If elan is on the machine, the command uses it: the
+pinned toolchain (`leanprover/lean4:v4.35.0`) goes where your other Lean
+toolchains are. If not, it puts elan's pinned installer in Eutaxy's cache,
+checks its SHA-256, and installs elan inside the cache, leaving your
+`PATH` and shell profile alone. Either way it then checks the installed
+toolchain's files against the digest Eutaxy ships for your platform, and
+refuses a toolchain that does not match. The check comes after elan has
+installed the toolchain (elan runs the new `lean` once as it does), so it
+guarantees that the toolchain Eutaxy runs is the pinned one; the download
+itself is trusted as with any elan install, over HTTPS from Lean's own
+host. Lean is about 600 MB to download
+and 2.8 GB on disk, as with any elan install. A `lean` of exactly the
+pinned version on the `PATH` also serves.
 
-In CI, cache the toolchains directory and run the two commands before the
-check; an installed toolchain costs no download.
+**Z3** is downloaded from Z3's GitHub release (54 to 71 MB), checked
+against the SHA-256 Eutaxy ships, and only the solver is taken from it:
+`z3` (on Windows `z3.exe` with the Visual C++ runtime DLLs the release
+ships beside it), 19 to 42 MB on disk, under `toolchains/` in the cache.
+Behind a proxy or offline, `--from <url or directory>` names a mirror or a
+directory holding the same file under its upstream name; the checksum
+check is the same. To reinstall, delete its directory under `toolchains/`.
+A Z3 of version 5.3.2 on the `PATH` (or `EUTAXY_Z3`), from the
+[Z3 releases](https://github.com/Z3Prover/z3/releases/tag/z3-5.3.2) or
+`brew install z3`, also serves. The Linux releases need glibc 2.39 (x64)
+or 2.38 (arm64).
+
+In CI, cache the `toolchains` and `elan` directories in Eutaxy's cache and
+run the two commands before the check; an installed toolchain costs no
+download.
 
 ## Supplying proofs
 

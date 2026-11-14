@@ -3,7 +3,7 @@
  * install tests need no release file. Not part of the command.
  */
 
-import { crc32, deflateRawSync, zstdCompressSync } from "node:zlib";
+import { crc32, deflateRawSync, gzipSync } from "node:zlib";
 
 export interface TarEntry {
   readonly name: string;
@@ -49,8 +49,8 @@ export function tar(entries: readonly TarEntry[]): Buffer {
   return Buffer.concat([...entries.map(tarEntry), Buffer.alloc(1024)]);
 }
 
-export function tarZst(entries: readonly TarEntry[]): Buffer {
-  return zstdCompressSync(tar(entries));
+export function tarGz(entries: readonly TarEntry[]): Buffer {
+  return gzipSync(tar(entries));
 }
 
 export interface ZipEntry {

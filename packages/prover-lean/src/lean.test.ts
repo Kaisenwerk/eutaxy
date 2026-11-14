@@ -43,31 +43,64 @@ describe("jsonDiagnostics", () => {
   });
 });
 
-describe("leanDownloads", () => {
-  test("one upstream file per platform, each named after the pinned version, with its checksum", async () => {
-    const { leanDownloads, leanVersion } = await import("./lean.ts");
+describe("elanDownloads and leanDigests", () => {
+  test("one pinned elan installer per platform, each listing the one file taken from it, and a toolchain digest per platform", async () => {
+    const { elanDownloads, elanVersion, leanDigests } = await import("./elan.ts");
     const { platforms } = await import("@eutaxy/prover/toolchain");
-    expect(leanDownloads.name).toBe("lean");
-    expect(leanDownloads.version).toBe(leanVersion);
-    expect(Object.keys(leanDownloads.files).sort()).toEqual([...platforms].sort());
-    for (const f of Object.values(leanDownloads.files)) {
-      expect(f.file).toContain(`lean-${leanVersion}-`);
+    expect(elanDownloads.name).toBe("elan");
+    expect(elanDownloads.version).toBe(elanVersion);
+    expect(Object.keys(elanDownloads.files).sort()).toEqual([...platforms].sort());
+    for (const [platform, f] of Object.entries(elanDownloads.files)) {
       expect(f.url).toBe(
-        `https://github.com/leanprover/lean4/releases/download/v${leanVersion}/${f.file}`,
+        `https://github.com/leanprover/elan/releases/download/v${elanVersion}/${f.file}`,
       );
       expect(f.sha256).toMatch(/^[0-9a-f]{64}$/);
-      expect(f.bytes).toBeGreaterThan(100_000_000);
+      expect(f.bytes).toBeGreaterThan(1_000_000);
+      const installer = platform === "win32-x64" ? "elan-init.exe" : "elan-init";
+      expect(f.file.endsWith(platform === "win32-x64" ? ".zip" : ".tar.gz")).toBe(true);
+      expect(f.entries).toEqual({ [installer]: installer });
+    }
+    expect(Object.keys(leanDigests).sort()).toEqual([...platforms].sort());
+    for (const d of Object.values(leanDigests)) expect(d).toMatch(/^[0-9a-f]{64}$/);
+  });
+});
+
+describe("toolchainDigest", () => {
+  test("covers every file's content and path and every link's target, and nothing else", async () => {
+    const { createHash } = await import("node:crypto");
+    const { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { toolchainDigest } = await import("./elan.ts");
+    const dir = mkdtempSync(join(tmpdir(), "eutaxy-digest-"));
+    try {
+      mkdirSync(join(dir, "bin"));
+      mkdirSync(join(dir, "empty"));
+      writeFileSync(join(dir, "bin", "lean"), "lean");
+      writeFileSync(join(dir, "a.txt"), "a");
+      symlinkSync("bin/lean", join(dir, "link"));
+      const sha = (t: string) => createHash("sha256").update(t).digest("hex");
+      const expected = sha(`${sha("a")}  a.txt\n${sha("lean")}  bin/lean\n-> bin/lean  link\n`);
+      expect(toolchainDigest(dir)).toEqual({ digest: expected, files: 2, bytes: 5 });
+      writeFileSync(join(dir, "a.txt"), "b");
+      expect(toolchainDigest(dir).digest).not.toBe(expected);
+      writeFileSync(join(dir, "a.txt"), "a");
+      rmSync(join(dir, "link"));
+      symlinkSync("a.txt", join(dir, "link"));
+      expect(toolchainDigest(dir).digest).not.toBe(expected);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 });
 
 describe("findLean", () => {
-  test("the cached toolchain comes first when it answers as the pinned Lean, and is named when it does not", async () => {
+  test("Eutaxy's own elan in the cache comes first, run with its ELAN_HOME, and is passed over when it lacks the toolchain", async () => {
     const { mkdirSync, mkdtempSync, rmSync, writeFileSync } = await import("node:fs");
     const { tmpdir } = await import("node:os");
     const { join } = await import("node:path");
-    const { findLean, leanDownloads, leanVersion } = await import("./lean.ts");
-    const { markerFile, toolchainDir } = await import("@eutaxy/prover/toolchain");
+    const { findLean, leanToolchain, leanVersion } = await import("./lean.ts");
+    const { elanHome } = await import("./elan.ts");
     const cache = mkdtempSync(join(tmpdir(), "eutaxy-lean-cache-"));
     try {
       const h = {
@@ -76,41 +109,61 @@ describe("findLean", () => {
         env: { EUTAXY_CACHE_DIR: cache },
         home: cache,
       };
-      const dir = toolchainDir(cache, leanDownloads);
-      mkdirSync(join(dir, "bin"), { recursive: true });
-      const fake = (version: string) =>
+      const home = elanHome(h);
+      const elan = join(home, "bin", "elan");
+      mkdirSync(join(home, "bin"), { recursive: true });
+      // Lists the toolchain only when run with this ELAN_HOME, as a real elan would.
+      const fake = (listed: string) =>
         writeFileSync(
-          join(dir, "bin", "lean"),
-          `#!/bin/sh\necho "Lean (version ${version}, x86_64-unknown-linux-gnu, commit 0, Release)"\n`,
+          elan,
+          `#!/bin/sh\n[ "$ELAN_HOME" = "${home}" ] || exit 7\n[ "$1 $2" = "toolchain list" ] && echo "${listed}"\nexit 0\n`,
           { mode: 0o755 },
         );
-      fake(leanVersion);
-      writeFileSync(
-        join(dir, markerFile),
-        JSON.stringify({
-          name: "lean",
-          version: leanVersion,
-          platform: `${process.platform}-${process.arch}`,
-          file: "f",
-          sha256: "s",
-          source: "u",
-        }),
-      );
+      fake(`${leanToolchain} (default)`);
       expect(await findLean(h)).toEqual({
-        command: join(dir, "bin", "lean"),
-        args: [],
+        command: elan,
+        args: ["run", leanToolchain, "lean"],
         version: leanVersion,
+        env: { ELAN_HOME: home },
       });
-      fake("4.0.0");
+      fake("leanprover/lean4:v4.0.0");
       const found = await findLean(h);
-      // Whatever else this machine has, the cached toolchain is reported by its directory.
-      if ("unavailable" in found)
-        expect(found.unavailable).toContain(
-          `the toolchain in ${dir} did not answer as Lean ${leanVersion}`,
-        );
-      else expect(found.command).not.toBe(join(dir, "bin", "lean"));
+      // Whatever else this machine has, the cache's elan without the toolchain is not used.
+      if ("unavailable" in found) expect(found.unavailable).toContain(`elan (${elan}) has no`);
+      else expect(found.command).not.toBe(elan);
     } finally {
       rmSync(cache, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("findLean with an elan that lacks the toolchain", () => {
+  test("reports it unavailable and never runs a bare lean, which may be elan's proxy that downloads a toolchain", async () => {
+    const { existsSync, mkdtempSync, rmSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { findLean, leanToolchain } = await import("./lean.ts");
+    const dir = mkdtempSync(join(tmpdir(), "eutaxy-lean-proxy-"));
+    try {
+      const elan = join(dir, "elan");
+      writeFileSync(elan, "#!/bin/sh\necho leanprover/lean4:v4.0.0\n", { mode: 0o755 });
+      const marker = join(dir, "proxy-ran");
+      const proxy = join(dir, "lean");
+      writeFileSync(
+        proxy,
+        `#!/bin/sh\ntouch "${marker}"\necho "Lean (version 4.35.0, x, commit 0, Release)"\n`,
+        {
+          mode: 0o755,
+        },
+      );
+      const h = { platform: process.platform, arch: process.arch, env: {}, home: dir };
+      const found = await findLean(h, [{ command: elan }], [proxy]);
+      expect(found).toEqual({
+        unavailable: expect.stringContaining(`elan (${elan}) has no ${leanToolchain}`),
+      });
+      expect(existsSync(marker)).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 });

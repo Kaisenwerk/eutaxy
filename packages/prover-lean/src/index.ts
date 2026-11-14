@@ -11,6 +11,16 @@ export {
   type SubsetModule,
   type SubsetType,
 } from "@eutaxy/prover/reader";
+export {
+  type Elan,
+  elanCandidates,
+  elanDownloads,
+  elanHome,
+  elanVersion,
+  leanDigests,
+  type ToolchainDigest,
+  toolchainDigest,
+} from "./elan.ts";
 export { type Emitted, type EmittedTheorem, emitModule, ident, statement, value } from "./emit.ts";
 export { type GoalFileInput, goalFileFor, proofFileFor, renderGoals } from "./goals.ts";
 export {
@@ -20,7 +30,6 @@ export {
   installHint,
   type LeanDiagnostic,
   type LeanToolchain,
-  leanDownloads,
   leanToolchain,
   leanVersion,
 } from "./lean.ts";

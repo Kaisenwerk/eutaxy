@@ -1,7 +1,7 @@
 import { parseArgs } from "./args.ts";
 import { exitCodes, runCheck } from "./check.ts";
 import { runDraft } from "./draft.ts";
-import { runInstall, toolchains } from "./install.ts";
+import { type Engine, engines, runInstall } from "./install.ts";
 import { serveStdio } from "./mcp.ts";
 import { runReport } from "./report.ts";
 
@@ -42,11 +42,14 @@ through the TESTED rung, on inputs drawn from the parameter types with the seed
 (default: report), and the PROVEN rung with --prover. No scenario runs, so nothing
 is CHECKED.
 
-prover install puts the pinned Lean or Z3 release for this platform in Eutaxy's cache
+prover install smt puts the pinned Z3 for this platform in Eutaxy's cache
 (EUTAXY_CACHE_DIR, else the platform's user cache), where --prover finds it first:
 downloaded from the upstream GitHub release, or from a mirror or offline directory
-holding the same file (--from), and checked against the engine's SHA-256 before it is
-unpacked. Nothing is downloaded at any other time.
+holding the same file (--from), and checked against its SHA-256 before the solver is
+taken from it. prover install lean installs the pinned Lean through elan: the machine's
+elan, else elan put in Eutaxy's cache from its pinned installer (the PATH and the
+shell's profile untouched); the toolchain's files are checked against the pinned
+digest. Nothing is downloaded at any other time.
 
 report options: --goals writes each module's open Lean goals beside its spec file as
 <spec>.goals.lean (a proof file with every proof open) and lists them; needs --prover lean.
@@ -102,7 +105,7 @@ export async function main(argv: readonly string[], io: Io): Promise<number> {
     return serveStdio({ cwd: io.cwd, log: io.stderr });
   }
   if (command === "prover") {
-    const names = Object.keys(toolchains).join("|");
+    const names = engines.join("|");
     if (positionals[1] !== "install" || positionals.length !== 3) {
       io.stderr(`prover takes: install <${names}>\n\n${usage}`);
       return exitCodes.error;
@@ -112,15 +115,15 @@ export async function main(argv: readonly string[], io: Io): Promise<number> {
       io.stderr(`prover install does not take --${other}\n`);
       return exitCodes.error;
     }
-    const toolchain = toolchains[positionals[2] as string];
-    if (toolchain === undefined) {
+    const engine = positionals[2] as Engine;
+    if (!engines.includes(engine)) {
       io.stderr(
         `unknown engine ${positionals[2]}; the engines are ${names.replaceAll("|", ", ")}\n`,
       );
       return exitCodes.error;
     }
     return runInstall({
-      toolchain,
+      engine,
       from: str("from"),
       json: flags["json"] === true,
       stdout: io.stdout,

@@ -1,26 +1,18 @@
 import {
-  existsSync,
-  lstatSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
-  readlinkSync,
   rmSync,
   statSync,
-  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { gzipSync } from "node:zlib";
 import { afterAll, describe, expect, test } from "vitest";
-import { paxRecord, tarZst, zip } from "./archive.fixtures.ts";
-import {
-  ArchiveError,
-  extractTarZst,
-  extractZipEntries,
-  flattenSingleDirectory,
-} from "./archive.ts";
+import { paxRecord, tar, tarGz, zip } from "./archive.fixtures.ts";
+import { ArchiveError, extractTarGzEntries, extractZipEntries } from "./archive.ts";
 
 const root = mkdtempSync(join(tmpdir(), "eutaxy-archive-"));
 afterAll(() => rmSync(root, { recursive: true, force: true }));
@@ -39,144 +31,129 @@ const nested = () => {
   return { outer, dest };
 };
 
-describe("extractTarZst", () => {
-  test("files with their modes, directories, symlinks and hard links, read as the stream decompresses", async () => {
+describe("extractTarGzEntries", () => {
+  const write = (bytes: Buffer) => {
+    const file = join(root, `entries-${n++}.tar.gz`);
+    writeFileSync(file, bytes);
+    return file;
+  };
+  const release = () =>
+    tarGz([
+      { name: "elan-init", data: "#!/bin/sh\necho elan\n", mode: 0o755 },
+      { name: "README", data: "read me" },
+      { name: "dir/", type: "5", mode: 0o755 },
+      { name: "link", type: "2", linkName: "/etc/passwd" },
+      { name: "hard", type: "1", linkName: "elan-init" },
+      { name: "../evil", data: "escaped" },
+      { name: "a", type: "2", linkName: "." },
+      { name: "b", type: "2", linkName: "a/.." },
+      { name: "b/evil.txt", data: "escaped" },
+    ]);
+
+  test("only the named files are written, at the paths given, as plain files; links and escaping entries elsewhere in the tar are never touched", () => {
+    const { outer, dest } = nested();
+    expect(extractTarGzEntries(write(release()), { "elan-init": "bin/elan-init" }, dest)).toBe(1);
+    expect(readFileSync(join(dest, "bin/elan-init"), "utf8")).toBe("#!/bin/sh\necho elan\n");
+    expect(mode(join(dest, "bin/elan-init"))).toBe(0o644);
+    expect(readdirSync(dest, { recursive: true }).sort()).toEqual([
+      "bin",
+      join("bin", "elan-init"),
+    ]);
+    expect(readdirSync(outer)).toEqual(["dest"]);
+  });
+
+  test("names given by a pax header or a GNU long name are the ones matched", () => {
+    const long = `${"d/".repeat(60)}elan-init`;
+    const pax = write(
+      tarGz([
+        { name: "PaxHeader", type: "x", data: paxRecord("path", long) },
+        { name: "short-name", data: "from pax" },
+      ]),
+    );
     const dest = fresh();
-    const file = join(root, "a.tar.zst");
-    writeFileSync(
-      file,
-      tarZst([
-        { name: "tool-1.0/", type: "5", mode: 0o755 },
-        { name: "tool-1.0/bin/", type: "5", mode: 0o755 },
-        { name: "tool-1.0/bin/tool", data: "#!/bin/sh\necho hi\n", mode: 0o755 },
-        { name: "tool-1.0/lib/data.txt", data: "x".repeat(1500), mode: 0o644 },
-        { name: "tool-1.0/lib/empty", data: "", mode: 0o600 },
-        { name: "tool-1.0/bin/tool-link", type: "2", linkName: "tool" },
-        { name: "tool-1.0/lib/copy.txt", type: "1", linkName: "tool-1.0/lib/data.txt" },
+    expect(extractTarGzEntries(pax, { [long]: "elan-init" }, dest)).toBe(1);
+    expect(readFileSync(join(dest, "elan-init"), "utf8")).toBe("from pax");
+    const gnu = write(
+      tarGz([
+        { name: "././@LongLink", type: "L", data: `${long}\0` },
+        { name: "short-name", data: "from gnu" },
       ]),
     );
-    expect(await extractTarZst(file, dest)).toBe(7);
-    expect(readFileSync(join(dest, "tool-1.0/bin/tool"), "utf8")).toBe("#!/bin/sh\necho hi\n");
-    expect(mode(join(dest, "tool-1.0/bin/tool"))).toBe(0o755);
-    expect(readFileSync(join(dest, "tool-1.0/lib/data.txt"), "utf8")).toBe("x".repeat(1500));
-    expect(mode(join(dest, "tool-1.0/lib/data.txt"))).toBe(0o644);
-    expect(readFileSync(join(dest, "tool-1.0/lib/empty"), "utf8")).toBe("");
-    expect(lstatSync(join(dest, "tool-1.0/bin/tool-link")).isSymbolicLink()).toBe(true);
-    expect(readlinkSync(join(dest, "tool-1.0/bin/tool-link"))).toBe("tool");
-    expect(readFileSync(join(dest, "tool-1.0/lib/copy.txt"), "utf8")).toBe("x".repeat(1500));
+    const other = fresh();
+    expect(extractTarGzEntries(gnu, { [long]: "elan-init" }, other)).toBe(1);
+    expect(readFileSync(join(other, "elan-init"), "utf8")).toBe("from gnu");
+    expect(() => extractTarGzEntries(gnu, { "short-name": "x" }, fresh())).toThrow(
+      /holds no "short-name"/,
+    );
   });
 
-  test("pax and GNU long-name headers name the entry that follows; a ustar prefix is joined", async () => {
-    const dest = fresh();
-    const file = join(root, "b.tar.zst");
-    const long = `${"d".repeat(60)}/${"e".repeat(60)}/file.txt`;
-    writeFileSync(
-      file,
-      tarZst([
-        { name: "PaxHeader", type: "x", data: paxRecord("path", `pax/${long}`) },
-        { name: "short", data: "pax" },
-        { name: "././@LongLink", type: "L", data: `gnu/${long}\0` },
-        { name: "short", data: "gnu" },
-        { name: "plain.txt", data: "plain" },
+  test("a named entry that is missing, a link, a hard link, a directory or there twice is refused, and nothing is written", () => {
+    const file = write(release());
+    for (const [entries, message] of [
+      [{ "elan-init": "a", "elan-init.exe": "b" }, /the tar holds no "elan-init\.exe"/],
+      [{ link: "x" }, /"link" is a link, not a file/],
+      [{ hard: "x" }, /"hard" is a link, not a file/],
+      [{ "dir/": "x" }, /"dir\/" is a directory, not a file/],
+    ] as const) {
+      const dest = fresh();
+      expect(() => extractTarGzEntries(file, entries, dest)).toThrow(message);
+      expect(readdirSync(dest)).toEqual([]);
+    }
+    const twice = write(
+      tarGz([
+        { name: "elan-init", data: "one" },
+        { name: "elan-init", data: "two" },
       ]),
     );
-    expect(await extractTarZst(file, dest)).toBe(3);
-    expect(readFileSync(join(dest, "pax", long), "utf8")).toBe("pax");
-    expect(readFileSync(join(dest, "gnu", long), "utf8")).toBe("gnu");
-    expect(readFileSync(join(dest, "plain.txt"), "utf8")).toBe("plain");
+    expect(() => extractTarGzEntries(twice, { "elan-init": "x" }, fresh())).toThrow(
+      /"elan-init" is in the tar twice/,
+    );
   });
 
-  test("an entry or link that would leave the directory is refused; a truncated stream is an error", async () => {
-    const outside = join(root, "c.tar.zst");
-    writeFileSync(outside, tarZst([{ name: "../evil", data: "x" }]));
-    await expect(extractTarZst(outside, fresh())).rejects.toThrow(ArchiveError);
-    const absolute = join(root, "d.tar.zst");
-    writeFileSync(absolute, tarZst([{ name: "/etc/evil", data: "x" }]));
-    await expect(extractTarZst(absolute, fresh())).rejects.toThrow(
-      /outside the toolchain directory/,
-    );
-    const link = join(root, "e.tar.zst");
-    writeFileSync(link, tarZst([{ name: "bin/tool", type: "2", linkName: "../../../bin/sh" }]));
-    await expect(extractTarZst(link, fresh())).rejects.toThrow(/point outside/);
-    const truncated = join(root, "f.tar.zst");
-    const whole = tarZst([{ name: "big", data: "y".repeat(4000) }]);
-    const { zstdDecompressSync, zstdCompressSync } = await import("node:zlib");
-    writeFileSync(truncated, zstdCompressSync(zstdDecompressSync(whole).subarray(0, 1024)));
-    await expect(extractTarZst(truncated, fresh())).rejects.toThrow(/truncated/);
-  });
-
-  test("a link chain that leads out on disk is refused, and nothing is written through it", async () => {
-    // `b -> a/..` stays inside on paper, but on disk `a` is followed first, so `b` is the parent.
-    const through = join(root, "chain.tar.zst");
-    writeFileSync(
-      through,
-      tarZst([
-        { name: "a", type: "2", linkName: "." },
-        { name: "b", type: "2", linkName: "a/.." },
-        { name: "b/evil.txt", data: "escaped" },
-      ]),
-    );
-    const one = nested();
-    await expect(extractTarZst(through, one.dest)).rejects.toThrow(/goes through the link b/);
-    expect(existsSync(join(one.outer, "evil.txt"))).toBe(false);
-    // The same chain with no entry under it, and with its links in the other order.
-    for (const order of [
-      [
-        { name: "a", type: "2", linkName: "." },
-        { name: "b", type: "2", linkName: "a/.." },
-      ],
-      [
-        { name: "b", type: "2", linkName: "a/.." },
-        { name: "a", type: "2", linkName: "." },
-      ],
-    ]) {
-      const file = join(root, "chain-only.tar.zst");
-      writeFileSync(file, tarZst(order));
-      await expect(extractTarZst(file, nested().dest)).rejects.toThrow(
-        /link b points outside the toolchain directory/,
+  test("a pax size that is not a plain number is refused, not looped on", () => {
+    for (const size of ["-1536", "zz", "1e3"]) {
+      const file = write(
+        tarGz([
+          { name: "PaxHeader", type: "x", data: paxRecord("size", size) },
+          { name: "elan-init", data: "x" },
+        ]),
+      );
+      expect(() => extractTarGzEntries(file, { "elan-init": "x" }, fresh())).toThrow(
+        /a pax header gives the size/,
       );
     }
-    // A hard link whose source goes through a link is refused too.
-    const hard = join(root, "chain-hard.tar.zst");
-    writeFileSync(
-      hard,
-      tarZst([
-        { name: "a", type: "2", linkName: "." },
-        { name: "b", type: "2", linkName: "a/.." },
-        { name: "copy", type: "1", linkName: "b/secret" },
-      ]),
-    );
-    await expect(extractTarZst(hard, nested().dest)).rejects.toThrow(/goes through the link b/);
-    // And so is one whose source is itself such a link: copying it would read the parent's file.
-    const one2 = nested();
-    writeFileSync(join(one2.outer, "secret"), "SECRET");
-    const named = join(root, "chain-hard-link.tar.zst");
-    writeFileSync(
-      named,
-      tarZst([
-        { name: "a", type: "2", linkName: "." },
-        { name: "b", type: "2", linkName: "a/../secret" },
-        { name: "copy", type: "1", linkName: "b" },
-      ]),
-    );
-    await expect(extractTarZst(named, one2.dest)).rejects.toThrow(/names the link "b"/);
-    expect(existsSync(join(one2.dest, "copy"))).toBe(false);
   });
 
-  test("a file entry where a link already stands replaces the link instead of writing through it", async () => {
+  test("an old GNU header's time fields are not read as a name prefix", () => {
+    const plain = tar([{ name: "elan-init", data: "old gnu" }]);
+    const header = plain.subarray(0, 512);
+    header.write("ustar  \0", 257, 8, "latin1");
+    header.write("14715364562", 345, 11, "latin1");
+    header.write("        ", 148, 8, "latin1");
+    let sum = 0;
+    for (const b of header) sum += b;
+    header.write(`${sum.toString(8).padStart(6, "0")}\0 `, 148, 8, "latin1");
     const dest = fresh();
-    const file = join(root, "replace.tar.zst");
-    writeFileSync(
-      file,
-      tarZst([
-        { name: "f", type: "2", linkName: "target" },
-        { name: "f", data: "mine" },
-      ]),
+    expect(extractTarGzEntries(write(gzipSync(plain)), { "elan-init": "x" }, dest)).toBe(1);
+    expect(readFileSync(join(dest, "x"), "utf8")).toBe("old gnu");
+  });
+
+  test("a header that fails its checksum, a truncated tar and a file that is not gzip are refused as archive errors", () => {
+    const plain = tar([{ name: "elan-init", data: "x".repeat(2000) }]);
+    const corrupt = Buffer.from(plain);
+    corrupt[10] = 0x41;
+    expect(() =>
+      extractTarGzEntries(write(gzipSync(corrupt)), { "elan-init": "x" }, fresh()),
+    ).toThrow(/fails its checksum/);
+    expect(() =>
+      extractTarGzEntries(write(gzipSync(plain.subarray(0, 1024))), { "elan-init": "x" }, fresh()),
+    ).toThrow(/truncated/);
+    expect(() =>
+      extractTarGzEntries(write(Buffer.from("hello")), { "elan-init": "x" }, fresh()),
+    ).toThrow(ArchiveError);
+    expect(() => extractTarGzEntries(write(release()), { "elan-init": "../x" }, fresh())).toThrow(
+      /is not a path under the toolchain directory/,
     );
-    expect(await extractTarZst(file, dest)).toBe(2);
-    expect(lstatSync(join(dest, "f")).isFile()).toBe(true);
-    expect(readFileSync(join(dest, "f"), "utf8")).toBe("mine");
-    expect(existsSync(join(dest, "target"))).toBe(false);
   });
 });
 
@@ -316,39 +293,5 @@ describe("extractZipEntries", () => {
 
   test("an ArchiveError is what every refusal throws", () => {
     expect(() => extractZipEntries(write(release()), { nope: "x" }, fresh())).toThrow(ArchiveError);
-  });
-});
-
-describe("flattenSingleDirectory", () => {
-  test("one top-level directory is dropped; several entries stay as they are", () => {
-    const one = fresh();
-    mkdirSync(join(one, "tool-1.0", "bin"), { recursive: true });
-    writeFileSync(join(one, "tool-1.0", "bin", "tool"), "");
-    flattenSingleDirectory(one);
-    expect(readFileSync(join(one, "bin", "tool"), "utf8")).toBe("");
-    const several = fresh();
-    mkdirSync(join(several, "bin"));
-    writeFileSync(join(several, "README"), "");
-    flattenSingleDirectory(several);
-    expect(statSync(join(several, "bin")).isDirectory()).toBe(true);
-  });
-
-  test("a link that led inside before the move up and leads outside after it is refused", () => {
-    for (const [at, to] of [
-      ["up", ".."],
-      ["sub/up", "../../x"],
-    ] as const) {
-      const { dest } = nested();
-      mkdirSync(join(dest, "top", "sub"), { recursive: true });
-      symlinkSync(to, join(dest, "top", at));
-      expect(() => flattenSingleDirectory(dest)).toThrow(/points outside the toolchain directory/);
-    }
-    const fine = fresh();
-    mkdirSync(join(fine, "top", "lib"), { recursive: true });
-    writeFileSync(join(fine, "top", "lib", "libfoo.so.1.2"), "");
-    symlinkSync("libfoo.so.1.2", join(fine, "top", "lib", "libfoo.so.1"));
-    symlinkSync("libfoo.so.1", join(fine, "top", "lib", "libfoo.so"));
-    flattenSingleDirectory(fine);
-    expect(readlinkSync(join(fine, "lib", "libfoo.so"))).toBe("libfoo.so.1");
   });
 });

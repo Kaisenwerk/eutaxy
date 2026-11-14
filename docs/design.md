@@ -1686,10 +1686,11 @@ what the TypeScript computes on inputs drawn from its parameter types,
 checked by Lean's kernel (`example … := by decide`).
 
 Lean runs over a process boundary. The engine is pinned to one release
-(`leanToolchain`), found in Eutaxy's cache first, where `eutaxy prover
-install lean` puts it, then through `elan`, Lean's toolchain manager, only
-when it already has that release, or through a bare `lean` of exactly that
-version; nothing is downloaded during a check, and a missing toolchain is
+(`leanToolchain`), found through elan, Lean's toolchain manager, asked for
+it by name and used only when it already has that release: Eutaxy's own
+elan in its cache first, where `eutaxy prover install lean` puts one when
+the machine has none, then the user's; or through a bare `lean` of exactly
+that version; nothing is downloaded during a check, and a missing toolchain is
 `unavailable` with the command that installs it. One Lean run checks a
 whole module; a failed theorem does not hide another, since diagnostics are
 mapped to theorems by line, and an error outside every theorem means the
@@ -1786,21 +1787,20 @@ Engine rules:
   smt` put the pinned toolchain on the machine, and nothing else does:
   never `optionalDependencies`, never a download during a check or on
   `npm install`; an engine named but not installed yields `UNKNOWN`
-  (`unavailable`) with the command. Each engine's module holds, beside its
-  version pin, a table of the upstream release files for the platforms
-  Eutaxy runs on (Linux and macOS on x64 and arm64, Windows on x64): the
-  URL, the SHA-256 and the size of the file in the upstream GitHub release
-  (Lean's `tar.zst`, Z3's `zip`), for a zip also the files taken from it,
-  and a test holds the table to the pin.
-  The command downloads the file for the current platform into Eutaxy's
-  cache directory (`EUTAXY_CACHE_DIR`, else the platform's user cache:
+  (`unavailable`) with the command. Z3's module holds, beside its version
+  pin, a table of the upstream release files for the platforms Eutaxy runs
+  on (Linux and macOS on x64 and arm64, Windows on x64): the URL, the
+  SHA-256 and the size of the zip in Z3's GitHub release, and the files
+  taken from it; a test holds the table to the pin.
+  `eutaxy prover install smt` downloads the file for the current platform
+  into Eutaxy's cache directory (`EUTAXY_CACHE_DIR`, else the platform's user cache:
   `$XDG_CACHE_HOME/eutaxy` or `~/.cache/eutaxy` on Linux,
   `~/Library/Caches/eutaxy` on macOS, `%LOCALAPPDATA%\eutaxy\Cache` on
   Windows), checks the SHA-256 before unpacking anything (a mismatch deletes
   the download and installs nothing), unpacks into
   `toolchains/<name>/<version>` beside a marker file naming the file and
-  its checksum, and deletes the archive. Lean's archive is unpacked whole;
-  from Z3's zip only the solver is taken (`bin/z3`, and on Windows
+  its checksum, and deletes the archive. Only the solver is taken from the
+  zip (`bin/z3`, and on Windows
   `z3.exe` with the three Visual C++ runtime DLLs the release ships beside
   it, since a fresh Windows may lack them and Windows loads a DLL from the
   executable's directory first), 19 to 42 MB of a 150 MB release: the
@@ -1810,26 +1810,48 @@ Engine rules:
   same file names, for CI behind a proxy or an air-gapped machine, the
   checksum check unchanged; `--json` prints what was installed, from where
   and the checksum checked, and a toolchain already in the cache is reported
-  and not downloaded again. The engines look in the cache first, then where
-  they looked before (elan and the `PATH` for Lean; `EUTAXY_Z3`, the `PATH`
-  and the package managers' prefixes for Z3), so a toolchain installed by
-  hand still serves. Upstream files are taken as published because
-  rebuilding the toolchains would mean a build matrix and hosting to secure;
-  Lean's release file is 570 to 620 MB per platform and about 2.8 GB unpacked
-  (the compiler ships its C toolchain), the same download elan makes, and a trimmed bundle (the
-  binary and `Init`, all the emitted modules load) is built only if a
-  target's CI minutes call for it. Eutaxy reads the archives itself (tar
-  over Node's zstd, zip over its inflate), so the command needs nothing but
-  Node. In the tar, an entry that would write outside the toolchain
-  directory, or through a link the archive made, is refused, and once
-  unpacked every link is followed on disk, through the links it names, and
-  refused unless it leads inside, since a chain such as `a -> .` and
-  `b -> a/..` stays inside on paper and leaves on disk. From a zip only the
-  named files are taken, each to the path the table gives, so the archive
-  chooses no path and makes no link; a named entry that is missing, there
-  twice, a link or a directory, or that does not inflate to its declared
-  size and CRC-32, installs nothing. Projects list engines in
-  `eutaxy.config.ts`.
+  and not downloaded again. The engine looks in the cache first, then
+  through `EUTAXY_Z3`, the `PATH` and the package managers' prefixes, so a
+  Z3 installed by hand still serves.
+  `eutaxy prover install lean` installs Lean through elan, Lean's own
+  toolchain manager, because Lean's release is a whole toolchain (570 to
+  620 MB to download, about 2.8 GB unpacked: the compiler ships its C
+  toolchain) and elan is how Lean users install it. The machine's elan is
+  used if it has one (the `PATH`, then `ELAN_HOME` or `~/.elan`); else
+  elan's installer, pinned like Z3 (version, per-platform SHA-256, one file
+  taken from a `tar.gz` or, on Windows, a zip), is put in the cache and run
+  with `ELAN_HOME` inside the cache and `--no-modify-path`, so neither the
+  `PATH` nor the shell's profile changes. Then `elan toolchain install`
+  installs the pinned toolchain, and the command checks it: elan checks no
+  pinned checksum, so a digest of every file and link under the toolchain's
+  directory (`toolchainDigest`) must equal the one pinned per platform
+  (`leanDigests`), computed from Lean's checksum-verified GitHub release
+  unpacked; on macOS arm64 an elan-installed toolchain was checked to give
+  the same digest. A toolchain that does not match is refused, and
+  uninstalled when the command installed it. The check is made after elan
+  has installed the toolchain, and elan runs the downloaded `lean
+  --version` as it installs it, so the check guarantees that the toolchain
+  the engine runs is the pinned one, not that nothing unchecked ever ran:
+  the download itself is trusted as every elan install trusts it, over
+  HTTPS from Lean's own host. This is the price of installing Lean the way
+  Lean users do instead of unpacking its release ourselves, which would
+  check the release's SHA-256 before anything runs but bring back a
+  general unpacker for a 2.8 GB tree of files and links. An elan built for
+  the other architecture of the system (x64 under Rosetta, say) installs
+  that architecture's pinned release, which runs there too and is
+  accepted. `--from` applies to Z3 only:
+  elan downloads Lean from its own host, and an air-gapped machine
+  registers a release it unpacked with `elan toolchain link`.
+  Upstream files are taken as published because rebuilding the toolchains
+  would mean a build matrix and hosting to secure; a trimmed Lean bundle
+  (the binary and `Init`, all the emitted modules load) is built only if a
+  target's CI minutes call for it. Eutaxy reads the archives itself (zip
+  over Node's inflate, `tar.gz` over its gunzip), so the command needs
+  nothing but Node and, for Lean, elan. Only the named files are taken from
+  an archive, each to the path the table gives, so the archive chooses no
+  path and makes no link; a named entry that is missing, there twice, a
+  link or a directory, or that does not match its declared size and
+  checksum, installs nothing. Projects list engines in `eutaxy.config.ts`.
 - Split into separate packages later only for a reason, most likely a
   prover engine. Released in lockstep with exact version pins.
 

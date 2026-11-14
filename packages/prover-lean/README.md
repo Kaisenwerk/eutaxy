@@ -17,15 +17,19 @@ lives so that every first-party engine reads the same tree; `emitModule`, `state
 `ident` (the Lean text: `f_` functions, `R_` records, `v_` variables, `t_`
 theorems, so nothing collides with Lean's prelude or with another kind of
 name); `renderGoals`, `goalFileFor` and `proofFileFor` (the goal file: a module's open goals, each `forall` property the tactic script gave up on with the statement it emitted, which `proveModule` lists as `goals`, rendered in the form of the proof file with every proof open and two header lines naming the SHA-256 of the module and of the spec file; `sourceHashMarker`, `specHashMarker`; a proof file carrying them is stale once either changed, refused with the reason, so its properties are `gave_up`, never `PROVEN`); `readSupplied`, `refusedIn`, `axiomsOf`, `standardAxioms`; `findLean`, `checkLean`,
-`diagnostics`, `leanToolchain`, `leanVersion`, `leanDownloads` (the
-upstream release file per platform `eutaxy prover install lean` downloads,
-with its checksum), `installHint`.
+`diagnostics`, `leanToolchain`, `leanVersion`, `installHint`; and from
+`src/elan.ts`, what `eutaxy prover install lean` and the engine share:
+`elanDownloads` (elan's pinned installer per platform, with its checksum
+and the one file taken from it), `elanVersion`, `elanHome` (Eutaxy's own
+elan, `<cache>/elan`), `elanCandidates` (Eutaxy's elan, then the `PATH`,
+then `ELAN_HOME` or `~/.elan`), `leanDigests` and `toolchainDigest` (the
+digest of every file and link under a toolchain's directory, pinned per
+platform, which the command checks after elan installed the toolchain).
 
-**Toolchain.** Pinned to `leanToolchain` in `src/lean.ts`, found in
-Eutaxy's cache first (where `eutaxy prover install lean` put the release
-named in `leanDownloads`, when it answers with the pinned version), then
-through `elan` (only when it already has that release: nothing is
-downloaded during a check), then as a bare `lean` of exactly that version.
+**Toolchain.** Pinned to `leanToolchain` in `src/lean.ts`, found through
+elan, asked for it by name: the first of `elanCandidates` that already has
+that release (nothing is downloaded during a check; Eutaxy's own elan runs
+with its `ELAN_HOME`), then as a bare `lean` of exactly that version.
 The contract corpus in `corpus/prover-contracts` is what the subset means;
 CI installs the pinned toolchain with the command and runs it with
 `EUTAXY_REQUIRE_LEAN=1`.
