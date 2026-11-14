@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { markerFile, platforms, toolchainDir } from "@eutaxy/prover/toolchain";
+import { executableName, markerFile, platforms, toolchainDir } from "@eutaxy/prover/toolchain";
 import { afterAll, describe, expect, test } from "vitest";
 import { candidates, findZ3, z3Downloads, z3Version } from "./z3.ts";
 
@@ -26,6 +26,18 @@ describe("z3Downloads", () => {
       );
       expect(f.sha256).toMatch(/^[0-9a-f]{64}$/);
       expect(f.bytes).toBeGreaterThan(10_000_000);
+    }
+  });
+
+  test("each zip lists the files taken from it: the executable everywhere, and on Windows the Visual C++ runtime beside it", () => {
+    for (const [platform, f] of Object.entries(z3Downloads.files)) {
+      const top = f.file.replace(/\.zip$/, "");
+      const exe = executableName(z3Downloads, { ...h, platform: platform.split("-")[0] as string });
+      const expected =
+        platform === "win32-x64"
+          ? [exe, "bin/msvcp140.dll", "bin/vcruntime140.dll", "bin/vcruntime140_1.dll"]
+          : [exe];
+      expect(f.entries).toEqual(Object.fromEntries(expected.map((e) => [`${top}/${e}`, e])));
     }
   });
 });

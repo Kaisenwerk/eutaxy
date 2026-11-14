@@ -31,7 +31,9 @@ emit without running Z3); `prelude`, `propertyScript`, `term`, `value`,
 `mk_` constructors, `fld_` selectors, `v_` variables); `parseSExprs`,
 `readAnswer`, `decode` (Z3's answers and model values back to JavaScript
 values); `findZ3`, `solve`, `z3Version`, `z3Downloads` (the upstream release file
-per platform `eutaxy prover install smt` downloads, with its checksum),
+per platform `eutaxy prover install smt` downloads, with its checksum and
+the files taken from it: the executable, and on Windows the Visual C++
+runtime DLLs beside it),
 `defaultResourceLimit`, `installHint`.
 
 **Solver.** Pinned to `z3Version` in `src/z3.ts`, found in Eutaxy's cache

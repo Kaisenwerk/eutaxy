@@ -39,19 +39,32 @@ const zipBytes = zip([
   { name: "tool-1.0/bin/tool", data: "#!/bin/sh\necho tool 1.0\n", mode: 0o100755, deflate: true },
   { name: "tool-1.0/README", data: "read me" },
 ]);
-const release = (file: string, bytes: Buffer, sha = sha256(bytes)): Toolchain => ({
-  name: "tool",
-  version: "1.0",
-  executable: "bin/tool",
-  files: {
-    [platform]: {
-      file,
-      url: `https://example.invalid/releases/v1.0/${file}`,
-      sha256: sha,
-      bytes: bytes.length,
+/** What the table takes from a zip release unless a test says otherwise. */
+const toolEntries = { "tool-1.0/bin/tool": "bin/tool" };
+/** `entries`: what the table takes from the release; `null` for none listed. */
+const release = (
+  file: string,
+  bytes: Buffer,
+  sha = sha256(bytes),
+  entries?: Readonly<Record<string, string>> | null,
+): Toolchain => {
+  const listed =
+    entries === null ? undefined : (entries ?? (file.endsWith(".zip") ? toolEntries : undefined));
+  return {
+    name: "tool",
+    version: "1.0",
+    executable: "bin/tool",
+    files: {
+      [platform]: {
+        file,
+        url: `https://example.invalid/releases/v1.0/${file}`,
+        sha256: sha,
+        bytes: bytes.length,
+        ...(listed === undefined ? {} : { entries: listed }),
+      },
     },
-  },
-});
+  };
+};
 const offline = (file: string, bytes: Buffer): string => {
   const dir = join(root, `offline-${n++}`);
   mkdirSync(dir);
@@ -123,8 +136,13 @@ describe("installToolchain", () => {
     });
     expect(fetched.splice(0)).toEqual(["https://example.invalid/releases/v1.0/tool-1.0.zip"]);
     expect(result.source).toBe("https://example.invalid/releases/v1.0/tool-1.0.zip");
-    expect(readFileSync(join(result.dir, "README"), "utf8")).toBe("read me");
     expect(statSync(result.executable).mode & 0o777).toBe(0o755);
+    // Only what the table names is taken from a zip: the README stays in the archive.
+    expect(readdirSync(result.dir, { recursive: true }).sort()).toEqual([
+      "bin",
+      join("bin", "tool"),
+      markerFile,
+    ]);
     expect(progress[0]).toMatch(/^downloading tool-1\.0\.zip \(0 MB\) from https:/);
     const mirrored = fresh();
     await installToolchain({
@@ -169,8 +187,31 @@ describe("installToolchain", () => {
         host: b.h,
         fetch: serving(noExecutable),
       }),
-    ).rejects.toThrow("tool-1.0.zip holds no bin/tool; nothing was installed");
+    ).rejects.toThrow(
+      'could not unpack tool-1.0.zip: the zip holds no "tool-1.0/bin/tool"; nothing was installed',
+    );
     expect(existsSync(join(b.cache, "toolchains", "tool", "1.0"))).toBe(false);
+    const listsOther = fresh();
+    await expect(
+      installToolchain({
+        toolchain: release("tool-1.0.zip", zipBytes, sha256(zipBytes), {
+          "tool-1.0/README": "README",
+        }),
+        host: listsOther.h,
+        fetch: serving(zipBytes),
+      }),
+    ).rejects.toThrow("tool-1.0.zip holds no bin/tool; nothing was installed");
+    expect(existsSync(join(listsOther.cache, "toolchains", "tool", "1.0"))).toBe(false);
+    const unlisted = fresh();
+    await expect(
+      installToolchain({
+        toolchain: release("tool-1.0.zip", zipBytes, sha256(zipBytes), null),
+        host: unlisted.h,
+        fetch: serving(zipBytes),
+      }),
+    ).rejects.toThrow("the table names no files to take from tool-1.0.zip; nothing was installed");
+    expect(existsSync(join(unlisted.cache, "toolchains", "tool", "1.0"))).toBe(false);
+    expect(readdirSync(join(unlisted.cache, "downloads"))).toEqual([]);
     const c = fresh();
     const escaping = tarZst([
       { name: "../evil", data: "x" },
@@ -187,7 +228,7 @@ describe("installToolchain", () => {
     );
     expect(existsSync(join(c.cache, "toolchains", "tool", "1.0"))).toBe(false);
     expect(existsSync(join(root, "evil"))).toBe(false);
-    expect(fetched.splice(0)).toHaveLength(3);
+    expect(fetched.splice(0)).toHaveLength(5);
     const d = fresh();
     await expect(
       installToolchain({

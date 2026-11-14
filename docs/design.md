@@ -1790,7 +1790,8 @@ Engine rules:
   version pin, a table of the upstream release files for the platforms
   Eutaxy runs on (Linux and macOS on x64 and arm64, Windows on x64): the
   URL, the SHA-256 and the size of the file in the upstream GitHub release
-  (Lean's `tar.zst`, Z3's `zip`), and a test holds the table to the pin.
+  (Lean's `tar.zst`, Z3's `zip`), for a zip also the files taken from it,
+  and a test holds the table to the pin.
   The command downloads the file for the current platform into Eutaxy's
   cache directory (`EUTAXY_CACHE_DIR`, else the platform's user cache:
   `$XDG_CACHE_HOME/eutaxy` or `~/.cache/eutaxy` on Linux,
@@ -1798,7 +1799,13 @@ Engine rules:
   Windows), checks the SHA-256 before unpacking anything (a mismatch deletes
   the download and installs nothing), unpacks into
   `toolchains/<name>/<version>` beside a marker file naming the file and
-  its checksum, and deletes the archive. `--from <url or directory>`
+  its checksum, and deletes the archive. Lean's archive is unpacked whole;
+  from Z3's zip only the solver is taken (`bin/z3`, and on Windows
+  `z3.exe` with the three Visual C++ runtime DLLs the release ships beside
+  it, since a fresh Windows may lack them and Windows loads a DLL from the
+  executable's directory first), 19 to 42 MB of a 150 MB release: the
+  executable links only system libraries, which was checked on every
+  platform but Intel macOS by running it on the corpus's SMT queries. `--from <url or directory>`
   replaces the download host with a mirror or an offline copy holding the
   same file names, for CI behind a proxy or an air-gapped machine, the
   checksum check unchanged; `--json` prints what was installed, from where
@@ -1813,8 +1820,16 @@ Engine rules:
   binary and `Init`, all the emitted modules load) is built only if a
   target's CI minutes call for it. Eutaxy reads the archives itself (tar
   over Node's zstd, zip over its inflate), so the command needs nothing but
-  Node; an entry that would write outside the toolchain directory is
-  refused. Projects list engines in `eutaxy.config.ts`.
+  Node. In the tar, an entry that would write outside the toolchain
+  directory, or through a link the archive made, is refused, and once
+  unpacked every link is followed on disk, through the links it names, and
+  refused unless it leads inside, since a chain such as `a -> .` and
+  `b -> a/..` stays inside on paper and leaves on disk. From a zip only the
+  named files are taken, each to the path the table gives, so the archive
+  chooses no path and makes no link; a named entry that is missing, there
+  twice, a link or a directory, or that does not inflate to its declared
+  size and CRC-32, installs nothing. Projects list engines in
+  `eutaxy.config.ts`.
 - Split into separate packages later only for a reason, most likely a
   prover engine. Released in lockstep with exact version pins.
 

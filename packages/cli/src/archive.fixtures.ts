@@ -59,6 +59,12 @@ export interface ZipEntry {
   /** Unix mode, stored in the external attributes as a Unix-made zip stores it. */
   readonly mode?: number;
   readonly deflate?: boolean;
+  /** The uncompressed size the headers declare, when it should not be the true one. */
+  readonly declaredSize?: number;
+  /** The CRC-32 the headers declare, when it should not be the true one. */
+  readonly crc?: number;
+  /** An extra field for the central directory entry. */
+  readonly extra?: Buffer;
 }
 
 export function zip(entries: readonly ZipEntry[]): Buffer {
@@ -70,14 +76,15 @@ export function zip(entries: readonly ZipEntry[]): Buffer {
     const plain = Buffer.isBuffer(e.data) ? e.data : Buffer.from(e.data ?? "");
     const method = e.deflate ? 8 : 0;
     const data = e.deflate ? deflateRawSync(plain) : plain;
-    const crc = crc32(plain);
+    const crc = e.crc ?? crc32(plain);
+    const declared = e.declaredSize ?? plain.length;
     const local = Buffer.alloc(30);
     local.writeUInt32LE(0x04034b50, 0);
     local.writeUInt16LE(20, 4);
     local.writeUInt16LE(method, 8);
     local.writeUInt32LE(crc, 14);
     local.writeUInt32LE(data.length, 18);
-    local.writeUInt32LE(plain.length, 22);
+    local.writeUInt32LE(declared, 22);
     local.writeUInt16LE(name.length, 26);
     parts.push(local, name, data);
     const c = Buffer.alloc(46);
@@ -87,11 +94,12 @@ export function zip(entries: readonly ZipEntry[]): Buffer {
     c.writeUInt16LE(method, 10);
     c.writeUInt32LE(crc, 16);
     c.writeUInt32LE(data.length, 20);
-    c.writeUInt32LE(plain.length, 24);
+    c.writeUInt32LE(declared, 24);
     c.writeUInt16LE(name.length, 28);
+    c.writeUInt16LE(e.extra?.length ?? 0, 30);
     c.writeUInt32LE(((e.mode ?? (e.name.endsWith("/") ? 0o040755 : 0o100644)) << 16) >>> 0, 38);
     c.writeUInt32LE(offset, 42);
-    central.push(c, name);
+    central.push(c, name, e.extra ?? Buffer.alloc(0));
     offset += local.length + name.length + data.length;
   }
   const directory = Buffer.concat(central);

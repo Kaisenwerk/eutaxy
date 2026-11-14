@@ -3,7 +3,9 @@
  * Eutaxy's cache, where the engines look first. The file for this platform
  * is downloaded (or copied from a mirror or an offline directory given with
  * `--from`), its SHA-256 checked against the engine's table before anything
- * is unpacked, unpacked beside a marker written last, and deleted. A
+ * is unpacked, unpacked beside a marker written last (a `tar.zst` whole, a
+ * zip only for the files the table names, at the paths it gives), and
+ * deleted. A
  * mismatch or a failed download installs nothing. Nothing is run: the
  * engines check the version when they look the toolchain up.
  */
@@ -40,7 +42,7 @@ import {
 import { leanDownloads } from "@eutaxy/prover-lean";
 import { z3Downloads } from "@eutaxy/prover-smt";
 import { reportSchemaVersion } from "@eutaxy/report";
-import { extractTarZst, extractZip, flattenSingleDirectory } from "./archive.ts";
+import { extractTarZst, extractZipEntries, flattenSingleDirectory } from "./archive.ts";
 import { exitCodes } from "./check.ts";
 
 /** The toolchains the command installs, by the engine name it takes. */
@@ -181,10 +183,16 @@ export async function installToolchain(options: InstallOptions): Promise<Install
     mkdirSync(partial, { recursive: true });
     try {
       options.progress?.(`unpacking ${release.file}`);
-      if (release.file.endsWith(".zip")) extractZip(archive, partial);
-      else if (release.file.endsWith(".tar.zst")) await extractTarZst(archive, partial);
-      else throw new InstallError(`${release.file} is neither a .zip nor a .tar.zst`);
-      flattenSingleDirectory(partial);
+      if (release.file.endsWith(".zip")) {
+        if (release.entries === undefined)
+          throw new InstallError(
+            `the table names no files to take from ${release.file}; nothing was installed`,
+          );
+        extractZipEntries(archive, release.entries, partial);
+      } else if (release.file.endsWith(".tar.zst")) {
+        await extractTarZst(archive, partial);
+        flattenSingleDirectory(partial);
+      } else throw new InstallError(`${release.file} is neither a .zip nor a .tar.zst`);
       const executable = executableName(toolchain, h);
       if (!existsSync(join(partial, executable)))
         throw new InstallError(`${release.file} holds no ${executable}; nothing was installed`);

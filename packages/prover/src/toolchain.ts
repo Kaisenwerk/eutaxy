@@ -31,6 +31,12 @@ export interface ReleaseFile {
   /** Lower-case hex SHA-256 of the file. */
   readonly sha256: string;
   readonly bytes: number;
+  /**
+   * For a zip, the files taken from it, each path in the archive mapped to
+   * its path under the toolchain directory; nothing else in the zip is
+   * unpacked. A zip must list them. A `tar.zst` is unpacked whole.
+   */
+  readonly entries?: Readonly<Record<string, string>>;
 }
 
 /** A prover toolchain as `eutaxy prover install` knows it. */

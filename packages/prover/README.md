@@ -94,7 +94,7 @@ turn stays bounded.
 the file system, so workerd never loads it): what `eutaxy prover install`
 and the engines share. `Toolchain` (an engine's name, version, executable
 and `ReleaseFile` per `Platform`: the upstream file's name, URL, SHA-256
-and size), `platforms` and `platformOf`, `cacheDir` (`EUTAXY_CACHE_DIR`,
+and size, and for a zip the files taken from it, `entries`), `platforms` and `platformOf`, `cacheDir` (`EUTAXY_CACHE_DIR`,
 else the platform's user cache), `toolchainDir`
 (`<cache>/toolchains/<name>/<version>`), `markerFile` and
 `InstallMarker` (written last by the install, so its presence means the

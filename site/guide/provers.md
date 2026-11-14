@@ -43,8 +43,10 @@ SHA-256 against the one Eutaxy ships before unpacking anything, and
 unpacks it into Eutaxy's cache (`EUTAXY_CACHE_DIR`, else `~/.cache/eutaxy`
 on Linux, `~/Library/Caches/eutaxy` on macOS, `%LOCALAPPDATA%\eutaxy\Cache`
 on Windows), where `--prover` looks first. Lean's release is about 600 MB
-to download and 2.8 GB unpacked, the same as elan installs; Z3's about
-60 MB and 150 MB. Behind a proxy or offline,
+to download and 2.8 GB unpacked, the same as elan installs. Z3's is 54 to
+71 MB to download, and only the solver is taken from it: `z3` (on Windows
+`z3.exe` with the Visual C++ runtime DLLs the release ships beside it),
+19 to 42 MB on disk. Behind a proxy or offline,
 `--from <url or directory>` names a mirror or a directory holding the same
 file under its upstream name; the checksum check is the same. `--json`
 prints what was installed, from where, and the checksum. A toolchain

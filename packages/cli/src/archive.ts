@@ -1,11 +1,21 @@
 /**
  * Reading the two archive formats the prover releases come in, with Node's
- * standard library alone: a tar stream compressed with zstd (Lean) and a zip
- * (Z3). Entries are written under one destination directory; an entry whose
- * path would leave it, or a link pointing out of it, is refused, since the
- * archive is downloaded. The tar is read as it decompresses, so a release
- * of hundreds of megabytes never sits in memory; a zip is read from its
- * central directory, entry by entry.
+ * standard library alone: a tar stream compressed with zstd (Lean), unpacked
+ * whole, and a zip (Z3), from which only named files are taken.
+ *
+ * The tar is unpacked under one destination directory; an entry whose path
+ * would leave it, or a link pointing out of it, is refused, since the archive
+ * is downloaded. Paths are checked as written and again on disk: an entry
+ * whose path goes through a link the archive made is refused, so nothing is
+ * ever written through a link, and once everything is unpacked each link is
+ * followed, through the links it names, to where it really leads, so a chain
+ * such as `a -> .` and `b -> a/..` (inside on paper, the parent directory on
+ * disk) is refused whatever order its links come in. The tar is read as it
+ * decompresses, so a release of hundreds of megabytes never sits in memory.
+ *
+ * From a zip, the caller names each file it wants and the path it goes to;
+ * the archive chooses no path and makes no link, so nothing in it can write
+ * anywhere else. The zip is read from its central directory.
  */
 
 import {
@@ -14,36 +24,105 @@ import {
   copyFileSync,
   createReadStream,
   existsSync,
+  lstatSync,
   mkdirSync,
   openSync,
   readdirSync,
   readFileSync,
+  readlinkSync,
+  realpathSync,
   renameSync,
   rmSync,
   symlinkSync,
   writeFileSync,
   writeSync,
 } from "node:fs";
-import { dirname, join, resolve, sep } from "node:path";
-import { createZstdDecompress, inflateRawSync } from "node:zlib";
+import { dirname, isAbsolute, join, parse, resolve, sep } from "node:path";
+import { crc32, createZstdDecompress, inflateRawSync } from "node:zlib";
 
 export class ArchiveError extends Error {}
 
-/** The entry's place under `dest`, refused when it would be outside. */
+const inside = (dest: string, path: string): boolean =>
+  path === dest || path.startsWith(dest + sep);
+
+const isLink = (path: string): boolean => {
+  try {
+    return lstatSync(path).isSymbolicLink();
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * The entry's place under `dest`, refused when it would be outside, or when
+ * a directory on its way there is a link: writing there would follow it.
+ */
 function placeOf(dest: string, name: string): string {
   if (name.includes("\0")) throw new ArchiveError("an entry name holds a NUL byte");
   const target = resolve(dest, name);
-  if (target !== dest && !target.startsWith(dest + sep))
+  if (!inside(dest, target))
     throw new ArchiveError(
       `entry ${JSON.stringify(name)} would be written outside the toolchain directory`,
     );
+  const parts = target === dest ? [] : target.slice(dest.length + 1).split(sep);
+  let at = dest;
+  for (const part of parts.slice(0, -1)) {
+    at = join(at, part);
+    if (isLink(at))
+      throw new ArchiveError(
+        `entry ${JSON.stringify(name)} goes through the link ${at.slice(dest.length + 1)}`,
+      );
+    if (!existsSync(at)) break;
+  }
   return target;
+}
+
+/** A link standing where a file is about to be written is removed, so the file is not written through it. */
+function unlinkIfLink(path: string): void {
+  if (isLink(path)) rmSync(path);
+}
+
+/**
+ * Where `linkTo`, read from the real directory `dir`, leads on disk: each
+ * link on the way is followed as the system would, and parts that do not
+ * exist are taken as written.
+ */
+function follow(dir: string, linkTo: string, hops: { n: number }): string {
+  let at = isAbsolute(linkTo) ? parse(linkTo).root : dir;
+  for (const part of linkTo.split(sep === "\\" ? /[\\/]/ : "/")) {
+    if (part === "" || part === ".") continue;
+    if (part === "..") {
+      at = dirname(at);
+      continue;
+    }
+    const next = join(at, part);
+    if (!isLink(next)) {
+      at = next;
+      continue;
+    }
+    if (++hops.n > 40) throw new ArchiveError(`too many levels of links at ${next}`);
+    at = follow(at, readlinkSync(next), hops);
+  }
+  return at;
+}
+
+/** Every link still standing, followed on disk once all are in place, must lead somewhere under `dest`. */
+function checkLinksOnDisk(dest: string, links: readonly string[]): void {
+  const real = realpathSync(dest);
+  for (const at of links) {
+    // A later entry may have put a file where this link was.
+    if (!isLink(at)) continue;
+    const to = follow(realpathSync(dirname(at)), readlinkSync(at), { n: 0 });
+    if (!inside(real, to))
+      throw new ArchiveError(
+        `link ${at.slice(dest.length + 1)} points outside the toolchain directory once the links it goes through are followed`,
+      );
+  }
 }
 
 /** A symlink's target must stay under `dest` too. */
 function checkLink(dest: string, at: string, linkTo: string): void {
-  const target = resolve(dirname(at), linkTo);
-  if (target !== dest && !target.startsWith(dest + sep))
+  if (!inside(dest, resolve(dirname(at), linkTo)))
     throw new ArchiveError(
       `link ${JSON.stringify(linkTo)} would point outside the toolchain directory`,
     );
@@ -136,6 +215,8 @@ class TarReader {
   zeroBlocks = 0;
   ended = false;
   entries = 0;
+  /** The links made, checked on disk once the stream has ended. */
+  readonly links: string[] = [];
 
   constructor(dest: string) {
     this.dest = dest;
@@ -189,6 +270,7 @@ class TarReader {
     const at = placeOf(this.dest, name);
     if (header.type === "0" || header.type === "7") {
       ensureDir(dirname(at));
+      unlinkIfLink(at);
       const fd = openSync(at, "w");
       this.current = { remaining: size, padding, sink: { fd, at, mode: header.mode } };
       if (size === 0) this.finish();
@@ -200,9 +282,17 @@ class TarReader {
       ensureDir(dirname(at));
       rmSync(at, { force: true });
       symlinkSync(linkName, at);
+      this.links.push(at);
     } else if (header.type === "1") {
+      const source = placeOf(this.dest, linkName);
+      // Copying a link's file would read wherever it leads before the links are checked.
+      if (isLink(source))
+        throw new ArchiveError(
+          `hard link ${JSON.stringify(name)} names the link ${JSON.stringify(linkName)}; only files are copied`,
+        );
       ensureDir(dirname(at));
-      copyFileSync(placeOf(this.dest, linkName), at);
+      unlinkIfLink(at);
+      copyFileSync(source, at);
     }
     // Devices, FIFOs and vendor types carry nothing a toolchain needs; data any of these has is skipped.
     if (size > 0) this.current = { remaining: size, padding, sink: { skip: true } };
@@ -240,6 +330,7 @@ class TarReader {
     this.release();
     if (this.current)
       throw new ArchiveError("the tar stream ended inside an entry; the file is truncated");
+    checkLinksOnDisk(this.dest, this.links);
   }
 }
 
@@ -281,7 +372,7 @@ function centralDirectory(zip: Buffer): { offset: number; entries: number } {
     if (locator < 0 || zip.readUInt32LE(locator) !== ZIP64_LOCATOR)
       throw new ArchiveError("zip64 archive without its locator");
     const at = Number(zip.readBigUInt64LE(locator + 8));
-    if (zip.readUInt32LE(at) !== ZIP64_EOCD)
+    if (at + 56 > zip.length || zip.readUInt32LE(at) !== ZIP64_EOCD)
       throw new ArchiveError("zip64 archive without its end record");
     entries = Number(zip.readBigUInt64LE(at + 32));
     offset = Number(zip.readBigUInt64LE(at + 48));
@@ -298,18 +389,20 @@ function zip64Fields(
   while (at + 4 <= extra.length) {
     const id = extra.readUInt16LE(at);
     const size = extra.readUInt16LE(at + 2);
+    const end = at + 4 + size;
+    if (end > extra.length) throw new ArchiveError("an entry's extra field is cut short");
     if (id === 0x0001) {
       let p = at + 4;
+      const next = (): number => {
+        if (p + 8 > end) throw new ArchiveError("an entry's zip64 field is cut short");
+        const value = Number(extra.readBigUInt64LE(p));
+        p += 8;
+        return value;
+      };
       const out = { ...plain };
-      if (out.uncompressed === 0xffffffff) {
-        out.uncompressed = Number(extra.readBigUInt64LE(p));
-        p += 8;
-      }
-      if (out.compressed === 0xffffffff) {
-        out.compressed = Number(extra.readBigUInt64LE(p));
-        p += 8;
-      }
-      if (out.offset === 0xffffffff) out.offset = Number(extra.readBigUInt64LE(p));
+      if (out.uncompressed === 0xffffffff) out.uncompressed = next();
+      if (out.compressed === 0xffffffff) out.compressed = next();
+      if (out.offset === 0xffffffff) out.offset = next();
       return out;
     }
     at += 4 + size;
@@ -317,17 +410,38 @@ function zip64Fields(
   return plain;
 }
 
-/** Unpack a zip into `dest`, which must exist and be empty. */
-export function extractZip(file: string, dest: string): number {
+/**
+ * Take the named files of a zip, and nothing else: `entries` maps each
+ * file's path in the archive to the path under `dest` it is written to.
+ * Every named entry must be there exactly once, must be a plain file
+ * (a directory or a link is refused), and must inflate to its declared
+ * size and CRC-32; nothing is written until all of them have. Files are
+ * written with mode 0644 (the caller makes its executable runnable).
+ * Returns how many files were written.
+ */
+export function extractZipEntries(
+  file: string,
+  entries: Readonly<Record<string, string>>,
+  dest: string,
+): number {
   const root = resolve(dest);
+  const places = new Map<string, string>();
+  for (const [name, to] of Object.entries(entries)) {
+    const place = resolve(root, to);
+    if (place === root || !inside(root, place))
+      throw new ArchiveError(`${JSON.stringify(to)} is not a path under the toolchain directory`);
+    places.set(name, place);
+  }
   const zip = readFileSync(file);
-  const { offset, entries } = centralDirectory(zip);
+  const { offset, entries: count } = centralDirectory(zip);
+  const found = new Map<string, Buffer>();
   let at = offset;
-  for (let i = 0; i < entries; i++) {
-    if (zip.readUInt32LE(at) !== ZIP_CENTRAL)
+  for (let i = 0; i < count; i++) {
+    if (at + 46 > zip.length || zip.readUInt32LE(at) !== ZIP_CENTRAL)
       throw new ArchiveError("a central directory entry is not where the zip says it is");
     const madeBy = zip.readUInt16LE(at + 4) >> 8;
     const method = zip.readUInt16LE(at + 10);
+    const crc = zip.readUInt32LE(at + 16);
     const nameLength = zip.readUInt16LE(at + 28);
     const extraLength = zip.readUInt16LE(at + 30);
     const commentLength = zip.readUInt16LE(at + 32);
@@ -340,47 +454,56 @@ export function extractZip(file: string, dest: string): number {
       offset: zip.readUInt32LE(at + 42),
     });
     at += 46 + nameLength + extraLength + commentLength;
+    if (!places.has(name)) continue;
+    const quoted = JSON.stringify(name);
+    if (found.has(name)) throw new ArchiveError(`entry ${quoted} is in the zip twice`);
+    const type = (madeBy === 3 ? externalAttributes >>> 16 : 0) & 0o170000;
+    if (name.endsWith("/") || type === 0o040000)
+      throw new ArchiveError(`entry ${quoted} is a directory, not a file`);
+    if (type === 0o120000) throw new ArchiveError(`entry ${quoted} is a link, not a file`);
     const local = sizes.offset;
-    if (zip.readUInt32LE(local) !== ZIP_LOCAL)
-      throw new ArchiveError(
-        `entry ${JSON.stringify(name)} has no local header where the zip says`,
-      );
+    if (local + 30 > zip.length || zip.readUInt32LE(local) !== ZIP_LOCAL)
+      throw new ArchiveError(`entry ${quoted} has no local header where the zip says`);
     const dataStart = local + 30 + zip.readUInt16LE(local + 26) + zip.readUInt16LE(local + 28);
     const raw = zip.subarray(dataStart, dataStart + sizes.compressed);
-    const mode = madeBy === 3 ? externalAttributes >>> 16 : 0;
-    const place = placeOf(root, name);
-    const isDirectory = name.endsWith("/") || (mode & 0o170000) === 0o040000;
-    if (isDirectory) {
-      ensureDir(place);
-      continue;
-    }
     let data: Buffer;
     if (method === 0) data = raw;
-    else if (method === 8) data = inflateRawSync(raw);
-    else
+    else if (method === 8) {
+      try {
+        // Never more than the entry declares, so a short entry cannot inflate into a huge one; the
+        // declared size itself comes from the zip, whose SHA-256 the install checked first.
+        data = inflateRawSync(raw, { maxOutputLength: Math.max(1, sizes.uncompressed) });
+      } catch (err) {
+        throw new ArchiveError(
+          `entry ${quoted} did not inflate within its declared size: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    } else
       throw new ArchiveError(
-        `entry ${JSON.stringify(name)} uses compression method ${method}; only stored and deflated entries are read`,
+        `entry ${quoted} uses compression method ${method}; only stored and deflated entries are read`,
       );
     if (data.length !== sizes.uncompressed)
-      throw new ArchiveError(`entry ${JSON.stringify(name)} did not inflate to its declared size`);
-    ensureDir(dirname(place));
-    if ((mode & 0o170000) === 0o120000) {
-      const linkTo = data.toString("utf8");
-      checkLink(root, place, linkTo);
-      rmSync(place, { force: true });
-      symlinkSync(linkTo, place);
-      continue;
-    }
-    writeFileSync(place, data);
-    setMode(place, mode);
+      throw new ArchiveError(`entry ${quoted} did not inflate to its declared size`);
+    if (crc32(data) !== crc) throw new ArchiveError(`entry ${quoted} fails its CRC-32 check`);
+    found.set(name, data);
   }
-  return entries;
+  const missing = [...places.keys()].filter((name) => !found.has(name));
+  if (missing.length > 0)
+    throw new ArchiveError(`the zip holds no ${missing.map((m) => JSON.stringify(m)).join(", ")}`);
+  for (const [name, data] of found) {
+    const place = places.get(name) as string;
+    ensureDir(dirname(place));
+    writeFileSync(place, data, { mode: 0o644 });
+  }
+  return found.size;
 }
 
 /**
  * When an archive puts everything under one top-level directory, as the
  * releases do (`lean-4.35.0-linux/`, `z3-5.3.2-x64-glibc-2.39/`), move
- * its contents up so the executable is at the path the table names.
+ * its contents up so the executable is at the path the table names. Moving
+ * up changes where a relative link leads (`top/up -> ..` was `dest`, and
+ * would be its parent), so every link is checked on disk again afterwards.
  */
 export function flattenSingleDirectory(dest: string): void {
   const entries = readdirSync(dest, { withFileTypes: true });
@@ -392,4 +515,8 @@ export function flattenSingleDirectory(dest: string): void {
     renameSync(join(inner, name), to);
   }
   rmSync(inner, { recursive: true, force: true });
+  const links = readdirSync(dest, { recursive: true, withFileTypes: true })
+    .filter((entry) => entry.isSymbolicLink())
+    .map((entry) => join(entry.parentPath, entry.name));
+  checkLinksOnDisk(resolve(dest), links);
 }

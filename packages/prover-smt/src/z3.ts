@@ -22,17 +22,34 @@ export const z3Version = "5.3.2";
 export const installHint = `run: eutaxy prover install smt (or put Z3 ${z3Version} on the PATH, from https://github.com/Z3Prover/z3/releases/tag/z3-${z3Version} or Homebrew: brew install z3)`;
 
 const z3Release = `https://github.com/Z3Prover/z3/releases/download/z3-${z3Version}`;
-const z3File = (name: string, sha256: string, bytes: number) => ({
+/** The files the solver needs on Linux and macOS: the executable, which links only system libraries. */
+const unixFiles = ["bin/z3"];
+/**
+ * On Windows the executable also needs the Visual C++ runtime, which a fresh
+ * Windows may lack; the release ships it beside `z3.exe`, and Windows loads
+ * a DLL from the executable's own directory first.
+ */
+const windowsFiles = [
+  "bin/z3.exe",
+  "bin/msvcp140.dll",
+  "bin/vcruntime140.dll",
+  "bin/vcruntime140_1.dll",
+];
+const z3File = (name: string, sha256: string, bytes: number, files: readonly string[]) => ({
   file: name,
   url: `${z3Release}/${name}`,
   sha256,
   bytes,
+  // Each release puts everything under one directory named like the file.
+  entries: Object.fromEntries(files.map((f) => [`${name.replace(/\.zip$/, "")}/${f}`, f])),
 });
 /**
  * The upstream release files `eutaxy prover install smt` downloads, one per
  * platform, as published on Z3's GitHub release with the checksums it
- * reports; the file names carry the version, and a test holds them to
- * `z3Version`. The Linux builds need glibc 2.39 (x64) or 2.38 (arm64).
+ * reports, and the files taken from each (the rest of the zip, bindings for
+ * other languages, headers and the shared library, is not unpacked); the
+ * file names carry the version, and a test holds them to `z3Version`. The
+ * Linux builds need glibc 2.39 (x64) or 2.38 (arm64).
  */
 export const z3Downloads: Toolchain = {
   name: "smt",
@@ -43,26 +60,31 @@ export const z3Downloads: Toolchain = {
       "z3-5.3.2-x64-glibc-2.39.zip",
       "26d463cddad3901cbf86e3868c784914539f4e3f9b4de1a0b8dc2969806d60e2",
       69479256,
+      unixFiles,
     ),
     "linux-arm64": z3File(
       "z3-5.3.2-arm64-glibc-2.38.zip",
       "30b6a718a6cfe1b2db056038cc32eda5410f6d02e5937622b5238645347f59d5",
       64803341,
+      unixFiles,
     ),
     "darwin-x64": z3File(
       "z3-5.3.2-x64-osx-13.3.zip",
       "b911dc193f7447a14fba001e8e8a0c2866a544274bb003e76a9e864f03b4d557",
       54270076,
+      unixFiles,
     ),
     "darwin-arm64": z3File(
       "z3-5.3.2-arm64-osx-13.3.zip",
       "524290057c943a044ec3d1372db65a9c93f333d9817d58191154c4719ff7f8ad",
       53576249,
+      unixFiles,
     ),
     "win32-x64": z3File(
       "z3-5.3.2-x64-win.zip",
       "a75aa2b0383a8ee355387a54daad796911d6a965076751eea18d21a27f38e983",
       70867398,
+      windowsFiles,
     ),
   },
 };
