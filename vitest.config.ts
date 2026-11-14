@@ -63,7 +63,7 @@ function writeAll(fd: number, text: string): void {
 holdWorkerdExceptions();
 
 /** One workerd project per corpus entry, so each runs with its own bindings. */
-const corpora = ["corpus/planted-bugs", "corpus/differential", "corpus/gates"];
+const corpora = ["corpus/planted-bugs", "corpus/differential"];
 const workerdProjects = corpora.flatMap((root) =>
   readdirSync(root, { withFileTypes: true })
     // An entry checked only through the command (scenario.node.test.ts, in the node project) has a

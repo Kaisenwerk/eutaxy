@@ -32,6 +32,7 @@ import type { EffectLog, FaultKind, Schedule } from "@eutaxy/core";
 import { lastSnapshot } from "@eutaxy/core";
 import { replay } from "@eutaxy/engine";
 import { describe, expect, test } from "vitest";
+import { told } from "../told.ts";
 import { carts } from "./scenario.sim.ts";
 import * as worker from "./worker.ts";
 
@@ -81,9 +82,6 @@ async function withFault(invocation: string, fault: FaultKind, target: string, o
   expect(ordinal, `${target} ${op} in ${invocation}`).toBeGreaterThanOrEqual(0);
   return replayed(1, { seed: 0, faults: [{ invocation, ordinal, fault, target, op }] });
 }
-
-/** A verdict as the assertion's message: what a failed check reached and why. */
-const told = (verdict: unknown) => JSON.stringify(verdict, null, 1).slice(0, 4000);
 
 test("every schedule with one fault, one invocation in flight, holds exhaustively", async () => {
   const verdict = await check(carts(1, 1), platform(), {

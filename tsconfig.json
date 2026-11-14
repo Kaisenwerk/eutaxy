@@ -47,7 +47,7 @@
       "path": "corpus/differential"
     },
     {
-      "path": "corpus/gates"
+      "path": "tests/systems"
     },
     {
       "path": "corpus/prover-contracts"

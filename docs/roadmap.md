@@ -4,8 +4,8 @@ Phases are numbered after the release that closes them: phase v0.N ships
 as `0.N.0` once its gate passes, and work toward it ships before that as
 patch releases of the previous phase (work toward v0.5 ships as `0.4.x`).
 Each phase is closed by a gate that must pass before the next starts. A
-gate is a test the corpora run in CI; a phase is done when its gate
-passes, not on a date. The planted-bug and differential corpora grow with
+gate is a set of tests run in CI on Workers written the way the phase's
+target systems are; a phase is done when its gate passes, not on a date. The planted-bug and differential corpora grow with
 every phase. The JSON report schema is versioned, so CI and coding agents
 can rely on it.
 
@@ -13,15 +13,16 @@ can rely on it.
 
 The phases through v0.17 are done; `docs/design.md` describes what they
 built. A phase's gate is its go/no-go and passed in CI when the phase
-closed; after the release what a gate entry holds is protection against
-regressions, which belongs with the code it protects. So an entry moves,
-one at a time, from `corpus/gates` into the package that owns its feature
-(`packages/<name>/workerd/<test>`, run inside workerd on every change):
-its replays as they are, and its exploration cut to one check per claim
-(exhaustive where the schedules are few, a short seeded sample where not)
-in place of the gate's matrix of cells. Calls between objects are there
-(`packages/cloudflare/workerd/object-calls-object`); the other entries run
-from the corpus.
+closed; after the release what a gate's Workers hold is protection against
+regressions, which belongs with the code it protects. So once a phase is
+released its gate's tests move into the package that owns the feature
+(`packages/<name>/workerd/<test>`, run inside workerd on every change), or,
+for a system only the command can build (a Worker calling another by its
+real name), into the command's own tests (`tests/systems/<test>`): the
+replays as they are, and the exploration, where the gate ran a matrix of
+cells, cut to one check per claim (exhaustive where the schedules are few,
+a short seeded sample where not). Every gate through v0.17 has moved;
+a new phase's gate is built where its tests will stay.
 - **v0.4, the simulator.** A Worker's queue consumer run under explored
   schedules: faults at every effect, redelivery as Cloudflare Queues
   does, invariants over the effect log, shrinking, a regression test per
@@ -181,8 +182,8 @@ proof cache are v0.18's and wait for it unless a target needs one sooner):
   (an object, two objects, a called Worker, and their mixes) under every
   fault placement and compares the runs
   (`packages/engine/src/nested-calls*.test.ts`), and
-  `corpus/gates/v0-17-nested-object-timing` holds the v0.16 timings
-  nested against the real runtime, beside the calls' own workerd tests
+  `packages/cloudflare/workerd/nested-object-timing` holds the v0.16
+  timings nested against the real runtime, beside the calls' own workerd tests
   (`packages/cloudflare/workerd/object-calls-object`), the planted bug
   (`object-unit-twice-across-objects`) and the differential entry
   (`object-calls-object`). A scripted namespace (`scriptedObject()`)
@@ -190,9 +191,10 @@ proof cache are v0.18's and wait for it unless a target needs one sooner):
   `service()` answers a Worker, each call an effect, from the Worker and
   from another object: for an object the isolate cannot run (one backed
   by a container) or one the scenario does not explore, which an
-  adopter's second flow waited on. Its gate entry
-  (`v0-17-scripted-object`) has an object calling scripted ones end in a
-  verdict under every fault placement with nothing `UNSUPPORTED`, and
+  adopter's second flow waited on. Its workerd test
+  (`packages/cloudflare/workerd/scripted-object`) has an object calling
+  scripted ones end in a verdict under every fault placement with nothing
+  `UNSUPPORTED`, and
   the planted bug behind such a call
   (`object-machine-booted-off-record`) is caught.
 - An `UNSUPPORTED` verdict carries the schedule of the run that reached

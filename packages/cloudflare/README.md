@@ -27,9 +27,13 @@ State invariants: `d1Rows`, `durableObjectRows`, `r2Rows`, `workflowRows`, `ever
 `unique`, `references`, `queueAck`; `snapshotD1`.
 
 **Tests.** `src/*.test.ts` run in Node, against fakes where a binding
-needs the runtime. `workerd/<test>/` holds a Worker, its wrangler config and
-a scenario, run inside workerd against the real runtime, one Vitest project
-each (`vitest.config.ts`); they import this package by its own name.
+needs the runtime. `workerd/<test>/` holds a Worker, its wrangler config,
+its scenarios and a README saying what the Worker exercises, run inside
+workerd against the real runtime, one Vitest project each
+(`vitest.config.ts`); they import this package by its own name, and the
+Agents SDK, which one of them is written with, is a dev dependency. Each
+explores one check per claim (every schedule where they are few, a seeded
+sample where not) and replays the runs that pin what the model does.
 
 **Effect conventions** (what the proxies record, and what selectors match):
 

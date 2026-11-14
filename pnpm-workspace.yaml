@@ -2,6 +2,7 @@ packages:
   - packages/*
   - corpus/*
   - examples/*
+  - tests/systems
   - site
 
 # Dependencies allowed to run their install scripts: workerd is the Workers
@@ -11,7 +12,7 @@ allowBuilds:
   esbuild: true
   workerd: true
   classic-level: true
-  # core-js-pure (behind the Agents SDK, a corpus dev dependency) only prints a notice in its script.
+  # core-js-pure (behind the Agents SDK, a dev dependency of the cloudflare package's tests) only prints a notice in its script.
   core-js-pure: false
 
 # pnpm refuses versions published within its minimum release age; these were

@@ -6,5 +6,5 @@
     "types": ["node"]
   },
   "include": ["**/*.ts", "../scripts/**/*.ts"],
-  "exclude": ["dist"]
+  "exclude": ["dist", "systems"]
 }
