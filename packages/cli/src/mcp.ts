@@ -187,7 +187,7 @@ export const tools: readonly Tool[] = [
     name: "check",
     title: "Check a scenario",
     description:
-      "Run a scenario file (*.sim.ts) in the simulator and return the JSON report: the verdict (BOUNDED, VIOLATED with the shrunk schedule, or UNSUPPORTED), the spec verdicts, and on a violation the path of the regression test written beside the scenario (regressionTest). Exit code 1 is a violation or a refuted spec, not an error.",
+      "Run a scenario file (*.sim.ts) in the simulator and return the JSON report: the verdict (BOUNDED, VIOLATED with the shrunk schedule, or UNSUPPORTED), the spec verdicts, and on a violation the path of the regression test written beside the scenario (regressionTest), and the errors nothing handled during a run whose verdict still stands (unhandledErrors). Exit code 1 is a violation or a refuted spec, not an error.",
     inputSchema: {
       type: "object",
       properties: {

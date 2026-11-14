@@ -149,6 +149,15 @@ a listed module that is missing, and, for `report`, no spec files found or
 a flag only `check` takes. For `check` it includes a run Vitest failed,
 and the command says why: the check's test file could not run (the Worker
 threw as it loaded, say) or failed outside its test (in a hook or the
-pool's teardown), its test failed or left no verdict, or there were errors
-nothing handled, each told once with how often it came. Vitest fails a run on an
-error nothing handled even when the check's test passed.
+pool's teardown), or its test failed or left no verdict, with the errors
+nothing handled beside any of these, each told once with how often it came.
+
+An error nothing handled (a promise the Worker leaves rejected, an
+exception thrown where nothing catches it) alone is not an error of
+`check`; a failure of Vitest's own runner, pool or reporters still is. Vitest fails a run on one even when the check's
+test passed, but Cloudflare's runtime only logs it, so the verdict stands:
+`check` prints it with its own exit code and tells the errors on stderr,
+each once with how often it came. With `--json` the report lists them as
+`unhandledErrors`, each with its `type`, the first lines of its `message`
+and how many `times` it came. Whether such an error breaks something is
+for the scenario's invariants to say.

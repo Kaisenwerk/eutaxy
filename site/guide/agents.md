@@ -31,7 +31,7 @@ where the scenarios and spec files are.
 
 | Tool            | Does                                                                                                                                                            |
 | --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `check`         | Runs a scenario file and returns the report: the verdict, the shrunk trace on a violation, the spec verdicts, and `regressionTest`, the replay written beside it |
+| `check`         | Runs a scenario file and returns the report: the verdict, the shrunk trace on a violation, the spec verdicts, `regressionTest`, the replay written beside it, and `unhandledErrors`, the errors nothing handled during a run whose verdict stands |
 | `report`        | Runs every spec file under a directory through `TESTED` and, with `provers`, `PROVEN`                                                                            |
 | `goals`         | Lists the properties the Lean engine could not prove, each with its statement, and writes them beside each spec file as `<spec>.goals.lean`                       |
 | `prove`         | Runs the Lean engine on one spec file's module with the proofs supplied beside it, and returns its verdicts                                                       |

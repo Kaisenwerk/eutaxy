@@ -39,7 +39,7 @@ import { checkTestSource, metaKey, vitestConfigSource } from "./generate.ts";
 import { globKey } from "./keys.ts";
 import { cloudflareRegressionTest } from "./regression.ts";
 import { findSpecModules, type SpecModule, specFiles, specKey } from "./specs.ts";
-import { unhandledErrorsFile, vitestFailure } from "./vitest-failure.ts";
+import { strayErrors, strayNote, unhandledErrorsFile, vitestFailure } from "./vitest-failure.ts";
 import type { CheckTransport } from "./workerd.ts";
 
 export interface CheckOptions {
@@ -343,18 +343,21 @@ export async function runCheck(o: CheckOptions): Promise<number> {
         ),
       );
     const { code, output } = await runVitest(vitestBin(dir), configPath, dir);
-    const transport = code === 0 ? readTransport(reportPath) : null;
+    const left = (path: string) => (existsSync(path) ? readFileSync(path, "utf8") : undefined);
+    const ran = { report: left(reportPath), unhandled: left(unhandledErrorsFile(reportPath)) };
+    // Vitest fails a run on an error nothing handled; Cloudflare's runtime only logs one, so when
+    // those are the run's only fault the verdict its passed test left stands, told beside them.
+    const stray = code === 0 ? undefined : strayErrors(ran);
+    const transport = code === 0 || stray !== undefined ? readTransport(reportPath) : null;
     if (!transport) {
-      const left = (path: string) => (existsSync(path) ? readFileSync(path, "utf8") : undefined);
-      const why = vitestFailure({
-        report: left(reportPath),
-        unhandled: left(unhandledErrorsFile(reportPath)),
-      });
+      const why = vitestFailure(ran);
       o.stderr(
         `eutaxy check could not read a verdict from Vitest (exit ${code}):\n${why}Vitest's output:\n${output}\n`,
       );
       return exitCodes.error;
     }
+    // Told first, so the errors are seen whatever the check goes on to say, an error of its own included.
+    if (stray !== undefined) o.stderr(strayNote(stray));
     if (transport.specErrors && transport.specErrors.length > 0) {
       for (const e of transport.specErrors)
         o.stderr(`${e.module}${e.line > 0 ? `:${e.line}` : ""}: ${e.message}\n`);
@@ -385,6 +388,7 @@ export async function runCheck(o: CheckOptions): Promise<number> {
       ...(regressionPath === undefined
         ? {}
         : { regressionTest: toPosix(relative(o.cwd, regressionPath) || regressionPath) }),
+      ...(stray === undefined ? {} : { unhandledErrors: stray }),
     };
     if (o.json) o.stdout(`${canonicalJson(printed as JsonValue)}\n`);
     else o.stdout(`${renderText(verdict)}\n${specs.length > 0 ? `\n${renderSpecs(specs)}\n` : ""}`);

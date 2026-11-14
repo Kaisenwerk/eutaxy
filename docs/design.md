@@ -1441,7 +1441,18 @@ The test stores what it returns in its Vitest task meta, and the CLI reads it ba
 reporter: nothing depends on console output. The CLI then prints the text
 report or the JSON report, writes `<name>.regression.test.ts` on a
 violation, removes `.eutaxy/`, and exits 0, 1 or 2 for `BOUNDED`,
-`VIOLATED` or `UNSUPPORTED`. In development the CLI runs its TypeScript
+`VIOLATED` or `UNSUPPORTED`. Vitest fails a run on any error nothing
+handled (a promise the Worker leaves rejected, say) even when every test
+passed, while Cloudflare's runtime only logs such an error and goes on.
+So when those errors are the run's only fault (every test passed, no file
+failed outside its tests, and every error is an unhandled rejection or
+uncaught exception that the test's own runtime caught, not a failure of
+Vitest's runner, pool or reporters) the verdict the test left stands: the command
+prints it with its usual exit code, tells the errors on stderr, each once
+with how often it came, and lists them in the JSON report as
+`unhandledErrors`. Whether such an error breaks the system is what the
+scenario's invariants decide; any other fault of the run is an error
+(exit 3) with its cause. In development the CLI runs its TypeScript
 sources directly on Node 24, which is why relative imports name `.ts` files.
 
 ## The AWS platform

@@ -668,7 +668,7 @@ export default defineScenario({
     }
   }, 240_000);
 
-  test("a run Vitest fails says why: a Worker that throws as it loads, an error nothing handled", async () => {
+  test("a run Vitest fails says why (a Worker that throws as it loads); an error nothing handled leaves the verdict standing, told beside it", async () => {
     const scenario = `import { atMostOncePerKey, defineScenario, external, fetchCall, http } from "eutaxy/cloudflare";
 export default defineScenario({
   name: "why",
@@ -693,7 +693,7 @@ export default { async fetch(): Promise<Response> { return new Response("ok"); }
 };
 `,
     };
-    const run = async (kind: keyof typeof workers) => {
+    const run = async (kind: keyof typeof workers, flags: readonly string[]) => {
       const dir = join(root, "examples", "payments-queue", `cli-test-why-${kind}-${process.pid}`);
       mkdirSync(dir, { recursive: true });
       try {
@@ -708,7 +708,7 @@ export default { async fetch(): Promise<Response> { return new Response("ok"); }
         writeFileSync(join(dir, "worker.ts"), workers[kind]);
         writeFileSync(join(dir, "scenario.sim.ts"), scenario);
         const r = await eutaxyWithin(
-          ["check", join(dir, "scenario.sim.ts"), "--seed", "cli", "--no-regression"],
+          ["check", join(dir, "scenario.sim.ts"), "--seed", "cli", "--no-regression", ...flags],
           120_000,
         );
         expect(existsSync(join(dir, ".eutaxy")), "the run's files are gone").toBe(false);
@@ -717,14 +717,24 @@ export default { async fetch(): Promise<Response> { return new Response("ok"); }
         rmSync(dir, { recursive: true, force: true });
       }
     };
-    const [load, unhandled] = await Promise.all([run("load"), run("unhandled")]);
+    const [load, unhandled] = await Promise.all([run("load", []), run("unhandled", ["--json"])]);
     expect(load.status, load.stderr).toBe(3);
     expect(load.stderr).toContain("eutaxy check could not read a verdict from Vitest (exit 1)");
     expect(load.stderr).toContain(
       "the check's test file could not run: eutaxy-test: the Worker throws as it loads",
     );
-    expect(unhandled.status, unhandled.stderr).toBe(3);
-    expect(unhandled.stderr).toContain("its test passed");
+    // Cloudflare's runtime only logs a promise a Worker leaves rejected: the verdict stands, the errors told beside it.
+    expect(unhandled.status, unhandled.stderr).toBe(0);
+    const printed = JSON.parse(unhandled.stdout) as {
+      verdict: { kind: string };
+      unhandledErrors?: { type: string; message: string; times: number }[];
+    };
+    expect(printed.verdict.kind).toBe("BOUNDED");
+    expect(printed.unhandledErrors?.[0]).toMatchObject({ type: "Unhandled Rejection" });
+    expect(printed.unhandledErrors?.[0]?.message).toMatch(
+      /^Error: eutaxy-test: a rejection nothing handles\nat Object\.fetch/,
+    );
+    expect(unhandled.stderr).toContain("note: the check's test passed, and its verdict stands");
     expect(unhandled.stderr).toMatch(
       /Unhandled Rejection \(\d+ times\): Error: eutaxy-test: a rejection nothing handles\n {6}at Object\.fetch/,
     );
