@@ -277,11 +277,12 @@ declarations are listed among the verdict's assumptions.
 | `maxRedeliveries`          | 2       | Redeliveries of one event: a message, an alarm, a step's retries, a resent request |
 | `maxConcurrentInvocations` | 1       | Invocations in flight at once; above 1 they interleave at their I/O                |
 | `budgetMs`                 | 2000    | Time budget for exploration; also how long one effect's real I/O may take          |
+| `faultsAt`                 | (none)  | Where faults may go: only at the effect points these sites match                   |
 
 A time budget makes the number of runs depend on the machine, so CI and
 tests that assert a verdict pass `--budget-ms` with a generous value and
 `--max-runs` to cap the runs. Every verdict reports the bounds it reached.
-See [Faults and exploration](/guide/faults).
+See [Faults and exploration](/guide/faults), which also covers `faultsAt`.
 
 ## Concurrency
 

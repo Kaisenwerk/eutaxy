@@ -8,7 +8,7 @@ outline: 2
 
 # `eutaxy/cloudflare`
 
-`import { … } from "eutaxy/cloudflare";` 47 functions and values, 38 types; each links to the file that declares it.
+`import { … } from "eutaxy/cloudflare";` 48 functions and values, 38 types; each links to the file that declares it.
 
 ## Functions, classes and values
 
@@ -257,6 +257,12 @@ Selects the calls through a service binding that completed (scripted or a callee
 `function snapshotD1(real: D1Database): Promise<{ readonly [table: string]: readonly JsonValue[] }>`
 
 Every user table's rows, sorted canonically, read through the real binding (not an effect). [Source](https://github.com/Kaisenwerk/eutaxy/blob/main/packages/cloudflare/src/d1.ts)
+
+### `stepFaults`
+
+`function stepFaults(binding: string, step: string, options: { readonly attempt?: number; readonly faults?: readonly FaultKind[] } = {}): FaultSite`
+
+A fault site (for `bounds.faultsAt`) on a Workflow step's attempts: the point where an attempt starts (`crash_before`, `ambiguous`) and the one where its result is persisted (`crash_after`, `ambiguous`), of every attempt or only `attempt` (from 1), of the kinds `faults` lists or every kind those points allow. [Source](https://github.com/Kaisenwerk/eutaxy/blob/main/packages/cloudflare/src/scenario.ts)
 
 ### `unique`
 

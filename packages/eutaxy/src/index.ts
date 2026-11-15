@@ -20,6 +20,7 @@ export {
   type EveryRow,
   type FaultDecision,
   type FaultKind,
+  type FaultSite,
   type Implies,
   type Invariant,
   type Platform,

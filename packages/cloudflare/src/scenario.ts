@@ -14,6 +14,8 @@ import {
   type EventRef,
   type EveryRow,
   type ExternalDecl,
+  type FaultKind,
+  type FaultSite,
   type Implies,
   type Invariant,
   type JsonValue,
@@ -742,6 +744,32 @@ export function workflowStep(binding: string, step?: string): EffectSelector {
     op: "step_result",
     kind: "result",
     ...(step === undefined ? {} : { where: { "args.step": step } }),
+  };
+}
+
+/**
+ * A fault site (for `bounds.faultsAt`) on a Workflow step's attempts: the
+ * point where an attempt starts (`crash_before`, `ambiguous`) and the one
+ * where its result is persisted (`crash_after`, `ambiguous`), of every
+ * attempt or only `attempt` (from 1), of the kinds `faults` lists or every
+ * kind those points allow. It matches every step of that name in every
+ * instance of the binding's Workflow.
+ */
+export function stepFaults(
+  binding: string,
+  step: string,
+  options: { readonly attempt?: number; readonly faults?: readonly FaultKind[] } = {},
+): FaultSite {
+  const { attempt } = options;
+  if (attempt !== undefined && !(Number.isInteger(attempt) && attempt >= 1))
+    throw new RangeError(`stepFaults: attempt counts from 1, got ${attempt}`);
+  return {
+    target: `Workflow:${binding}`,
+    where: {
+      "args.step": step,
+      ...(options.attempt === undefined ? {} : { "args.attempt": options.attempt }),
+    },
+    ...(options.faults === undefined ? {} : { faults: options.faults }),
   };
 }
 

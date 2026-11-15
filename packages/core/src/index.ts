@@ -12,6 +12,14 @@ export {
   serializeLog,
 } from "./effect-log.ts";
 export {
+  compileFaultSites,
+  describeFaultSites,
+  type FaultSite,
+  type FaultSitePoint,
+  faultKinds,
+  validateFaultSites,
+} from "./fault-sites.ts";
+export {
   decideFault,
   decisionFaults,
   type FaultDecision,

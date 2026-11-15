@@ -48,6 +48,51 @@ file name unless `--seed` is given):
 Exploration stops at the first violation, or when the time budget
 (`budgetMs`, or `--budget-ms`) or the run cap (`--max-runs`) is reached.
 
+## Where faults go
+
+Some bugs need faults at a few chosen points: a step whose three attempts
+must all fail, the last by outliving its timeout. Sampling spends a run's
+faults across every point that can take one, so with a dozen or more such
+points the right three rarely come together. The scenario can say where
+faults go instead, in its bounds:
+
+```ts
+import { defineScenario, stepFaults } from "eutaxy/cloudflare";
+
+export default defineScenario({
+  // ...
+  bounds: {
+    maxFaultsPerRun: 3,
+    maxRedeliveries: 2,
+    faultsAt: [stepFaults("TURNS", "start turn")],
+  },
+});
+```
+
+A run then puts faults only at the effect points a site matches, and only
+of the kinds the matching sites list (each point still allows only its
+own). `stepFaults(binding, step, { attempt?, faults? })` names a Workflow
+step's attempts: where each starts and where its result is persisted. Any
+other site is written as data, matched on the effect's call the way an
+invariant's selector matches a record:
+
+```ts
+faultsAt: [
+  { target: "DO:CHAT", op: "startTurn", faults: ["ambiguous"] },
+  { target: "D1:DB", op: "run", where: { "args.params.0": "o-2" } },
+],
+```
+
+The targets and ops are the ones a trace shows, and every path starts with
+`args`. An invariant's selector such as `objectCall("CHAT", "startTurn")`
+works as a site too. Sites that match no point that may take a fault, in
+any run, make the verdict `UNSUPPORTED` rather than a `BOUNDED` with no
+fault injected. Exhaustive exploration
+gains the most: with faults on a step's attempts only, the space is small
+enough to finish or to reach the violation in a few schedules. The verdict
+states the sites among its assumptions in place of "at any effect point",
+since a `BOUNDED` verdict says nothing about faults elsewhere.
+
 ## Exhaustive exploration
 
 `--exhaustive` runs every schedule within the bounds exactly once, instead

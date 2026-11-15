@@ -10,6 +10,7 @@ import {
   canonicalJson,
   checkInvariants,
   type DeliveryResult,
+  describeFaultSites,
   type EffectLog,
   type EffectRecord,
   type EventRef,
@@ -25,6 +26,7 @@ import {
   seedPrng,
   serializeLog,
   type UnsupportedCause,
+  validateFaultSites,
 } from "@eutaxy/core";
 import { replayChooser, seededChooser } from "./chooser.ts";
 import { ExhaustiveDriver } from "./exhaustive.ts";
@@ -71,9 +73,17 @@ export interface ExploreOptions {
   readonly exhaustive?: boolean | { readonly reduction?: boolean };
 }
 
+/** Where faults go: at any effect point, or only where the bounds' fault sites say. */
+function faultAssumption(bounds: ScenarioSpec["bounds"]): string {
+  const where =
+    bounds.faultsAt === undefined
+      ? "faults: crash_before, crash_after, ambiguous, error at any effect point"
+      : describeFaultSites(bounds.faultsAt);
+  return `${where}; redelivery per the platform's queue model`;
+}
+
 const engineAssumptions: readonly string[] = [
   "schedule points are effect boundaries: proxied bindings, patched timers and fetch; other awaits run in program order",
-  "faults: crash_before, crash_after, ambiguous, error at any effect point; redelivery per the platform's queue model",
   "Date, Math.random, crypto.randomUUID, crypto.getRandomValues, performance.now and timers are virtualised per run from the seed; time starts at 2026-01-01T00:00:00Z and advances 1 ms per effect and to each timer's due time",
   "timers fire in due order; one at a time, only while the invocation is idle (no effect in flight); with several in flight, as the concurrency assumption says; an invocation waiting on something outside Eutaxy makes the run UNSUPPORTED",
   "an effect whose real I/O takes longer than the time budget (the scenario's budgetMs, or the budgetMs option replacing it) is treated as hung: the run is UNSUPPORTED and names the effect",
@@ -352,12 +362,17 @@ export async function explore(
     throw new Error(`budgetMs must be a positive finite number, got ${budgetMs}`);
   const spec =
     budgetMs === undefined ? scenario : { ...scenario, bounds: { ...scenario.bounds, budgetMs } };
+  const siteErrors =
+    spec.bounds.faultsAt === undefined ? [] : validateFaultSites(spec.bounds.faultsAt);
+  if (siteErrors.length > 0) throw new Error(siteErrors.join("; "));
   const now = options.now ?? (() => Date.now());
   const maxRuns = options.maxRuns ?? 100;
   // The runs kept fault-free re-measure the path without faults, which can vary with the seed.
   const faultProbability = options.faultProbability ?? 0.9;
   const assumptions = [
-    ...engineAssumptions,
+    ...engineAssumptions.slice(0, 1),
+    faultAssumption(spec.bounds),
+    ...engineAssumptions.slice(1),
     concurrencyAssumption(spec.bounds),
     ...explorationAssumption(options),
     ...platform.assumptions,
@@ -406,6 +421,8 @@ export async function explore(
   /** Eligible points of a run without faults, and the most any run has had: seeded fault positions. */
   let baseline = 0;
   let longest = 0;
+  /** Whether any run had a point that may take a fault: sites that matched none say nothing. */
+  let anyEligible = false;
   while (
     (exhaustive?.hasMore ?? true) &&
     reached.runs < maxRuns &&
@@ -438,6 +455,7 @@ export async function explore(
     reached.runs++;
     if (run.faultsInjected === 0) baseline = Math.max(baseline, run.eligiblePoints);
     longest = Math.max(longest, run.eligiblePoints);
+    if (run.eligiblePoints > 0) anyEligible = true;
     if (exhaustive) {
       if (exhaustive.mismatch)
         return unsupported(
@@ -495,6 +513,11 @@ export async function explore(
     }
     exhaustive?.checked();
   }
+  if (spec.bounds.faultsAt !== undefined && spec.bounds.maxFaultsPerRun > 0 && !anyEligible)
+    return unsupported(
+      "unsupported_bounds",
+      `bounds.faultsAt matched no effect point that may take a fault in ${reached.runs} run(s), so no fault was injected; compare the sites' targets, ops, conditions and kinds with the effects a trace shows`,
+    );
   // Module-state leak detection: the same schedules, in the opposite order, must give the same logs.
   for (const witness of [...witnesses].reverse()) {
     const again = await replayRun(spec, platform, witness.schedule);

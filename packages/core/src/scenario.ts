@@ -6,6 +6,7 @@
  */
 
 import type { JsonValue } from "./canonical-json.ts";
+import { type FaultSite, validateFaultSites } from "./fault-sites.ts";
 import type { Invariant } from "./invariants.ts";
 
 /** Opaque, JSON-shaped data owned by a platform package. `kind` names its shape. */
@@ -59,6 +60,11 @@ export interface Bounds {
   readonly maxRedeliveries: number;
   readonly maxConcurrentInvocations: number;
   readonly budgetMs: number;
+  /**
+   * Where faults may go: a run spends its faults only at effect points one
+   * of these sites matches, of the kinds they list. Absent: anywhere.
+   */
+  readonly faultsAt?: readonly FaultSite[];
 }
 
 /**
@@ -149,5 +155,6 @@ export function validateScenario(spec: ScenarioSpec): readonly string[] {
   for (const k of ["maxConcurrentInvocations", "budgetMs"] as const) {
     if (!isPositiveInt(spec.bounds[k])) errors.push(`bounds.${k} must be a positive integer`);
   }
+  if (spec.bounds.faultsAt !== undefined) errors.push(...validateFaultSites(spec.bounds.faultsAt));
   return errors;
 }

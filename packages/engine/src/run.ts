@@ -15,6 +15,7 @@
 import {
   type Attempt,
   type Bounds,
+  compileFaultSites,
   decisionTarget,
   type EffectLog,
   type EffectOptions,
@@ -273,9 +274,12 @@ export class Run implements RunHooks {
   readonly concurrent: boolean;
 
   private readonly options: RunOptions;
+  /** The kinds a point may take under the bounds' fault sites (all it allows, without sites). */
+  private readonly sited: ReturnType<typeof compileFaultSites>;
 
   constructor(options: RunOptions) {
     this.options = options;
+    this.sited = compileFaultSites(options.bounds.faultsAt);
     this.turns = new Turns(
       options.chooser,
       this.frames,
@@ -972,16 +976,20 @@ export class Run implements RunHooks {
     return this.eligibleSeen;
   }
 
-  /** The fault at an eligible point, if any: the chooser's pick among none and the allowed kinds. */
+  /**
+   * The fault at an eligible point, if any: the chooser's pick among none and the kinds the point
+   * allows that the bounds' fault sites let through. A point no site matches is not eligible.
+   */
   private decide(point: EffectPoint, ordinal: number): FaultKind | null {
-    if (point.allowed.length === 0) return null;
+    const allowed = this.sited(point);
+    if (allowed.length === 0) return null;
     this.eligibleSeen++;
     const at = { invocation: point.invocation, ordinal };
     const i = this.options.chooser.choose("fault", [
       { label: "none", ...at },
-      ...point.allowed.map((fault) => ({ label: fault, ...at })),
+      ...allowed.map((fault) => ({ label: fault, ...at })),
     ]);
-    return i === 0 ? null : (point.allowed[i - 1] ?? null);
+    return i === 0 ? null : (allowed[i - 1] ?? null);
   }
 
   /** Append one record, with the next sequence number: O(1), so a long run's log stays cheap. */

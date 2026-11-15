@@ -88,6 +88,29 @@ describe("validateScenario", () => {
     expect(errors.filter((e) => e === "every external needs a name")).toHaveLength(2);
   });
 
+  test("validates the fault sites: a target each, known fault kinds, and a kind list that is not empty", () => {
+    const errors = validateScenario({
+      ...good,
+      bounds: {
+        ...defaultBounds,
+        faultsAt: [
+          { target: "D1:DB", op: "run", faults: ["ambiguous"] },
+          { target: "" },
+          { target: "Queue:q", faults: ["timeout" as never] },
+          { target: "Fetch:model", faults: [] },
+        ],
+      },
+    });
+    expect(errors).toEqual([
+      "bounds.faultsAt[1] needs a target",
+      'bounds.faultsAt[2].faults: "timeout" is not a fault kind (crash_before, crash_after, ambiguous, error, cut_off)',
+      "bounds.faultsAt[3].faults must name at least one fault kind; leave it out for every kind",
+    ]);
+    expect(validateScenario({ ...good, bounds: { ...defaultBounds, faultsAt: [] } })).toEqual([
+      "bounds.faultsAt must name at least one site; leave it out for faults anywhere",
+    ]);
+  });
+
   test("requires at least one invariant", () => {
     expect(validateScenario({ ...good, invariants: [] })).toContain(
       "at least one invariant is required",

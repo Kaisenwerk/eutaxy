@@ -9,7 +9,15 @@ import type { EffectRecord, RunHooks, ScenarioSpec } from "@eutaxy/core";
 import { explore, Run, replayChooser, runOnce, virtualEpoch } from "@eutaxy/engine";
 import { describe, expect, test } from "vitest";
 import { createCloudflarePlatform, type WorkerHandler } from "./platform.ts";
-import { defineScenario, external, fetchCall, http, workflow, workflowRows } from "./scenario.ts";
+import {
+  defineScenario,
+  external,
+  fetchCall,
+  http,
+  stepFaults,
+  workflow,
+  workflowRows,
+} from "./scenario.ts";
 import {
   constructWorkflow,
   deliverWorkflow,
@@ -871,6 +879,44 @@ describe("a Workflow started from a webhook", () => {
       maxRuns: 60,
     });
     expect(fixed.kind).toBe("BOUNDED");
+  });
+
+  test("stepFaults puts faults only on the named step's attempts, of the kinds listed", async () => {
+    expect(stepFaults("FLOW", "post reply", { attempt: 2, faults: ["ambiguous"] })).toEqual({
+      target: "Workflow:FLOW",
+      where: { "args.step": "post reply", "args.attempt": 2 },
+      faults: ["ambiguous"],
+    });
+    for (const attempt of [0, 1.5])
+      expect(() => stepFaults("FLOW", "post reply", { attempt })).toThrow(
+        `stepFaults: attempt counts from 1, got ${attempt}`,
+      );
+    const base = scenario("ReplyFlow");
+    const sited = (site: ReturnType<typeof stepFaults>): ScenarioSpec => ({
+      ...base,
+      bounds: { ...base.bounds, faultsAt: [site] },
+    });
+    const exhaustively = { seed: 3, leakCheckRuns: 0, exhaustive: true } as const;
+    // An attempt that ran but counted as failed is retried: the reply is posted twice.
+    const found = await explore(
+      sited(stepFaults("FLOW", "post reply", { faults: ["ambiguous"] })),
+      platform(),
+      exhaustively,
+    );
+    expect(found.kind).toBe("VIOLATED");
+    if (found.kind !== "VIOLATED") return;
+    expect(found.schedule.faults.map((f) => `${f.fault} ${f.target} ${f.op}`)).toEqual([
+      "ambiguous Workflow:FLOW step_result",
+    ]);
+    // The generate step's faults cannot post twice, and nothing else may take one.
+    const elsewhere = await explore(
+      sited(stepFaults("FLOW", "generate")),
+      platform(),
+      exhaustively,
+    );
+    expect(elsewhere.kind).toBe("BOUNDED");
+    if (elsewhere.kind !== "BOUNDED") return;
+    expect(elsewhere.reached.exhaustive?.complete).toBe(true);
   });
 
   test("a failing step is retried in virtual time, up to its limit", async () => {

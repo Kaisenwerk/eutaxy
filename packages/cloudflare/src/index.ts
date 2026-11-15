@@ -73,6 +73,7 @@ export {
   scriptedObject,
   service,
   serviceCall,
+  stepFaults,
   unique,
   type WebSocketConnectionInput,
   type WebSocketDrive,

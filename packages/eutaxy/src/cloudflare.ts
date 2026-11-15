@@ -77,6 +77,7 @@ export {
   service,
   serviceCall,
   snapshotD1,
+  stepFaults,
   unique,
   type WebSocketConnectionInput,
   type WebSocketDrive,

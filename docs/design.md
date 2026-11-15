@@ -1269,6 +1269,33 @@ without faults, which can vary with the seed (randomness, the order of
 turns): a first run that happened to take a short path does not hide the
 deeper points of a longer one.
 
+**Fault sites** (`bounds.faultsAt`) say where faults may go. Uniform
+placement is right when nothing is known about the bug, and wrong when it
+needs faults at a few chosen points: a bug that needs a step's three
+attempts to fail, the last by outliving its timeout, needs three chosen
+points among the many of a real run, and sampling spends its faults across
+all of them. A site is matched on the effect's call as an `EffectSelector`
+matches a record (`target`, `op`, `where` and `atLeast` on dot paths into
+`{ args }`, so every path starts with `args`; an invariant's selector such
+as `objectCall()` serves as a site, its record kind ignored), and may list
+fault kinds. The run narrows each
+point's allowed faults to the kinds the matching sites list, so a point no
+site matches takes none and is not eligible; seeded placement counts,
+exhaustive exploration enumerates and shrinking removes only the eligible
+points that remain, so all three follow from that one narrowing in the run
+(`Run.decide`). Replaying a schedule under sites drops a recorded fault no
+site allows. The verdict's assumptions name the sites in place of the line
+that says faults go anywhere. Sites that matched no point that may take a
+fault in any run (a misspelt target, or kinds the points never allow) make
+the verdict `UNSUPPORTED` (`unsupported_bounds`) instead of a `BOUNDED`
+that injected nothing. `stepFaults(binding, step, { attempt?,
+faults? })` in `eutaxy/cloudflare` builds the site for a Workflow step's
+attempts (`args.step`, and `args.attempt` when given), which covers both
+the point where an attempt starts and the one where its result is
+persisted. A site matches on the call's own arguments, not on which
+invocation made it or the how-manyth call it is, so a site means the same
+thing however earlier faults moved the run.
+
 **Exhaustive exploration** (`explore(..., { exhaustive: true })`, `eutaxy
 check --exhaustive`) runs every schedule within the bounds once instead of
 drawing schedules from the seed. A run's nondeterminism is a sequence of

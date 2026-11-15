@@ -8,7 +8,7 @@ outline: 2
 
 # `eutaxy`
 
-`import { … } from "eutaxy";` 18 functions and values, 53 types; each links to the file that declares it.
+`import { … } from "eutaxy";` 18 functions and values, 54 types; each links to the file that declares it.
 
 ## Functions, classes and values
 
@@ -247,6 +247,12 @@ One injected fault: which effect of which invocation it hit, and what kind of fa
 `type FaultKind`
 
 `cut_off` is a crash that happens after a response or acknowledgement was already sent, so only background work (ctx.waitUntil) is lost; platforms offer it at the point where that work would start. [Source](https://github.com/Kaisenwerk/eutaxy/blob/main/packages/core/src/faults.ts)
+
+### `FaultSite`
+
+`interface FaultSite`
+
+Effect points a fault may hit, matched on the effect's call as an `EffectSelector` matches a record: `target` exactly, `op` when given, `where` and `atLeast` on dot paths into `{ args }`. [Source](https://github.com/Kaisenwerk/eutaxy/blob/main/packages/core/src/fault-sites.ts)
 
 ### `FunctionSpec`
 

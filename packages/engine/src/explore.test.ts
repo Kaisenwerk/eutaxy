@@ -244,6 +244,133 @@ describe("explore", () => {
   });
 });
 
+describe("fault sites: the bounds say where faults may go", () => {
+  const exhaustively = { seed: "sites", exhaustive: true, now: fixedClock() } as const;
+
+  test("a run spends its faults only at matching points, of the listed kinds, and the verdict says so", async () => {
+    const atInsert: ScenarioSpec = {
+      ...spec,
+      bounds: { ...spec.bounds, faultsAt: [{ target: "D1:DB", op: "run", faults: ["ambiguous"] }] },
+    };
+    const verdict = await explore(atInsert, createFakePlatform(buggyConsumer), exhaustively);
+    expect(verdict.kind).toBe("VIOLATED");
+    if (verdict.kind !== "VIOLATED") return;
+    expect(verdict.schedule.faults.map((f) => `${f.fault} ${f.target} ${f.op}`)).toEqual([
+      "ambiguous D1:DB run",
+    ]);
+    expect(verdict.assumptions).toContain(
+      "faults only where the scenario's bounds say: ambiguous at D1:DB run; redelivery per the platform's queue model",
+    );
+    // It takes the place of the line that says faults go anywhere.
+    expect(verdict.assumptions.filter((a) => a.includes("at any effect point"))).toEqual([]);
+  });
+
+  test("a site that leaves out every fault the bug needs: every schedule holds, and there are fewer of them", async () => {
+    const platform = () => createFakePlatform(buggyConsumer);
+    const everywhere = await explore(spec, platform(), exhaustively);
+    expect(everywhere.kind).toBe("VIOLATED");
+    // An error on the insert commits nothing, and the redelivery inserts once.
+    const onlyErrors: ScenarioSpec = {
+      ...spec,
+      bounds: { ...spec.bounds, faultsAt: [{ target: "D1:DB", op: "run", faults: ["error"] }] },
+    };
+    const holds = await explore(onlyErrors, platform(), exhaustively);
+    expect(holds.kind).toBe("BOUNDED");
+    if (holds.kind !== "BOUNDED") return;
+    expect(holds.reached.exhaustive?.complete).toBe(true);
+    const unrestricted = await explore(
+      spec,
+      createFakePlatform(buggyConsumer, { idempotent: true }),
+      exhaustively,
+    );
+    expect(unrestricted.kind).toBe("BOUNDED");
+    if (unrestricted.kind !== "BOUNDED") return;
+    expect(holds.reached.exhaustive?.schedules).toBeLessThan(
+      unrestricted.reached.exhaustive?.schedules ?? 0,
+    );
+  });
+
+  test("a site matches on the call's arguments; several sites add up their kinds", async () => {
+    const onlyO2: ScenarioSpec = {
+      ...spec,
+      bounds: {
+        ...spec.bounds,
+        maxFaultsPerRun: 2,
+        faultsAt: [
+          {
+            target: "D1:DB",
+            op: "run",
+            where: { "args.params.0": "o-2" },
+            faults: ["crash_after"],
+          },
+          { target: "D1:DB", op: "run", where: { "args.params.0": "o-2" }, faults: ["ambiguous"] },
+        ],
+      },
+    };
+    const verdict = await explore(onlyO2, createFakePlatform(buggyConsumer), exhaustively);
+    expect(verdict.kind).toBe("VIOLATED");
+    if (verdict.kind !== "VIOLATED") return;
+    expect(verdict.violation.invariant).toBe("recorded-once");
+    expect(verdict.keptEvents).toEqual(["m2"]);
+    for (const f of verdict.schedule.faults)
+      expect(["crash_after", "ambiguous"]).toContain(f.fault);
+    expect(verdict.assumptions).toContain(
+      'faults only where the scenario\'s bounds say: crash_after at D1:DB run where {"args.params.0":"o-2"}; ambiguous at D1:DB run where {"args.params.0":"o-2"}; redelivery per the platform\'s queue model',
+    );
+  });
+
+  test("sites no point of any run matched end the check UNSUPPORTED, not a fault-free BOUNDED", async () => {
+    const misspelt: ScenarioSpec = {
+      ...spec,
+      bounds: { ...spec.bounds, faultsAt: [{ target: "D1:BD", op: "run" }] },
+    };
+    for (const options of [exhaustively, { seed: "sites", maxRuns: 20, now: fixedClock() }]) {
+      const verdict = await explore(misspelt, createFakePlatform(buggyConsumer), options);
+      expect(verdict.kind).toBe("UNSUPPORTED");
+      if (verdict.kind !== "UNSUPPORTED") continue;
+      expect(verdict.cause).toBe("unsupported_bounds");
+      expect(verdict.reason).toMatch(
+        /^bounds\.faultsAt matched no effect point that may take a fault in \d+ run\(s\), so no fault was injected; compare the sites' targets, ops, conditions and kinds with the effects a trace shows$/,
+      );
+    }
+    // With no faults allowed at all, there is nothing for the sites to match.
+    const none = await explore(
+      { ...misspelt, bounds: { ...misspelt.bounds, maxFaultsPerRun: 0 } },
+      createFakePlatform(buggyConsumer),
+      { seed: "sites", maxRuns: 5, now: fixedClock() },
+    );
+    expect(none.kind).toBe("BOUNDED");
+  });
+
+  test("explore refuses sites the scenario's validation would", async () => {
+    await expect(
+      explore(
+        { ...spec, bounds: { ...spec.bounds, faultsAt: [] } },
+        createFakePlatform(buggyConsumer),
+        {
+          seed: "sites",
+        },
+      ),
+    ).rejects.toThrow(
+      "bounds.faultsAt must name at least one site; leave it out for faults anywhere",
+    );
+  });
+
+  test("a schedule replayed under sites keeps only the faults a site allows", async () => {
+    const platform = createFakePlatform(buggyConsumer);
+    const found = await explore(spec, platform, { seed: "t1", now: fixedClock() });
+    expect(found.kind).toBe("VIOLATED");
+    if (found.kind !== "VIOLATED") return;
+    const elsewhere: ScenarioSpec = {
+      ...restrictSpec(platform, spec, found.keptEvents),
+      // A target no effect has: no point matches, so the recorded faults find nowhere to land.
+      bounds: { ...spec.bounds, faultsAt: [{ target: "Fetch:nowhere" }] },
+    };
+    const log = await replay(elsewhere, platform, found.schedule);
+    expect(log.entries.filter((e) => e.kind === "fault")).toEqual([]);
+  });
+});
+
 describe("state invariants over the end-of-run snapshot", () => {
   test("everyRow over the snapshot catches the duplicate as a count above one", async () => {
     const onePerOrder: ScenarioSpec = {
