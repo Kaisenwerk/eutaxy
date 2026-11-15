@@ -170,8 +170,8 @@ Notes on releases along the way:
 ## Patch work
 
 Work that changes no phase's gate ships as a patch release of the current
-minor, each item when a target needs it (the performance items and the
-proof cache are v0.18's and wait for it unless a target needs one sooner):
+minor, each item when a target needs it (the performance items v0.18
+does not take wait for a measurement that asks for them):
 - **Calls between Durable Objects and a scripted Durable Object**, the
   two things v0.17 first held, as `0.17.1`; both are in. One object
   calling another through its own `env` is an effect hosting the second
@@ -202,7 +202,7 @@ proof cache are v0.18's and wait for it unless a target needs one sooner):
   without the schedule, seeing how a run got there meant opening the
   engine, which an adopter of the published package cannot do. A test
   the command writes to replay such a run, as it writes one for a
-  violation, waits to be decided with pinned schedules (the candidates).
+  violation, is v0.18's, with pinned schedules.
 - A configurable number of `TESTED` draws on the command line (the API
   takes `inputs`).
 - The command loads the spec reader and the engines only where specs are
@@ -234,14 +234,131 @@ proof cache are v0.18's and wait for it unless a target needs one sooner):
   `createBatch()` and `deleteBatch()`, as the engine documents them.
 - Left over from earlier phases: concurrent delivery on the AWS platform
   (it still delivers one event at a time); latency on scripted externals;
-  Workflow rollback handlers. Dynamic partial-order reduction and one
-  random stream per invocation are v0.18's.
+  Workflow rollback handlers.
 
 ## After v0.17
 
-Each phase's text is made exact, gate included, when it starts. v0.18
-holds the measurement it starts on; v0.19 needs it and the semantics the
-phases before it settled.
+Each phase's text is made exact, gate included, when it starts. v0.18 is
+the current phase; v0.19 needs it and the semantics the phases before it
+settled.
+
+### v0.18 — Runs where they count
+
+An adopter planted a bug that needs one Workflow step to time out on all
+three of its attempts and then one order of the late calls: three chosen
+fault points among some 180 in a run. Sampling with up to three faults a
+run stayed `BOUNDED` over 297 runs and 120 s, while a schedule pinned by
+hand found it in two seeds of twelve, so that test lives on `replay()` in
+a Vitest config of the adopter's own, outside the command. The phase lets
+the scenario carry it, and brings a run's cost and the suite's time
+under numbers it records:
+- **Saying where faults go.** A scenario's bounds can name where faults
+  may go, by what stays put in a run: a Workflow step by name (every
+  attempt, or attempt n), a binding and its method, an object's method.
+  A run then spends its faults only at points that match, and a selector
+  naming every attempt of a step puts a fault on each, so the runs explore
+  orders instead of placements. A scenario without one explores as today.
+- **Pinned schedules a scenario carries.** A scenario lists schedules
+  that `eutaxy check` replays before it explores, each fault addressed as
+  a selector addresses it (a step's name and attempt; a binding, its
+  method and the call's number), where today's address is an invocation
+  and an ordinal, which shift with each fault placed before them. A
+  pinned schedule's violation is reported, with its regression test, as
+  any violation is, and the test the command writes for an `UNSUPPORTED`
+  run, so its schedule can be replayed, uses the same addresses.
+- **The cost of a run with an object's timers.** A run of the
+  `agent-poll` example (an Agent that schedules its close, two votes in
+  flight) costs about eight times a run of the `workflow-approval` or
+  `lease-pool` example (the table below), and an adopter's real Agent
+  ran at about 96 ms a run. Where that time goes is found before
+  anything changes, then brought down.
+- **A ceiling on the suite.** The check job fails, naming its slowest
+  files, once the test suite passes a ceiling, so growth like v0.17's
+  (the check went from about 4 to 8.5 minutes on the CI runner in a
+  week, and was noticed by eye) stops the change that causes it.
+
+Gate, in CI: a planted bug of the adopter's shape (a fence checked once,
+a step with two retries, two invocations in flight) is `BOUNDED` under
+sampling with three faults a run at its budget, asserted, and `VIOLATED`
+by `eutaxy check` once the scenario says the step's attempts are where
+faults go; the same violation, pinned in the scenario by step name and
+attempt, is replayed by the command and reported, and the fixed Worker
+holds under both; a run of the `agent-poll` example's fixed scenario
+costs at most three times a run of `workflow-approval`'s, measured
+through the command on the same runner; the check job fails its suite
+above 420 s; and every example and earlier test stays green.
+
+The measurement it starts on, taken on `main` at 587db5e (2026-11-15,
+the `0.17.2` release commit), once every gate had moved into its package:
+`pnpm check` on the CI runner (`ubuntu-latest`, 4 vCPUs) over the last
+three green runs on `main` (587db5e, 493cfe2, 408516b; the suite is the
+same but for five tests), and on a development machine (Apple M3, 8
+cores, 16 GB, Node 24.14) three times. Lint and the type check take a few
+seconds; the rest is the test suite, 190 files and 1977 tests, run by
+Vitest in parallel.
+
+|                          | CI runner           | Development machine |
+| ------------------------ | ------------------- | ------------------- |
+| `pnpm check`, end to end | 293 s, 304 s, 352 s | 106 s, 114 s, 128 s |
+| Test suite, wall clock   | 289 s, 300 s, 347 s | 103 s, 112 s, 126 s |
+
+Vitest prints each file's time on the CI runner only. There the files'
+own times sum to 748 s, 775 s and 892 s, about two and a half times the
+wall clock, and split, medians:
+
+| Test files                               | CI    |
+| ---------------------------------------- | ----- |
+| the command end to end (`tests/`)        | 263 s |
+| the packages' own tests                  | 162 s |
+| the packages' tests inside workerd       | 118 s |
+| the planted bugs (`corpus/planted-bugs`) | 84 s  |
+| systems only the command builds          | 74 s  |
+| the prover contracts                     | 45 s  |
+| the differential corpus                  | 29 s  |
+
+The CI suite took 206 s to 274 s on 2026-11-09, at v0.16's close, 501 s
+on 2026-11-13 with v0.17's gates, and about 300 s once the gates were cut
+to one check per claim and moved. The files that dominate,
+medians on the CI runner:
+
+| File                                      | CI    | What takes the time                                                                                                           |
+| ----------------------------------------- | ----- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `tests/cli-check.test.ts`                 | 120 s | Fourteen tests of `eutaxy check`, 45 s run alone on the development machine: the CI time is mostly waiting for a CPU          |
+| `packages/engine/src/nested-calls*`       | 93 s  | Four files, every timing direct and nested under every fault placement; idle on the engine's real zero timers, not on the CPU |
+| `corpus/prover-contracts/harness.test.ts` | 45 s  | The Lean contracts; module-level constants and `floor` is most of it, the prover's elaboration                                |
+| `tests/systems/callback`                  | 44 s  | A caller, its callee and the callee's object calling back, through the command                                                |
+| `tests/cli-specs.test.ts`                 | 44 s  | The refund example's properties `PROVEN` by the Lean engine, all of it elaboration                                            |
+| `packages/cli/src/report.test.ts`         | 43 s  | `eutaxy report` end to end                                                                                                    |
+| `tests/examples.test.ts`                  | 38 s  | One `eutaxy check` per example and its fix; `agent-poll` is the slow one                                                      |
+
+An `eutaxy check` of one run takes about 1.6 s on the development
+machine, nearly all of it the isolate's build and workerd's start, and
+each further run of an ordinary scenario costs a few milliseconds. A run of an object with
+timers costs more, measured through the command with 1 and 300 runs on
+the development machine, medians of three:
+
+| Fixed scenario      | 1 run | 300 runs | Per run |
+| ------------------- | ----- | -------- | ------- |
+| `agent-poll`        | 3.0 s | 23.8 s   | 69 ms   |
+| `workflow-approval` | 1.8 s | 4.4 s    | 8.7 ms  |
+| `lease-pool`        | 1.6 s | 3.8 s    | 7.4 ms  |
+
+The ceiling of 420 s sits above the CI suite's spread with no code change
+(289 s to 347 s over three runs here; 206 s to 274 s on one day at
+v0.16's close), so it fails a build only on real growth. The per-run gate
+is a ratio on one runner, so the runner's speed and load cancel out.
+
+Not taken in this phase, since no measurement asks for them yet: the
+engines' modules in parallel and a proof cache keyed by source, spec and
+engine version (the report's time is the Lean prover's elaboration, run
+once per change in CI); one random stream per invocation, so a shrunk
+violation gets past the random ids an earlier event drew; dynamic
+partial-order reduction where the sleep-set reduction loses too often;
+and fresh module state per run, which would make the leak check fire
+less often at a cost in speed. Each joins a phase when a check or report
+time, or an adopter's run, shows it is the one that matters, which is the
+lesson of 0.15.x: the performance items taken there on inspection showed
+no gain when measured.
 
 ### Candidates: the larger gaps in the model
 
@@ -276,81 +393,8 @@ Some reasons stay by design: the replay and leak checks (`not_replayable`,
 `module_state_leak`) are what make a verdict trustworthy, and work Eutaxy
 cannot see (a promise nothing settles, real I/O past the budget, a raw TCP
 socket) is reported rather than guessed. The leak check could fire less
-often with fresh module state per run, at a cost in speed that is
-v0.18's to weigh.
-
-### v0.18 — Runs that scale
-
-The time a check and a report take, as scenarios and spec modules grow:
-the engines' modules in parallel, the proof cache keyed by source, spec
-and engine version; and the engine items a growing scenario
-meets: one random stream per invocation, so a shrunk violation gets past
-the random ids an earlier event drew, and dynamic partial-order reduction
-where the sleep-set reduction loses too often. It starts on a measurement,
-not on inspection: a check or report time, on the corpora or on an
-adopter's suite, that its gate must bring down, recorded with the phase.
-The performance items taken on inspection during 0.15.x showed no gain
-when measured, so none is taken that way again. The gate states a ceiling
-on the corpora's check and report time on the CI runner and holds it.
-
-Where the runs are spent belongs here with how long they take. An
-adopter planted a bug that needs a timeout on all three attempts of one
-Workflow step and then one order of the late calls: three chosen fault
-points among some 180 in a run. Sampling with up to three faults a run
-stayed `BOUNDED` over 297 runs and 120 s, while a schedule pinned by hand
-found it in two seeds of twelve. So the phase also covers saying where
-faults go (every attempt of a named step, or only the points a selector
-matches), so the runs explore orders, and pinned schedules a scenario
-carries and `eutaxy check` replays, addressed by what stays put when a
-fault is placed before them (a step's name and attempt; a binding, its
-method and the call's number) where today's address is an invocation and
-an ordinal.
-
-The measurement, taken on `main` at e9de29b (2026-11-09) once v0.16
-closed: `pnpm check` on the CI runner (`ubuntu-latest`, 4 vCPUs) over its
-three green runs that day, and on a development machine (Apple M3, 8
-cores, 16 GB, Node 24.14) three times, medians and spreads. Lint takes
-under a second and the type check about two seconds on either; the rest
-is the test suite, 157 files, run by Vitest in parallel.
-
-|                                            | CI runner           | Development machine |
-| ------------------------------------------ | ------------------- | ------------------- |
-| `pnpm check`, end to end                   | 209 s, 233 s, 279 s | 81 s, 87 s, 87 s    |
-| Test suite, wall clock                     | 206 s, 229 s, 274 s | 80 s, 85 s, 86 s    |
-| Test files, sum of their own times         | 549 s               | 429 s               |
-| of which the command end to end (`tests/`) | 195 s               | 167 s               |
-| the phase gates (`corpus/gates`)           | 159 s               | 134 s               |
-| the planted bugs (`corpus/planted-bugs`)   | 75 s                | 49 s                |
-| the packages' own tests                    | 63 s                | 36 s                |
-| the prover contracts                       | 42 s                | 37 s                |
-| the differential corpus                    | 15 s                | 7 s                 |
-
-The files that dominate, medians over the runs, CI then local:
-
-| File                                      | CI   | Local | What takes the time                                                                                                                                                                                 |
-| ----------------------------------------- | ---- | ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `corpus/gates/v0-16-step-timeout`         | 87 s | 61 s  | Eight `check()` cells, each seeded and exhaustive within a 30 s budget, four of them with a step attempt napping three virtual minutes inside an object, and four replays; the slowest cell is 12 s |
-| `tests/cli-specs.test.ts`                 | 51 s | 46 s  | One test: the refund example's properties `PROVEN` by the Lean engine, 36 s, all of it elaboration                                                                                                  |
-| `tests/cli-check.test.ts`                 | 49 s | 41 s  | Eight `eutaxy check` invocations at 3 s to 9 s each, the isolate build and the workerd start before any exploration                                                                                 |
-| `corpus/prover-contracts/harness.test.ts` | 42 s | 37 s  | The Lean contracts; one of them, module-level constants and `floor`, is 36 s on its own                                                                                                             |
-| `packages/cli/src/report.test.ts`         | 42 s | 15 s  | `eutaxy report` end to end; the byte-identical-output test alone is 10 s                                                                                                                            |
-| `tests/examples.test.ts`                  | 41 s | 41 s  | Twelve `eutaxy check` runs, one per example and its fix: `agent-poll` takes 21 s and 17 s, every other example 3 s to 6 s                                                                           |
-| `corpus/gates/v0-16-object-timing`        | 23 s | 28 s  | Sixteen tests over an object's timers around its answer, six of them `check()` cells of 1 s to 9 s                                                                                                  |
-| `tests/self-check.test.ts`                | 22 s | 20 s  | Twenty refutations of planted invariant bugs, 2 s to 17 s each                                                                                                                                      |
-
-Where the time goes, then, is three places, none of them the exploration
-of an ordinary scenario: the two v0.16 gates and the `agent-poll` example,
-whose runs explore objects with timers and late turns and together hold a
-third of the suite's own time; the fixed cost of an `eutaxy check`
-invocation, about three seconds before the first schedule runs, paid some
-twenty times across the command's tests and the examples; and two Lean
-proofs of 36 s each, which is the prover's elaboration and not Eutaxy's
-code. A planted bug's check in workerd takes 2 s to 11 s, and the one
-adopter number on record, a 300-run seeded check of a real flow across
-two Workers, took 31 s. The gate's ceiling is chosen from these numbers
-when the phase starts; the CI runner's suite spread, 206 s to 274 s on
-one day with no code change between two of the runs, is the noise any
-ceiling has to sit above.
+often with fresh module state per run, at a cost in speed (v0.18 lists
+it among the items waiting for a measurement).
 
 ### v0.19 — The model proven
 
