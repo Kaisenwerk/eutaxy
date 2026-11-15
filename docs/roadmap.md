@@ -255,9 +255,14 @@ under numbers it records:
 - **Saying where faults go.** A scenario's bounds can name where faults
   may go, by what stays put in a run: a Workflow step by name (every
   attempt, or attempt n), a binding and its method, an object's method.
-  A run then spends its faults only at points that match, and a selector
-  naming every attempt of a step puts a fault on each, so the runs explore
-  orders instead of placements. A scenario without one explores as today.
+  A run then spends its faults only at points that match, of the kinds
+  listed, so the few placements left are explored with their orders, and
+  exhaustively where the space is small. A site narrows where faults go
+  rather than forcing one at every match, since narrowing alone made the
+  adopter's shape a dozen schedules of exhaustive exploration. A scenario
+  without one explores as today. In: `bounds.faultsAt`, with `stepFaults` for a step's attempts and the
+  planted bug `workflow-fence-after-every-attempt`, which sampling leaves
+  `BOUNDED` and the sites find, through `check()` and `eutaxy check`.
 - **Pinned schedules a scenario carries.** A scenario lists schedules
   that `eutaxy check` replays before it explores, each fault addressed as
   a selector addresses it (a step's name and attempt; a binding, its

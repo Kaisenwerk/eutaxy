@@ -1,0 +1,8 @@
+{
+  "expect": {
+    "verdict": "VIOLATED",
+    "invariant": "fenced-turns-never-run"
+  },
+  "fault": "a fault on each of the three attempts of the step that starts the turn, the last one outliving its timeout (ambiguous on the step), so the Workflow abandons the turn while that attempt waits for the model, and the attempt writes its run after the fence was set",
+  "description": "A Workflow starts a chat turn on an object in a step with a timeout and two retries, and abandons the turn when every attempt has failed. The object checks the fence before asking the model and writes the run after, so an attempt that outlived the step's timeout runs a turn that was abandoned meanwhile. Sampling over every point does not reach it; faults placed on the step's attempts do."
+}
