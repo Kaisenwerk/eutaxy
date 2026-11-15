@@ -270,7 +270,11 @@ under numbers it records:
   and an ordinal, which shift with each fault placed before them. A
   pinned schedule's violation is reported, with its regression test, as
   any violation is, and the test the command writes for an `UNSUPPORTED`
-  run, so its schedule can be replayed, uses the same addresses.
+  run, so its schedule can be replayed, uses the same addresses. In:
+  `ScenarioSpec.pinned` (a fault at the `call`-th call a site matches,
+  under listed seeds), `pin_not_placed` for a fault a run did not place,
+  and `pinned.sim.ts` beside the planted bug, through `check()` and
+  `eutaxy check`; the test for an `UNSUPPORTED` run is next.
 - **The cost of a run with an object's timers.** A run of the
   `agent-poll` example (an Agent that schedules its close, two votes in
   flight) costs about eight times a run of the `workflow-approval` or

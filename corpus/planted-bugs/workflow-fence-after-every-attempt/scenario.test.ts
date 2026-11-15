@@ -2,10 +2,11 @@
 
 import * as cloudflareTest from "cloudflare:test";
 import { env } from "cloudflare:workers";
-import { renderText } from "eutaxy";
+import { checkInvariants, renderText, replay, restrictSpec } from "eutaxy";
 import { check, cloudflareRegressionTest, createCloudflarePlatform } from "eutaxy/cloudflare";
 import { expect, test } from "vitest";
 import manifest from "./manifest.json";
+import pinned, { fixed as fixedPinned } from "./pinned.sim.ts";
 import committedRegression from "./regression.test.ts?raw";
 import scenario, { anywhere, turn } from "./scenario.sim.ts";
 import * as worker from "./worker.ts";
@@ -67,4 +68,29 @@ test("the fixed object's second fence check holds where sampling with the same s
   expect(planted.kind, renderText(planted)).toBe("VIOLATED");
   const verdict = await check(turn("SAFE_CHAT", true), platform(), options);
   expect(verdict.kind, renderText(verdict)).toBe("BOUNDED");
+});
+
+test("pinned on each attempt of the step by its name and attempt, the schedule the scenario carries finds it, and the fixed object holds under every seed", async () => {
+  const options = { seed: "corpus", budgetMs: 120_000, maxRuns: 1 } as const;
+  const verdict = await check(pinned, platform(), options);
+  expect(verdict.kind, renderText(verdict)).toBe("VIOLATED");
+  if (verdict.kind !== "VIOLATED") return;
+  expect(verdict.violation.invariant).toBe(manifest.expect.invariant);
+  expect(verdict.pinned).toBe("every attempt of start turn outlives its timeout");
+  expect(verdict.schedule.faults.map((f) => `${f.fault} ${f.target} ${f.op}`)).toEqual([
+    "ambiguous Workflow:TURNS step",
+    "ambiguous Workflow:TURNS step",
+    "ambiguous Workflow:TURNS step",
+  ]);
+  // What its regression test does: the recorded schedule replays the violation.
+  const p = platform();
+  const log = await replay(restrictSpec(p, pinned, verdict.keptEvents), p, verdict.schedule);
+  expect(checkInvariants(log, pinned.invariants).map((v) => v.invariant)).toEqual([
+    manifest.expect.invariant,
+  ]);
+  const held = await check(fixedPinned, platform(), options);
+  expect(held.kind, renderText(held)).toBe("BOUNDED");
+  // The twelve pinned runs, each with its schedule placed in full, then exploration's one run.
+  expect(held.reached.runs).toBeGreaterThanOrEqual(13);
+  expect(held.reached.faultsInjected).toBeGreaterThanOrEqual(36);
 });

@@ -984,7 +984,11 @@ export class Run implements RunHooks {
     const allowed = this.sited(point);
     if (allowed.length === 0) return null;
     this.eligibleSeen++;
-    const at = { invocation: point.invocation, ordinal };
+    const at = {
+      invocation: point.invocation,
+      ordinal,
+      call: { target: point.target, op: point.op, args: point.args },
+    };
     const i = this.options.chooser.choose("fault", [
       { label: "none", ...at },
       ...allowed.map((fault) => ({ label: fault, ...at })),

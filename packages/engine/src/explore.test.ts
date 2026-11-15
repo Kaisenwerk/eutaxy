@@ -330,7 +330,7 @@ describe("fault sites: the bounds say where faults may go", () => {
       if (verdict.kind !== "UNSUPPORTED") continue;
       expect(verdict.cause).toBe("unsupported_bounds");
       expect(verdict.reason).toMatch(
-        /^bounds\.faultsAt matched no effect point that may take a fault in \d+ run\(s\), so no fault was injected; compare the sites' targets, ops, conditions and kinds with the effects a trace shows$/,
+        /^bounds\.faultsAt matched no effect point that may take a fault in \d+ run\(s\) of exploration, so no fault was injected; compare the sites' targets, ops, conditions and kinds with the effects a trace shows$/,
       );
     }
     // With no faults allowed at all, there is nothing for the sites to match.

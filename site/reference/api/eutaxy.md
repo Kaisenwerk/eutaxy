@@ -8,7 +8,7 @@ outline: 2
 
 # `eutaxy`
 
-`import { … } from "eutaxy";` 18 functions and values, 54 types; each links to the file that declares it.
+`import { … } from "eutaxy";` 18 functions and values, 56 types; each links to the file that declares it.
 
 ## Functions, classes and values
 
@@ -58,7 +58,7 @@ A Vitest test file that replays a violation's shrunk schedule: by default it fai
 
 `function explore(scenario: ScenarioSpec, platform: Platform, options: ExploreOptions): Promise<ScenarioVerdict>`
 
-Explore a scenario on a platform: run it under schedules drawn from the seed (or every schedule within the bounds, when exhaustive), shrink the first violation found, and return the verdict. [Source](https://github.com/Kaisenwerk/eutaxy/blob/main/packages/engine/src/explore.ts)
+Explore a scenario on a platform: run its pinned schedules, then run it under schedules drawn from the seed (or every schedule within the bounds, when exhaustive), shrink the first violation exploration found, and return the verdict. [Source](https://github.com/Kaisenwerk/eutaxy/blob/main/packages/engine/src/explore.ts)
 
 ### `observeCore`
 
@@ -301,6 +301,18 @@ Every spec of one module, and what did not read. [Source](https://github.com/Kai
 `interface ObservedCall`
 
 One call of an observed core function from outside its module: the function, its arguments, whether it threw. [Source](https://github.com/Kaisenwerk/eutaxy/blob/main/packages/engine/src/observe.ts)
+
+### `PinnedFault`
+
+`interface PinnedFault`
+
+One fault of a pinned schedule: the kind, at the `call`-th call of the run that `at` matches. [Source](https://github.com/Kaisenwerk/eutaxy/blob/main/packages/core/src/pinned-schedules.ts)
+
+### `PinnedSchedule`
+
+`interface PinnedSchedule`
+
+A schedule a scenario carries: its faults, placed in every run of each seed in `seeds` (the run's seed, from which its virtual globals and, with several invocations in flight, its turns are drawn; default `[0]`). [Source](https://github.com/Kaisenwerk/eutaxy/blob/main/packages/core/src/pinned-schedules.ts)
 
 ### `Platform`
 

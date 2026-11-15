@@ -186,13 +186,21 @@ export function renderText(verdict: ScenarioVerdict): string {
       );
       out.push(`Keys: ${verdict.violation.keys.join(", ")}`);
       out.push("");
-      out.push(
-        `Schedule (run seed ${verdict.schedule.seed}), events kept: ${verdict.keptEvents.join(", ")}`,
-      );
-      out.push(...faultLines(verdict.schedule));
-      out.push(
-        `Shrunk: ${verdict.shrunk.eventsRemoved} event(s) and ${verdict.shrunk.faultsRemoved} fault(s) removed in ${verdict.shrunk.runs} run(s)`,
-      );
+      if (verdict.pinned === undefined) {
+        out.push(
+          `Schedule (run seed ${verdict.schedule.seed}), events kept: ${verdict.keptEvents.join(", ")}`,
+        );
+        out.push(...faultLines(verdict.schedule));
+        out.push(
+          `Shrunk: ${verdict.shrunk.eventsRemoved} event(s) and ${verdict.shrunk.faultsRemoved} fault(s) removed in ${verdict.shrunk.runs} run(s)`,
+        );
+      } else {
+        out.push(
+          `Pinned schedule ${JSON.stringify(verdict.pinned)} (run seed ${verdict.schedule.seed}), as it ran, not shrunk; events: ${verdict.keptEvents.join(", ")}`,
+        );
+        out.push(...faultLines(verdict.schedule));
+        for (const u of verdict.unplaced ?? []) out.push(`  not placed: ${u}`);
+      }
       out.push("");
       out.push("Trace:");
       out.push(renderTrace(verdict.trace, verdict.violation.evidence));

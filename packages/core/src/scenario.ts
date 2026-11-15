@@ -8,6 +8,7 @@
 import type { JsonValue } from "./canonical-json.ts";
 import { type FaultSite, validateFaultSites } from "./fault-sites.ts";
 import type { Invariant } from "./invariants.ts";
+import { type PinnedSchedule, validatePinnedSchedules } from "./pinned-schedules.ts";
 
 /** Opaque, JSON-shaped data owned by a platform package. `kind` names its shape. */
 export interface PlatformData {
@@ -92,6 +93,14 @@ export interface ScenarioSpec {
    * inputs seen.
    */
   readonly specs?: readonly string[];
+  /**
+   * Schedules the check runs before it explores, each placing its faults
+   * at the calls it names, under each of its seeds; a violation in one is
+   * reported as any violation is. Their faults go where they say among the
+   * points `bounds.faultsAt` leaves, however many `bounds.maxFaultsPerRun`
+   * allows exploration's runs.
+   */
+  readonly pinned?: readonly PinnedSchedule[];
 }
 
 export const defaultBounds: Bounds = {
@@ -156,5 +165,6 @@ export function validateScenario(spec: ScenarioSpec): readonly string[] {
     if (!isPositiveInt(spec.bounds[k])) errors.push(`bounds.${k} must be a positive integer`);
   }
   if (spec.bounds.faultsAt !== undefined) errors.push(...validateFaultSites(spec.bounds.faultsAt));
+  if (spec.pinned !== undefined) errors.push(...validatePinnedSchedules(spec.pinned));
   return errors;
 }

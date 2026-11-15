@@ -47,6 +47,14 @@ export interface Violated extends VerdictBase {
   /** Ids of the drive's events that remain after shrinking. */
   readonly keptEvents: readonly string[];
   readonly shrunk: Shrunk;
+  /**
+   * The name of the scenario's pinned schedule whose run broke the
+   * invariant; its schedule is that run's, as it ran (not shrunk). Absent
+   * when exploration found it.
+   */
+  readonly pinned?: string;
+  /** The pinned schedule's faults its run did not place, each with why; absent when it placed them all. */
+  readonly unplaced?: readonly string[];
 }
 
 /** No violation within the stated bounds; not a proof. */
@@ -59,7 +67,8 @@ export type UnsupportedCause =
   | "unsupported_api"
   | "not_replayable"
   | "module_state_leak"
-  | "unsupported_bounds";
+  | "unsupported_bounds"
+  | "pin_not_placed";
 
 /** The run did something the simulation cannot control or replay, so no claim is made: the cause and the reason. */
 export interface Unsupported extends VerdictBase {

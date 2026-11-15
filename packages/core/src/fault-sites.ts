@@ -40,26 +40,27 @@ export const faultKinds: readonly FaultKind[] = [
 export function validateFaultSites(sites: readonly FaultSite[]): readonly string[] {
   if (sites.length === 0)
     return ["bounds.faultsAt must name at least one site; leave it out for faults anywhere"];
+  return sites.flatMap((site, i) => siteErrors(site, `bounds.faultsAt[${i}]`));
+}
+
+/** Every reason one site is not usable, each message starting with `label`, where it sits in the scenario. */
+export function siteErrors(site: FaultSite, label: string): readonly string[] {
   const errors: string[] = [];
-  sites.forEach((site, i) => {
-    if (!site.target) errors.push(`bounds.faultsAt[${i}] needs a target`);
-    for (const field of ["where", "atLeast"] as const)
-      for (const path of Object.keys(site[field] ?? {}))
-        if (path !== "args" && !path.startsWith("args."))
-          errors.push(
-            `bounds.faultsAt[${i}].${field}: ${JSON.stringify(path)} is not a path into the call's arguments; a site matches the call, so its paths start with "args."`,
-          );
-    if (site.faults === undefined) return;
-    if (site.faults.length === 0)
-      errors.push(
-        `bounds.faultsAt[${i}].faults must name at least one fault kind; leave it out for every kind`,
-      );
-    for (const f of site.faults)
-      if (!faultKinds.includes(f))
+  if (!site.target) errors.push(`${label} needs a target`);
+  for (const field of ["where", "atLeast"] as const)
+    for (const path of Object.keys(site[field] ?? {}))
+      if (path !== "args" && !path.startsWith("args."))
         errors.push(
-          `bounds.faultsAt[${i}].faults: ${JSON.stringify(f)} is not a fault kind (${faultKinds.join(", ")})`,
+          `${label}.${field}: ${JSON.stringify(path)} is not a path into the call's arguments; a site matches the call, so its paths start with "args."`,
         );
-  });
+  if (site.faults === undefined) return errors;
+  if (site.faults.length === 0)
+    errors.push(`${label}.faults must name at least one fault kind; leave it out for every kind`);
+  for (const f of site.faults)
+    if (!faultKinds.includes(f))
+      errors.push(
+        `${label}.faults: ${JSON.stringify(f)} is not a fault kind (${faultKinds.join(", ")})`,
+      );
   return errors;
 }
 

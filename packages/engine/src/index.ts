@@ -4,6 +4,8 @@ export {
   type Chooser,
   type FaultPlacement,
   limitFaults,
+  type PinnedChooser,
+  pinnedChooser,
   replayChooser,
   seededChooser,
 } from "./chooser.ts";

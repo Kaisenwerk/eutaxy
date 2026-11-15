@@ -11,14 +11,17 @@ import {
   checkInvariants,
   type DeliveryResult,
   describeFaultSites,
+  describePinnedFault,
   type EffectLog,
   type EffectRecord,
   type EventRef,
   earliestEvent,
   type JsonValue,
   nextU32,
+  type PinnedSchedule,
   type Platform,
   type PrngState,
+  pinnedSeeds,
   planFaults,
   type ScenarioSpec,
   type ScenarioVerdict,
@@ -26,9 +29,11 @@ import {
   seedPrng,
   serializeLog,
   type UnsupportedCause,
+  type Violation,
   validateFaultSites,
+  validatePinnedSchedules,
 } from "@eutaxy/core";
-import { replayChooser, seededChooser } from "./chooser.ts";
+import { pinnedChooser, replayChooser, seededChooser } from "./chooser.ts";
 import { ExhaustiveDriver } from "./exhaustive.ts";
 import { concurrencySupported, Run, type StartedDelivery } from "./run.ts";
 import { shrink } from "./shrink.ts";
@@ -36,7 +41,10 @@ import { shrink } from "./shrink.ts";
 /** How `explore` searches: the seed, a cap on runs, the time budget, the share of runs with faults, and exhaustive mode. */
 export interface ExploreOptions {
   readonly seed: number | string;
-  /** Hard cap on runs, in addition to the scenario's time budget. */
+  /**
+   * Hard cap on exploration's runs, in addition to the scenario's time budget. The scenario's pinned
+   * schedules run first, each under each of its seeds, uncounted and whatever the budget.
+   */
   readonly maxRuns?: number;
   /**
    * Replaces the scenario's `budgetMs` for this exploration: the real time
@@ -80,6 +88,13 @@ function faultAssumption(bounds: ScenarioSpec["bounds"]): string {
       ? "faults: crash_before, crash_after, ambiguous, error at any effect point"
       : describeFaultSites(bounds.faultsAt);
   return `${where}; redelivery per the platform's queue model`;
+}
+
+/** What the pinned schedules ran before exploration: each one's name, seeds and faults. */
+function pinnedAssumption(pinned: readonly PinnedSchedule[]): string {
+  const one = (p: PinnedSchedule): string =>
+    `${JSON.stringify(p.name)} under seed(s) ${pinnedSeeds(p).join(", ")}: ${p.faults.map(describePinnedFault).join("; ")}`;
+  return `pinned schedules ran before exploration, each fault at the call it names, however many faults the bounds allow a run: ${pinned.map(one).join(" | ")}`;
 }
 
 const engineAssumptions: readonly string[] = [
@@ -348,9 +363,9 @@ export async function replay(
 }
 
 /**
- * Explore a scenario on a platform: run it under schedules drawn from the seed (or every schedule within
- * the bounds, when exhaustive), shrink the first violation found, and return the verdict. At most 100 runs
- * unless `maxRuns` says otherwise.
+ * Explore a scenario on a platform: run its pinned schedules, then run it under schedules drawn from the
+ * seed (or every schedule within the bounds, when exhaustive), shrink the first violation exploration
+ * found, and return the verdict. At most 100 runs of exploration unless `maxRuns` says otherwise.
  */
 export async function explore(
   scenario: ScenarioSpec,
@@ -362,9 +377,11 @@ export async function explore(
     throw new Error(`budgetMs must be a positive finite number, got ${budgetMs}`);
   const spec =
     budgetMs === undefined ? scenario : { ...scenario, bounds: { ...scenario.bounds, budgetMs } };
-  const siteErrors =
-    spec.bounds.faultsAt === undefined ? [] : validateFaultSites(spec.bounds.faultsAt);
-  if (siteErrors.length > 0) throw new Error(siteErrors.join("; "));
+  const specErrors = [
+    ...(spec.bounds.faultsAt === undefined ? [] : validateFaultSites(spec.bounds.faultsAt)),
+    ...(spec.pinned === undefined ? [] : validatePinnedSchedules(spec.pinned)),
+  ];
+  if (specErrors.length > 0) throw new Error(specErrors.join("; "));
   const now = options.now ?? (() => Date.now());
   const maxRuns = options.maxRuns ?? 100;
   // The runs kept fault-free re-measure the path without faults, which can vary with the seed.
@@ -375,6 +392,7 @@ export async function explore(
     ...engineAssumptions.slice(1),
     concurrencyAssumption(spec.bounds),
     ...explorationAssumption(options),
+    ...(spec.pinned === undefined ? [] : [pinnedAssumption(spec.pinned)]),
     ...platform.assumptions,
   ];
   const start = now();
@@ -413,20 +431,115 @@ export async function explore(
       `maxConcurrentInvocations above 1 is not supported on the ${platform.name} platform yet`,
     );
 
+  /**
+   * A run broke an invariant: replay it, which must give the same log, then report it, shrunk
+   * when exploration found it and as it ran when it is a pinned schedule's.
+   */
+  const violated = async (
+    run: Run,
+    log: EffectLog,
+    violation: Violation,
+    pinned?: { readonly name: string; readonly unplaced: readonly string[] },
+  ): Promise<ScenarioVerdict> => {
+    const schedule = run.schedule;
+    const replayedRun = await replayRun(spec, platform, schedule);
+    const replayed = replayedRun.log;
+    reached.runs++;
+    // A replay that reached something unsupported says so itself; one that differs says where.
+    if (replayedRun.unsupportedReasons.length > 0)
+      return unsupported("unsupported_api", replayedRun.unsupportedReasons.join("; "), schedule);
+    const differed = whatDiffered(log, replayed);
+    if (differed)
+      return unsupported(
+        "not_replayable",
+        `the violating run of seed ${schedule.seed} did not reproduce on replay: ${differed}`,
+        schedule,
+      );
+    if (pinned !== undefined)
+      return {
+        ...base,
+        kind: "VIOLATED",
+        violation,
+        trace: replayed,
+        schedule,
+        keptEvents: platform.initialEvents(spec).map((e) => e.id),
+        shrunk: { faultsRemoved: 0, eventsRemoved: 0, runs: 0 },
+        pinned: pinned.name,
+        ...(pinned.unplaced.length === 0 ? {} : { unplaced: pinned.unplaced }),
+        reached: doneNow(),
+      };
+    // Shrink within the scenario's budget (a second budget's worth at most), then report.
+    const shrunk = await shrink(spec, platform, schedule, violation, replayed, {
+      maxRuns: options.maxShrinkRuns ?? 200,
+      deadline: now() + spec.bounds.budgetMs,
+      now,
+    });
+    reached.runs += shrunk.runs;
+    return {
+      ...base,
+      kind: "VIOLATED",
+      violation: shrunk.violation,
+      trace: shrunk.trace,
+      schedule: shrunk.schedule,
+      keptEvents: shrunk.keptEvents,
+      shrunk: {
+        faultsRemoved: shrunk.faultsRemoved,
+        eventsRemoved: shrunk.eventsRemoved,
+        runs: shrunk.runs,
+      },
+      reached: doneNow(),
+    };
+  };
+
+  /** Whether any run had a point that may take a fault: sites that matched none say nothing. */
+  let anyEligible = false;
   const leakCheckRuns = options.leakCheckRuns ?? 2;
-  /** The first runs' schedules and digests, replayed in reverse order before BOUNDED. */
+  /**
+   * The first runs' schedules and logs, the pinned ones' included, replayed in reverse order before
+   * BOUNDED: state a first run leaves behind shows as a difference wherever that run came from.
+   */
   const witnesses: { schedule: Schedule; log: EffectLog }[] = [];
+
+  // The pinned schedules first, each under each of its seeds, their faults where they say among
+  // the points the bounds' fault sites leave (as a replay of their schedules has them), however
+  // many: the fault count is exploration's.
+  for (const pinned of spec.pinned ?? []) {
+    for (const seed of pinnedSeeds(pinned)) {
+      const chooser = pinnedChooser(pinned, seed);
+      const run = new Run({ bounds: spec.bounds, chooser });
+      const log = await runOnce(spec, platform, run);
+      reached.runs++;
+      reached.effectPoints += run.effectPoints;
+      reached.faultsInjected += run.faultsInjected;
+      if (run.unsupportedReasons.length > 0)
+        return unsupported("unsupported_api", run.unsupportedReasons.join("; "), run.schedule);
+      if (run.eligiblePoints > 0) anyEligible = true;
+      // A broken invariant is reported even where the schedule was not placed in full (the run
+      // that broke it replays from its own schedule), with the faults it did not place.
+      const unplaced = chooser.unplaced();
+      const violation = checkInvariants(log, spec.invariants)[0];
+      if (violation) return await violated(run, log, violation, { name: pinned.name, unplaced });
+      if (unplaced.length > 0)
+        return unsupported(
+          "pin_not_placed",
+          `pinned schedule ${JSON.stringify(pinned.name)} under seed ${seed}: ${unplaced.join("; ")}`,
+          run.schedule,
+        );
+      if (witnesses.length < leakCheckRuns) witnesses.push({ schedule: run.schedule, log });
+    }
+  }
+  /** Runs before exploration (the pinned schedules'), which the run cap does not count. */
+  const pinnedRuns = reached.runs;
 
   let master: PrngState = seedPrng(options.seed);
   /** Eligible points of a run without faults, and the most any run has had: seeded fault positions. */
   let baseline = 0;
   let longest = 0;
-  /** Whether any run had a point that may take a fault: sites that matched none say nothing. */
-  let anyEligible = false;
   while (
     (exhaustive?.hasMore ?? true) &&
-    reached.runs < maxRuns &&
-    now() - start < spec.bounds.budgetMs
+    reached.runs - pinnedRuns < maxRuns &&
+    // Exploration's first run is made however much of the budget the pinned runs spent.
+    (reached.runs === pinnedRuns || now() - start < spec.bounds.budgetMs)
   ) {
     const [runSeed, next] = nextU32(master);
     master = next;
@@ -472,51 +585,14 @@ export async function explore(
     if (run.unsupportedReasons.length > 0)
       return unsupported("unsupported_api", run.unsupportedReasons.join("; "), run.schedule);
 
-    const violations = checkInvariants(log, spec.invariants);
-    const violation = violations[0];
-    if (violation) {
-      const schedule = run.schedule;
-      const replayedRun = await replayRun(spec, platform, schedule);
-      const replayed = replayedRun.log;
-      reached.runs++;
-      // A replay that reached something unsupported says so itself; one that differs says where.
-      if (replayedRun.unsupportedReasons.length > 0)
-        return unsupported("unsupported_api", replayedRun.unsupportedReasons.join("; "), schedule);
-      const differed = whatDiffered(log, replayed);
-      if (differed)
-        return unsupported(
-          "not_replayable",
-          `the violating run of seed ${schedule.seed} did not reproduce on replay: ${differed}`,
-          schedule,
-        );
-      // Shrink within the scenario's budget (a second budget's worth at most), then report.
-      const shrunk = await shrink(spec, platform, schedule, violation, replayed, {
-        maxRuns: options.maxShrinkRuns ?? 200,
-        deadline: now() + spec.bounds.budgetMs,
-        now,
-      });
-      reached.runs += shrunk.runs;
-      return {
-        ...base,
-        kind: "VIOLATED",
-        violation: shrunk.violation,
-        trace: shrunk.trace,
-        schedule: shrunk.schedule,
-        keptEvents: shrunk.keptEvents,
-        shrunk: {
-          faultsRemoved: shrunk.faultsRemoved,
-          eventsRemoved: shrunk.eventsRemoved,
-          runs: shrunk.runs,
-        },
-        reached: doneNow(),
-      };
-    }
+    const violation = checkInvariants(log, spec.invariants)[0];
+    if (violation) return await violated(run, log, violation);
     exhaustive?.checked();
   }
   if (spec.bounds.faultsAt !== undefined && spec.bounds.maxFaultsPerRun > 0 && !anyEligible)
     return unsupported(
       "unsupported_bounds",
-      `bounds.faultsAt matched no effect point that may take a fault in ${reached.runs} run(s), so no fault was injected; compare the sites' targets, ops, conditions and kinds with the effects a trace shows`,
+      `bounds.faultsAt matched no effect point that may take a fault in ${reached.runs - pinnedRuns} run(s) of exploration, so no fault was injected; compare the sites' targets, ops, conditions and kinds with the effects a trace shows`,
     );
   // Module-state leak detection: the same schedules, in the opposite order, must give the same logs.
   for (const witness of [...witnesses].reverse()) {

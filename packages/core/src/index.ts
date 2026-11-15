@@ -40,6 +40,13 @@ export {
   sameViolation,
   type Violation,
 } from "./invariants.ts";
+export {
+  describePinnedFault,
+  type PinnedFault,
+  type PinnedSchedule,
+  pinnedSeeds,
+  validatePinnedSchedules,
+} from "./pinned-schedules.ts";
 export type {
   Attempt,
   DeliveryResult,

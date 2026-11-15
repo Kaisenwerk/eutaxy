@@ -23,6 +23,8 @@ export {
   type FaultSite,
   type Implies,
   type Invariant,
+  type PinnedFault,
+  type PinnedSchedule,
   type Platform,
   type Proven,
   type Refines,

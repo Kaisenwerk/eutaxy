@@ -24,6 +24,7 @@ The verdict's `cause` sorts the reasons:
 | `unsupported_bounds` | the scenario's bounds ask for something the platform or the runtime cannot do               |
 | `not_replayable`     | a run did not repeat when replayed with the same seed and faults                            |
 | `module_state_leak`  | a run gave a different log when replayed after other runs: state survives between runs      |
+| `pin_not_placed`     | a run of a pinned schedule did not place one of its faults where the schedule says          |
 
 ## Bounds, replay and leaks
 
@@ -62,6 +63,18 @@ itself: SQL in a schema file that reads the time (`CURRENT_TIMESTAMP`,
 `strftime(…, 'now')`) or draws randomness reads SQLite's own, which the
 virtual clock does not reach. Give such a row a fixed value in the
 scenario's schema.
+
+**`pinned schedule <name> under seed <seed>: fault <n> (<fault> at <target> <op> where <conditions> at least <conditions>, call <call>) <why>`**
+A run of one of the scenario's pinned schedules did not place one of its
+faults, so it did not run what the scenario says; the verdict carries that
+run's schedule. Why is one of: `met no such call: the run made <count>
+matching call(s)` (a misspelt target or op, conditions the calls do not
+meet, or a call number past the calls the run makes, earlier faults
+included; under `faultsAt`, only the points it leaves count), `met call
+<call>, which allows only <kinds>` (that point does not take that kind of
+fault), or `met call <call>, which an earlier fault of the schedule took`
+(two faults of one schedule address the same call). Compare the address
+with the trace of the run.
 
 ## Setup and bindings
 

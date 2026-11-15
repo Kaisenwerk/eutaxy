@@ -90,6 +90,30 @@ describe("renderText", () => {
     expect(marked[1]).toContain("msg-1#2");
   });
 
+  test("a pinned schedule's violation names the schedule and says it ran as pinned, not shrunk", () => {
+    const text = renderText({
+      ...violated,
+      pinned: "ack crashes",
+      shrunk: { faultsRemoved: 0, eventsRemoved: 0, runs: 0 },
+    });
+    expect(text).toContain(
+      'Pinned schedule "ack crashes" (run seed 42), as it ran, not shrunk; events: msg-1',
+    );
+    expect(text).toContain("crash_before at msg-1#1 effect #1 (Queue:payments ack)");
+    expect(text).not.toContain("Shrunk:");
+    expect(
+      renderText({
+        ...violated,
+        pinned: "p",
+        unplaced: [
+          "fault 2 (error at D1:DB, call 9) met no such call: the run made 3 matching call(s)",
+        ],
+      }),
+    ).toContain(
+      "  not placed: fault 2 (error at D1:DB, call 9) met no such call: the run made 3 matching call(s)",
+    );
+  });
+
   test("BOUNDED says it is not a proof and states the bounds", () => {
     const bounded: Bounded = {
       kind: "BOUNDED",
@@ -263,6 +287,20 @@ describe("emitRegressionTest", () => {
     expect(src).toContain("restrictSpec(platform, scenario, keptEvents)");
     expect(src).toContain("toEqual([])");
     expect(src).toContain("holds on the recorded schedule");
+  });
+
+  test("a pinned schedule's test says whose run it replays", () => {
+    const src = emitRegressionTest(
+      { ...violated, pinned: "ack crashes" },
+      {
+        imports: ['import scenario from "./scenario.sim.ts";'],
+        platform: "platform()",
+        scenario: "scenario",
+      },
+    );
+    expect(src.split("\n")[2]).toBe(
+      '// The run of the scenario\'s pinned schedule "ack crashes" under seed 42, as it ran.',
+    );
   });
 
   test("can instead assert the recorded violation, for corpora", () => {

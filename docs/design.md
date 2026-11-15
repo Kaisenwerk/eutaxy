@@ -1296,6 +1296,33 @@ persisted. A site matches on the call's own arguments, not on which
 invocation made it or the how-manyth call it is, so a site means the same
 thing however earlier faults moved the run.
 
+**Pinned schedules** (`ScenarioSpec.pinned`) are runs the scenario
+carries: a schedule found once, by exploration or by hand, is run again
+by every check, before exploration, under each of its seeds (default
+`[0]`; with several invocations in flight a seed decides the turns). A
+recorded schedule names a fault by invocation and ordinal, which shift
+with each fault placed before it (a retry runs inside the same
+invocation, a crash adds one), so a pinned fault is addressed instead by
+what stays put: `at`, a fault site (target, op, conditions on `args`;
+`stepFaults` gives a step's name and attempt), and `call`, the number of
+the run's call `at` matches, from 1, counting the points that may take a
+fault. The run's chooser (`pinnedChooser`) places each fault at its call
+and none elsewhere, under the bounds' fault sites (as a replay of the
+schedule has them) but not their fault count. A pinned run's violation is
+replayed like any other and reported as it ran, not shrunk, named by its
+schedule (`Violated.pinned`), with the regression test that replays its
+recorded schedule; shrinking would report another schedule than the one
+the scenario pins. A pinned fault the run did not place (its call never
+came, the point does not allow its kind, an earlier fault of the schedule
+took the call) makes the verdict `UNSUPPORTED` (`pin_not_placed`), naming
+the fault and how many matching calls the run made, rather than reporting
+a run that did not do what the scenario says; a violation in that run is
+still reported, since its own schedule replays it, with the faults it did
+not place (`Violated.unplaced`). Pinned runs are leak-check witnesses like
+exploration's first runs, do not count against `maxRuns`, and are listed
+in the assumptions; however much of the budget they spend, exploration
+still makes its first run.
+
 **Exhaustive exploration** (`explore(..., { exhaustive: true })`, `eutaxy
 check --exhaustive`) runs every schedule within the bounds once instead of
 drawing schedules from the seed. A run's nondeterminism is a sequence of

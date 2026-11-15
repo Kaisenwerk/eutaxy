@@ -282,7 +282,9 @@ declarations are listed among the verdict's assumptions.
 A time budget makes the number of runs depend on the machine, so CI and
 tests that assert a verdict pass `--budget-ms` with a generous value and
 `--max-runs` to cap the runs. Every verdict reports the bounds it reached.
-See [Faults and exploration](/guide/faults), which also covers `faultsAt`.
+See [Faults and exploration](/guide/faults), which also covers `faultsAt`
+and `pinned`, the schedules a scenario carries for every check to run
+before it explores.
 
 ## Concurrency
 

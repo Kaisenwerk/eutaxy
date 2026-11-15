@@ -19,14 +19,18 @@ run spends its faults everywhere and stays `BOUNDED` over 200 runs on this
 entry's seed. The scenario says where faults go instead: with
 `faultsAt: [stepFaults("TURNS", "start turn")]` in its bounds, a run puts
 faults only on that step's attempts, and exhaustive exploration finds the
-violation within a dozen schedules.
+violation within a dozen schedules. `pinned.sim.ts` carries the schedule
+instead: `ambiguous` on the step's point of attempts 1, 2 and 3, addressed
+by the step's name and attempt, under twelve seeds, which the check runs
+before it explores.
 
 **What Eutaxy must report.** `VIOLATED` on `fenced-turns-never-run` for the
 default scenario (faults on the step's attempts), exhaustively; `BOUNDED`
 for `anywhere` (the same scenario with faults anywhere) under 200 sampled
-runs. `FixedConversation`, which checks the fence again in the same
-synchronous block as its write, is `BOUNDED` under 300 sampled runs with
-faults on the step's attempts. Its full space of schedules at two
+runs; `VIOLATED` for `pinned.sim.ts`, from its pinned schedule, named.
+`FixedConversation`, which checks the fence again in the same synchronous
+block as its write, is `BOUNDED` under 300 sampled runs with faults on the
+step's attempts, and under the pinned schedule's twelve seeds. Its full space of schedules at two
 invocations in flight is past what a test can run (6,000 schedules in five
 minutes did not finish, the partial-order reduction being off since both
 chains call one object).

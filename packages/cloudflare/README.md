@@ -2,7 +2,7 @@
 
 **Purpose.** Everything that knows about Cloudflare: binding proxies, the platform model, the binding allowlist, the Vitest integration.
 
-**Public surface.** Scenario construction: `defineScenario`, `queue`,
+**Public surface.** Scenario construction: `defineScenario` (its `pinned` carries schedules each check runs before exploring), `queue`,
 `http`, `websocket` (connections opened through the Worker's `fetch` and handed to a Durable Object, their messages delivered inside it by its `webSocketMessage` handler; `webSocketReceived` selects the frames the object sent back), `rpc` (a `WorkerEntrypoint` driven by method calls, under the caller's
 policy; `rpcResponse` selects the answers), `cron` (the ticks of a Cron
 Trigger as events at their virtual time, with the declared re-runs of a

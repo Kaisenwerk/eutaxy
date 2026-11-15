@@ -93,6 +93,50 @@ enough to finish or to reach the violation in a few schedules. The verdict
 states the sites among its assumptions in place of "at any effect point",
 since a `BOUNDED` verdict says nothing about faults elsewhere.
 
+## Pinned schedules
+
+A schedule found once can stay in the scenario, so every check runs it
+again before it explores. Each fault names the call it goes on by what
+stays put in a run, not by the invocation and position a recorded schedule
+uses, which move with every fault placed before them:
+
+```ts
+import { defineScenario, stepFaults } from "eutaxy/cloudflare";
+
+export default defineScenario({
+  // ...
+  pinned: [
+    {
+      name: "every attempt of start turn outlives its timeout",
+      faults: [1, 2, 3].map((attempt) => ({
+        at: { ...stepFaults("TURNS", "start turn", { attempt }), op: "step" },
+        fault: "ambiguous",
+      })),
+      seeds: [0, 1, 2, 3],
+    },
+    {
+      name: "the second insert fails",
+      faults: [{ at: { target: "D1:DB", op: "run" }, call: 2, fault: "error" }],
+    },
+  ],
+});
+```
+
+`at` is matched as a fault site is; `call` says which of the calls it
+matches, from 1, in the order the run makes them (default 1). Each schedule
+runs once per seed (default `[0]`); with several invocations in flight the
+seed decides the order of turns, so a list of seeds covers several orders.
+A pinned schedule's faults go where it says among the points the bounds'
+`faultsAt` leaves, however many faults `maxFaultsPerRun` allows a run of
+exploration.
+
+A violation in a pinned run is reported as any violation is, with its
+regression test, as it ran rather than shrunk, and the report names the
+schedule. A fault the run did not place makes the verdict `UNSUPPORTED`
+(`pin_not_placed`) and says why: the call never came (with how many
+matching calls the run made), the point does not allow that kind, or an
+earlier fault of the same schedule took that call.
+
 ## Exhaustive exploration
 
 `--exhaustive` runs every schedule within the bounds exactly once, instead

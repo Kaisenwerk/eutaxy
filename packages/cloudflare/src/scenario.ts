@@ -19,6 +19,7 @@ import {
   type Implies,
   type Invariant,
   type JsonValue,
+  type PinnedSchedule,
   type PlatformData,
   type References,
   type Refines,
@@ -843,6 +844,8 @@ export interface CloudflareScenarioInput {
   readonly bounds?: Partial<Bounds>;
   /** Modules of pure core functions with spec files beside them, relative to the scenario (see ScenarioSpec.specs). */
   readonly specs?: readonly string[];
+  /** Schedules the check runs before it explores, each fault at the call it names (see ScenarioSpec.pinned). */
+  readonly pinned?: readonly PinnedSchedule[];
 }
 
 /** Drive the Worker's `queue()` handler with these messages from the named queue; an id defaults to `msg-<n>`. */
@@ -1213,6 +1216,7 @@ export function defineScenario(input: CloudflareScenarioInput): ScenarioSpec {
     invariants: input.invariants,
     bounds: { ...defaultBounds, ...input.bounds },
     ...(input.specs ? { specs: input.specs } : {}),
+    ...(input.pinned ? { pinned: input.pinned } : {}),
   };
   const errors = [
     ...validateScenario(spec),
