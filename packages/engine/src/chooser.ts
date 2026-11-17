@@ -153,9 +153,10 @@ export interface PinnedChooser extends Chooser {
  * Choices a pinned schedule makes: each of its faults at the `call`-th
  * point of the run whose call its address matches (counting the points put
  * to the chooser, in the order the run reaches them), none elsewhere, and
- * turns from the seed as a seeded run draws them, so a pinned schedule is
- * replayed by its run's recorded schedule. When two of its faults want one
- * point, the first listed takes it.
+ * turns from the seed as a seeded run draws them (or the schedule's own
+ * turns, when it has them), so a pinned schedule is replayed by its run's
+ * recorded schedule. When two of its faults want one point, the first
+ * listed takes it.
  */
 export function pinnedChooser(pinned: PinnedSchedule, seed: number): PinnedChooser {
   const matchers = pinned.faults.map((f) => compileFaultSites([f.at]));
@@ -163,12 +164,15 @@ export function pinnedChooser(pinned: PinnedSchedule, seed: number): PinnedChoos
   /** Per fault: "placed", why it could not be at its call, or null while its call has not come. */
   const outcomes: (string | null)[] = pinned.faults.map(() => null);
   let turns = seedPrng(`turns:${seed}`);
+  const recorded = pinned.turns;
+  let replayed = 0;
   return {
     seed,
-    recordsTurns: false,
+    recordsTurns: recorded !== undefined,
     choose(kind, options) {
       if (kind === "turn") {
         if (options.length < 2) return 0;
+        if (recorded) return recorded[replayed++] ?? 0;
         const [i, next] = nextInt(turns, options.length);
         turns = next;
         return i;

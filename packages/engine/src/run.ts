@@ -27,6 +27,9 @@ import {
   type FaultKind,
   type Invocation,
   type JsonValue,
+  jsonEqual,
+  type PinnedFault,
+  type PinnedSchedule,
   type RunHooks,
   type Schedule,
 } from "@eutaxy/core";
@@ -204,6 +207,16 @@ export class Run implements RunHooks {
    */
   private logView: EffectLog | null = null;
   private readonly faults: FaultDecision[] = [];
+  /**
+   * The call at each point put to the chooser, in order, and the position among them of each
+   * fault taken: what `asPinned` addresses the faults by, worked out only when asked.
+   */
+  private readonly eligibleCalls: {
+    readonly target: string;
+    readonly op: string;
+    readonly args: JsonValue;
+  }[] = [];
+  private readonly faultPositions: number[] = [];
   private effectIndex = 0;
   private eligibleSeen = 0;
   private readonly invocations = new Map<string, InvocationState>();
@@ -304,6 +317,36 @@ export class Run implements RunHooks {
       seed,
       faults: [...this.faults],
       ...(recordsTurns ? { turns: [...this.turns.picks] } : {}),
+    };
+  }
+
+  /**
+   * The run as a pinned schedule: each fault taken at the call it hit, by that call's target, op
+   * and arguments and its number among the run's calls with all three the same (counting the points
+   * put to the chooser, as `pinnedChooser` counts them), under the run's seed and, when it recorded
+   * them, its turns.
+   */
+  asPinned(name: string): PinnedSchedule {
+    const { schedule } = this;
+    const faults = schedule.faults.map((f, k): PinnedFault => {
+      const at = this.faultPositions[k] ?? 0;
+      const call = this.eligibleCalls[at] ?? { target: f.target, op: f.op, args: null };
+      let n = 0;
+      for (let i = 0; i <= at; i++) {
+        const c = this.eligibleCalls[i];
+        if (c && c.target === call.target && c.op === call.op && jsonEqual(c.args, call.args)) n++;
+      }
+      return {
+        at: { target: call.target, op: call.op, where: { args: call.args } },
+        call: n,
+        fault: f.fault,
+      };
+    });
+    return {
+      name,
+      faults,
+      seeds: [schedule.seed],
+      ...(schedule.turns === undefined ? {} : { turns: schedule.turns }),
     };
   }
 
@@ -984,11 +1027,9 @@ export class Run implements RunHooks {
     const allowed = this.sited(point);
     if (allowed.length === 0) return null;
     this.eligibleSeen++;
-    const at = {
-      invocation: point.invocation,
-      ordinal,
-      call: { target: point.target, op: point.op, args: point.args },
-    };
+    const call = { target: point.target, op: point.op, args: point.args };
+    this.eligibleCalls.push(call);
+    const at = { invocation: point.invocation, ordinal, call };
     const i = this.options.chooser.choose("fault", [
       { label: "none", ...at },
       ...allowed.map((fault) => ({ label: fault, ...at })),
@@ -1020,6 +1061,7 @@ export class Run implements RunHooks {
     this.record(point, "call", { args: point.args });
     const fault = this.decide(point, ordinal);
     if (fault) {
+      this.faultPositions.push(this.eligibleCalls.length - 1);
       this.faults.push({
         invocation: point.invocation,
         ordinal,

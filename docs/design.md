@@ -101,6 +101,34 @@ decided" is not one the shrinker holds. A run that ended on real time
 (an effect that outlasted the budget, code waiting on something outside
 the simulation) may not end at the same place when replayed. Where no
 run was made (bounds the platform cannot meet) there is no schedule.
+Beside the schedule it carries the same run as a pinned schedule
+(`replay`): each fault at the call it hit, by that call's target, op and
+arguments and its number among the run's calls with all three the same,
+under the run's seed (and its turns, when it recorded them). The
+schedule's invocations and positions move as soon as an effect is added
+before the call or a fault before it changes; the call's own arguments do
+not, as long as they do not come from the virtual clock or randomness.
+Turns do move: a run with several invocations in flight picks its turns
+by index (recorded, or drawn from the seed at every decision), so an
+added effect shifts the picks after it, and the stable address helps
+most for runs one invocation at a time. `runPinned` replays it. For a run that met something outside the
+model (`unsupported_api`), `eutaxy check` writes a test, as it writes one
+for a violation, that replays the run with `runPinned` and expects every
+fault placed and the same reason: a reproduction, which fails once the run
+no longer gets there (a reason that names real time, such as an effect
+that outlasted the budget, may not repeat). Only an `unsupported_api` verdict
+carries `replay`, and only once the run, replayed alone by its faults'
+calls, reached the same reason again with every fault placed: one more
+run before the verdict, as a violation is replayed before it is reported.
+A run that met the reason only through what earlier runs left behind, or
+a replay that met what its run did not (a leak, a violating run that did
+not reproduce), keeps its schedule alone, and the command writes no test.
+The check runs in the same process, so state earlier runs left that keeps
+the reason reachable is not caught. The other causes get no test: a leak shows only
+after other runs, a run that did not replay has nothing to pin, and a
+pinned schedule that was not placed is already in the scenario. A pinned
+schedule may have no faults: it then runs the scenario under its seeds or
+turns.
 
 ## Architecture and module layout
 

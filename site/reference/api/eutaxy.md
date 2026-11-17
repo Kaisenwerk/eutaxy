@@ -8,7 +8,7 @@ outline: 2
 
 # `eutaxy`
 
-`import { … } from "eutaxy";` 18 functions and values, 56 types; each links to the file that declares it.
+`import { … } from "eutaxy";` 20 functions and values, 57 types; each links to the file that declares it.
 
 ## Functions, classes and values
 
@@ -53,6 +53,12 @@ One line per verdict, for error messages; full rendering lives in `report`. [Sou
 `function emitRegressionTest(verdict: Violated, options: RegressionTestOptions): string`
 
 A Vitest test file that replays a violation's shrunk schedule: by default it fails while the bug is there and passes once it is fixed. [Source](https://github.com/Kaisenwerk/eutaxy/blob/main/packages/report/src/regression.ts)
+
+### `emitUnsupportedTest`
+
+`function emitUnsupportedTest(verdict: Unsupported, options: Omit<RegressionTestOptions, "expect">): string`
+
+A Vitest test file that replays the run that made a check `UNSUPPORTED`, as its verdict's `replay` names it (each fault at the call it hit, by target, op, arguments and call number), and expects the run to place every fault and reach the same reason: a reproduction to look into, which fails once the run no longer gets there. [Source](https://github.com/Kaisenwerk/eutaxy/blob/main/packages/report/src/regression.ts)
 
 ### `explore`
 
@@ -101,6 +107,12 @@ Re-run a recorded schedule exactly. [Source](https://github.com/Kaisenwerk/eutax
 `function restrictSpec(platform: Platform, spec: ScenarioSpec, keepIds: readonly string[]): ScenarioSpec`
 
 The scenario restricted to the kept events, with per-message invariants re-derived. [Source](https://github.com/Kaisenwerk/eutaxy/blob/main/packages/engine/src/shrink.ts)
+
+### `runPinned`
+
+`function runPinned(spec: ScenarioSpec, platform: Platform, pinned: PinnedSchedule, seed: number = pinnedSeeds(pinned)[0] ?? 0): Promise<PinnedRun>`
+
+Run a pinned schedule once, under `seed` (default its first), each fault at the call it names: the replay of an `UNSUPPORTED` verdict's `replay`, or of one of a scenario's pinned schedules. [Source](https://github.com/Kaisenwerk/eutaxy/blob/main/packages/engine/src/explore.ts)
 
 ### `specLadder`
 
@@ -307,6 +319,12 @@ One call of an observed core function from outside its module: the function, its
 `interface PinnedFault`
 
 One fault of a pinned schedule: the kind, at the `call`-th call of the run that `at` matches. [Source](https://github.com/Kaisenwerk/eutaxy/blob/main/packages/core/src/pinned-schedules.ts)
+
+### `PinnedRun`
+
+`interface PinnedRun`
+
+What one run of a pinned schedule did. [Source](https://github.com/Kaisenwerk/eutaxy/blob/main/packages/engine/src/explore.ts)
 
 ### `PinnedSchedule`
 

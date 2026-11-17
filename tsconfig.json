@@ -38,6 +38,9 @@
       "path": "packages/eutaxy"
     },
     {
+      "path": "packages/eutaxy/workerd"
+    },
+    {
       "path": "tests"
     },
     {

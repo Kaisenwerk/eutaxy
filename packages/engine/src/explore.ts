@@ -28,12 +28,13 @@ import {
   type Schedule,
   seedPrng,
   serializeLog,
+  type Unsupported,
   type UnsupportedCause,
   type Violation,
   validateFaultSites,
   validatePinnedSchedules,
 } from "@eutaxy/core";
-import { pinnedChooser, replayChooser, seededChooser } from "./chooser.ts";
+import { type PinnedChooser, pinnedChooser, replayChooser, seededChooser } from "./chooser.ts";
 import { ExhaustiveDriver } from "./exhaustive.ts";
 import { concurrencySupported, Run, type StartedDelivery } from "./run.ts";
 import { shrink } from "./shrink.ts";
@@ -353,6 +354,51 @@ export async function replayRun(
   return run;
 }
 
+/** What one run of a pinned schedule did. */
+export interface PinnedRun {
+  readonly log: EffectLog;
+  /** The run's schedule as recorded, by invocation and position. */
+  readonly schedule: Schedule;
+  /** What the run met that the simulation cannot control or replay; empty when nothing. */
+  readonly unsupportedReasons: readonly string[];
+  /** Each fault of the schedule the run did not place, and why; empty when it placed them all. */
+  readonly unplaced: readonly string[];
+}
+
+/** One run of a pinned schedule under one seed: the run, its chooser and its log. */
+async function pinnedRun(
+  spec: ScenarioSpec,
+  platform: Platform,
+  pinned: PinnedSchedule,
+  seed: number,
+): Promise<{ run: Run; chooser: PinnedChooser; log: EffectLog }> {
+  const chooser = pinnedChooser(pinned, seed);
+  const run = new Run({ bounds: spec.bounds, chooser });
+  const log = await runOnce(spec, platform, run);
+  return { run, chooser, log };
+}
+
+/**
+ * Run a pinned schedule once, under `seed` (default its first), each fault at the call it names:
+ * the replay of an `UNSUPPORTED` verdict's `replay`, or of one of a scenario's pinned schedules.
+ */
+export async function runPinned(
+  spec: ScenarioSpec,
+  platform: Platform,
+  pinned: PinnedSchedule,
+  seed: number = pinnedSeeds(pinned)[0] ?? 0,
+): Promise<PinnedRun> {
+  const errors = validatePinnedSchedules([pinned]);
+  if (errors.length > 0) throw new Error(errors.join("; "));
+  const { run, chooser, log } = await pinnedRun(spec, platform, pinned, seed);
+  return {
+    log,
+    schedule: run.schedule,
+    unsupportedReasons: run.unsupportedReasons,
+    unplaced: chooser.unplaced(),
+  };
+}
+
 /** Re-run a recorded schedule exactly. */
 export async function replay(
   spec: ScenarioSpec,
@@ -411,7 +457,7 @@ export async function explore(
     cause: UnsupportedCause,
     reason: string,
     schedule?: Schedule,
-  ): ScenarioVerdict => ({
+  ): Unsupported => ({
     ...base,
     kind: "UNSUPPORTED",
     cause,
@@ -430,6 +476,25 @@ export async function explore(
       "unsupported_bounds",
       `maxConcurrentInvocations above 1 is not supported on the ${platform.name} platform yet`,
     );
+
+  /**
+   * A run met something outside the model: the verdict carries its schedule and, when the run
+   * replayed alone by its faults' calls gets there again (checked here, with one more run), the
+   * same run as a pinned schedule, which a test can replay. A run that got there only through what
+   * earlier runs left behind does not, and carries its schedule alone.
+   */
+  const unsupportedApi = async (run: Run): Promise<ScenarioVerdict> => {
+    const reason = run.unsupportedReasons.join("; ");
+    const verdict = unsupported("unsupported_api", reason, run.schedule);
+    const replay = run.asPinned("the run that reached UNSUPPORTED");
+    const again = await pinnedRun(spec, platform, replay, run.schedule.seed);
+    reached.runs++;
+    const reproduces =
+      again.chooser.unplaced().length === 0 && again.run.unsupportedReasons.join("; ") === reason;
+    return reproduces
+      ? { ...verdict, replay, reached: doneNow() }
+      : { ...verdict, reached: doneNow() };
+  };
 
   /**
    * A run broke an invariant: replay it, which must give the same log, then report it, shrunk
@@ -505,14 +570,11 @@ export async function explore(
   // many: the fault count is exploration's.
   for (const pinned of spec.pinned ?? []) {
     for (const seed of pinnedSeeds(pinned)) {
-      const chooser = pinnedChooser(pinned, seed);
-      const run = new Run({ bounds: spec.bounds, chooser });
-      const log = await runOnce(spec, platform, run);
+      const { run, chooser, log } = await pinnedRun(spec, platform, pinned, seed);
       reached.runs++;
       reached.effectPoints += run.effectPoints;
       reached.faultsInjected += run.faultsInjected;
-      if (run.unsupportedReasons.length > 0)
-        return unsupported("unsupported_api", run.unsupportedReasons.join("; "), run.schedule);
+      if (run.unsupportedReasons.length > 0) return await unsupportedApi(run);
       if (run.eligiblePoints > 0) anyEligible = true;
       // A broken invariant is reported even where the schedule was not placed in full (the run
       // that broke it replays from its own schedule), with the faults it did not place.
@@ -582,8 +644,7 @@ export async function explore(
     reached.faultsInjected += run.faultsInjected;
     if (witnesses.length < leakCheckRuns) witnesses.push({ schedule: run.schedule, log });
 
-    if (run.unsupportedReasons.length > 0)
-      return unsupported("unsupported_api", run.unsupportedReasons.join("; "), run.schedule);
+    if (run.unsupportedReasons.length > 0) return await unsupportedApi(run);
 
     const violation = checkInvariants(log, spec.invariants)[0];
     if (violation) return await violated(run, log, violation);

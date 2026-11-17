@@ -2,7 +2,11 @@
 
 // From the CLI's own modules, not its index: the index loads the spec reader and with it the
 // TypeScript compiler, which a scenario-only user need not have.
-export { type CloudflareRegressionOptions, cloudflareRegressionTest } from "@eutaxy/cli/regression";
+export {
+  type CloudflareRegressionOptions,
+  cloudflareRegressionTest,
+  cloudflareUnsupportedTest,
+} from "@eutaxy/cli/regression";
 export {
   type CheckTransport,
   checkInWorkerd,

@@ -27,8 +27,8 @@ on a violation.
 | `--exhaustive`       | Run every schedule within the bounds once, with partial-order reduction                 |
 | `--prover <names>`   | Also run the `PROVEN` rung on the scenario's specs: `lean`, `smt`, or `lean,smt`        |
 | `--json`             | Print the versioned JSON report instead of text                                         |
-| `--out <path>`       | Where to write the regression test on a violation                                       |
-| `--no-regression`    | Do not write a regression test                                                          |
+| `--out <path>`       | Where to write the test: a violation's, or one replaying a run that met an unmodelled API |
+| `--no-regression`    | Write neither test                                                                      |
 | `--expect-violation` | Write a regression test that asserts the violation is still there                       |
 | `--keep`             | Keep the generated `.eutaxy/` directory                                                 |
 

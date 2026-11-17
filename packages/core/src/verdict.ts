@@ -3,6 +3,7 @@
 import type { EffectLog } from "./effect-log.ts";
 import type { Schedule } from "./faults.ts";
 import type { Violation } from "./invariants.ts";
+import type { PinnedSchedule } from "./pinned-schedules.ts";
 import type { Bounds } from "./scenario.ts";
 
 /** How far exploration got: runs, effect points, faults injected and time taken, and coverage when exhaustive. */
@@ -83,6 +84,15 @@ export interface Unsupported extends VerdictBase {
    * place when replayed.
    */
   readonly schedule?: Schedule;
+  /**
+   * For `unsupported_api`, the same run as a pinned schedule, present once
+   * that run replayed alone reached the same reason again: each fault
+   * at the call it hit, by its target, op and arguments and that call's
+   * number among the run's matching calls, under the run's seed (and its
+   * turns when it recorded them), so a replay still finds the call when
+   * the faults or effects before it move invocations and positions.
+   */
+  readonly replay?: PinnedSchedule;
 }
 
 /** A scenario's verdict: `VIOLATED`, `BOUNDED` or `UNSUPPORTED`. */

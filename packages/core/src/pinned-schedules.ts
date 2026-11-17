@@ -38,6 +38,13 @@ export interface PinnedSchedule {
   readonly name: string;
   readonly faults: readonly PinnedFault[];
   readonly seeds?: readonly number[];
+  /**
+   * The turn picked at each scheduling decision with more than one option,
+   * as a recorded schedule has them (see `Schedule.turns`); absent, turns
+   * follow the seed. A run that exhaustive exploration picked records them,
+   * and the schedule written from it keeps them.
+   */
+  readonly turns?: readonly number[];
 }
 
 /** The seeds a pinned schedule runs under. */
@@ -55,7 +62,6 @@ export function validatePinnedSchedules(pinned: readonly PinnedSchedule[]): read
     if (!p.name) errors.push(`${label} needs a name`);
     else if (names.has(p.name)) errors.push(`duplicate pinned schedule ${JSON.stringify(p.name)}`);
     names.add(p.name);
-    if (p.faults.length === 0) errors.push(`${label}.faults must name at least one fault`);
     p.faults.forEach((f, j) => {
       const at = `${label}.faults[${j}]`;
       errors.push(...siteErrors(f.at, `${at}.at`));
@@ -75,6 +81,9 @@ export function validatePinnedSchedules(pinned: readonly PinnedSchedule[]): read
         if (!(Number.isInteger(s) && s >= 0 && s <= 0xffff_ffff))
           errors.push(`${label}.seeds: ${String(s)} is not a run seed (an integer, 0 to 2^32 - 1)`);
     }
+    for (const t of p.turns ?? [])
+      if (!(Number.isInteger(t) && t >= 0))
+        errors.push(`${label}.turns: ${String(t)} is not a turn (an index from 0)`);
   });
   return errors;
 }

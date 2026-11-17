@@ -44,12 +44,12 @@ describe("validatePinnedSchedules", () => {
             { at: { target: "D1:DB", faults: ["error"] }, fault: "error" },
           ],
           seeds: [-1, 1.5, 2 ** 32],
+          turns: [0, -1],
         },
         { name: "a", faults: [{ at: { target: "D1:DB" }, fault: "error" }], seeds: [] },
       ]),
     ).toEqual([
       "pinned[0] needs a name",
-      "pinned[0].faults must name at least one fault",
       "pinned[1].faults[0].at needs a target",
       'pinned[1].faults[0].at.where: "step" is not a path into the call\'s arguments; a site matches the call, so its paths start with "args."',
       'pinned[1].faults[0].fault: "timeout" is not a fault kind (crash_before, crash_after, ambiguous, error, cut_off)',
@@ -58,6 +58,7 @@ describe("validatePinnedSchedules", () => {
       "pinned[1].seeds: -1 is not a run seed (an integer, 0 to 2^32 - 1)",
       "pinned[1].seeds: 1.5 is not a run seed (an integer, 0 to 2^32 - 1)",
       "pinned[1].seeds: 4294967296 is not a run seed (an integer, 0 to 2^32 - 1)",
+      "pinned[1].turns: -1 is not a turn (an index from 0)",
       'duplicate pinned schedule "a"',
       "pinned[2].seeds must name at least one seed; leave it out for seed 0",
     ]);
@@ -78,9 +79,11 @@ describe("validatePinnedSchedules", () => {
         { kind: "atLeastOnce", name: "i", effect: { target: "D1:DB" }, key: "args", expected: [] },
       ],
       bounds: defaultBounds,
-      pinned: [{ name: "p", faults: [] }],
+      pinned: [{ name: "p", faults: [], seeds: [] }],
     };
-    expect(validateScenario(spec)).toEqual(["pinned[0].faults must name at least one fault"]);
+    expect(validateScenario(spec)).toEqual([
+      "pinned[0].seeds must name at least one seed; leave it out for seed 0",
+    ]);
   });
 });
 
