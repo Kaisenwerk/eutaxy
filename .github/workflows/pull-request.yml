@@ -20,7 +20,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         with:
-          subjectPattern: '^.*[^.]$'
+          subjectPattern: "^.*[^.]$"
           subjectPatternError: 'The title "{title}" must not end with a period.'
       - name: Title fits in 64 characters
         if: ${{ !cancelled() }}
