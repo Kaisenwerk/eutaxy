@@ -11,17 +11,18 @@ every contribution.
 1. **Keep the design current, not its history.** `docs/design.md` and
    `docs/roadmap.md` are the record of what is decided. Change them in place
    when a decision changes, with the rationale next to the choice; do not
-   annotate them with what they used to say. Once code exists, a decision
-   that is not obvious from the code and the design gets a short note in
-   `docs/decisions.md` in the same change that implements it.
+   annotate them with what they used to say. A decision that is not obvious
+   from the code and the design gets its reasons written down in the same
+   pull request that implements it.
 2. **Every task ends verified.** "Done" means the change is implemented, tests
    pass, docs are updated, and the result was checked by running it, not by
    reading it. Report failures and skipped steps plainly.
-3. **Small, reviewable steps.** Each change should be small enough to review
-   in minutes and describe in one paragraph.
-4. **Contribution flow.** Maintainers commit directly to `main` once
-   `pnpm check` passes and the change has been reviewed. Outside
-   contributions come as pull requests against `main`. Bug reports and
+3. **Small, reviewable steps.** Each pull request should be small enough to
+   review in minutes and describe in one paragraph.
+4. **Contribution flow.** Every change, the maintainers' included, reaches
+   `main` through a pull request from a branch named `<type>/<topic>`
+   (`fix/reader-arrows`), once `pnpm check` passes and the change has been
+   reviewed; a maintainer squash-merges it. Bug reports and
    feature requests from outside go in GitHub Issues; the maintainers' own
    planning lives in `docs/roadmap.md`. Work outside the current phase of
    the roadmap needs its reason written into the roadmap.
@@ -55,9 +56,15 @@ every contribution.
     adds one.
 12. **Public API is versioned.** Exported API follows semver. Breaking changes
     get a changelog entry and a migration note.
-13. **Commits.** Every commit message is in Conventional Commits format
-    (`type(scope): summary`), covers one logical change, and ends with a
-    `Co-Authored-By:` trailer naming the co-author. `main` is always green.
+13. **Commits.** Every pull request title and every commit message is in
+    Conventional Commits format (`type(scope): summary`), with no trailing
+    period: a commit header at most 72 characters (GitHub cuts a longer one
+    short) and a pull request title at most 64, leaving room for the
+    ` (#<number>)` its squash commit adds. The squash commit is the title
+    with a body of footers only; a `BREAKING CHANGE:` or `Release-As:`
+    footer that Release Please needs goes on its own line in the pull
+    request body. A commit by a co-author ends with a `Co-Authored-By:`
+    trailer. `main` is always green and has no direct pushes.
 
 ## 3. Scope discipline
 
