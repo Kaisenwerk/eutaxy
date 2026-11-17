@@ -20,7 +20,8 @@ behaviour change, zero runtime dependencies, one package per concern.
 3. Every behaviour change comes with a test. Bug fixes start with a failing
    test.
 4. Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/)
-   and end with a `Co-Authored-By:` trailer for each co-author.
+   and end with a `Co-Authored-By:` trailer for each co-author;
+   `git config core.hooksPath .githooks` checks each one as you commit.
 5. Open a pull request against `main`. Describe what changed and why in a
    paragraph; link the roadmap phase it belongs to.
 

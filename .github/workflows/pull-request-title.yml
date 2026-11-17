@@ -1,28 +1,24 @@
 name: Pull request title
 
-# A pull request is squash-merged as "<title> (#<number>)", the commit
-# Release Please reads, so the title follows the commit rules (CLAUDE.md rule 13): a
-# Conventional Commit of at most 64 characters, so the header stays within
-# the 72 GitHub shows in full, no trailing period. The title is passed
-# through the environment, never interpolated into the script.
+# A pull request is squash-merged as "<title> (#<number>)", so its title is
+# checked by the same script as a commit message (.githooks/commit-msg). The
+# title is passed through the environment, never interpolated into the script.
 on:
   pull_request:
     types: [opened, edited, reopened, synchronize]
 
-permissions: {}
+permissions:
+  contents: read
 
 jobs:
   title:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: .githooks
+          persist-credentials: false
       - name: Check the title
         env:
           TITLE: ${{ github.event.pull_request.title }}
-        run: |
-          types='feat|fix|perf|refactor|test|docs|build|ci|chore|style|revert'
-          if ! printf '%s' "$TITLE" | grep -Eq "^($types)(\([a-z0-9][a-z0-9./-]*\))?!?: [^ ]"; then
-            echo "::error::Title must be a Conventional Commit, \"<type>(<scope>): <description>\", type one of ${types//|/, }."
-            exit 1
-          fi
-          if [ "${#TITLE}" -gt 64 ]; then echo "::error::Title must be at most 64 characters."; exit 1; fi
-          case "$TITLE" in *.) echo "::error::Title must not end with a period."; exit 1 ;; esac
+        run: node .githooks/commit-msg --title "$TITLE"

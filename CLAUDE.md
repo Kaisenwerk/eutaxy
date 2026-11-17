@@ -20,55 +20,48 @@ every contribution.
 3. **Small, reviewable steps.** Each pull request should be small enough to
    review in minutes and describe in one paragraph.
 4. **Contribution flow.** Every change, the maintainers' included, reaches
-   `main` through a pull request from a branch named `<type>/<topic>`
-   (`fix/reader-arrows`), once `pnpm check` passes and the change has been
-   reviewed; a maintainer squash-merges it. Bug reports and
-   feature requests from outside go in GitHub Issues; the maintainers' own
-   planning lives in `docs/roadmap.md`. Work outside the current phase of
-   the roadmap needs its reason written into the roadmap.
-5. **The maintainer's own projects come first.** Features are driven by real
-   TypeScript and Cloudflare code the maintainer runs, before any general
-   audience. Generality is earned by a second concrete use, not assumed.
+   `main` through a pull request, once `pnpm check` passes and the change
+   has been reviewed; a maintainer squash-merges it. Bug reports and feature
+   requests go in GitHub Issues; planning lives in `docs/roadmap.md`. Work
+   outside the current phase of the roadmap needs its reason written into
+   the roadmap.
 
 ## 2. Engineering standards
 
-6. **TypeScript strict, ESM only.** `strict: true`, no `any` without a comment
+5. **TypeScript strict, ESM only.** `strict: true`, no `any` without a comment
    saying why, no `@ts-ignore` (use `@ts-expect-error` with a reason).
-7. **Toolchain:** Node LTS, `pnpm` workspaces, `vitest` for tests, `biome` for
+6. **Toolchain:** Node LTS, `pnpm` workspaces, `vitest` for tests, `biome` for
    lint and format, `tsc -b` over TypeScript project references for type
    checks. One `pnpm check` script runs all of them; it must
    pass before any commit.
-8. **Determinism is the product.** `spec` and `core` contain no `Date.now`,
+7. **Determinism is the product.** `spec` and `core` contain no `Date.now`,
    `Math.random`, timers, real I/O, or environment reads. All effects go
    through injected interfaces with seeded or scripted implementations; only
    `engine` patches globals. A simulation run with the same seed and inputs
    must produce byte-identical traces. A test enforces this.
-9. **Claims are executable.** Any proof rule, simulator feature, or provider
+8. **Claims are executable.** Any proof rule, simulator feature, or provider
    model ships with at least one runnable example and one test that would
    fail if the claim were false. Provider models (e.g. Durable Object
    semantics) cite the Cloudflare documentation they are based on.
-10. **Tests accompany behavior.** No behavior change without a test. Bug fixes
+9. **Tests accompany behavior.** No behavior change without a test. Bug fixes
     start with a failing test.
-11. **Zero runtime dependencies.** `spec` and `core` import nothing outside
+10. **Zero runtime dependencies.** `spec` and `core` import nothing outside
     the repo. The published package has no runtime dependencies; Vitest and
     the Cloudflare Vitest plugin are peer dependencies. Dev dependencies are
     deliberate: prefer the standard library, and say why in the commit that
     adds one.
-12. **Public API is versioned.** Exported API follows semver. Breaking changes
+11. **Public API is versioned.** Exported API follows semver. Breaking changes
     get a changelog entry and a migration note.
-13. **Commits.** Every pull request title and every commit message is in
-    Conventional Commits format (`type(scope): summary`), with no trailing
-    period: a commit header at most 72 characters (GitHub cuts a longer one
-    short) and a pull request title at most 64, leaving room for the
-    ` (#<number>)` its squash commit adds. The squash commit is the title
-    with a body of footers only; a `BREAKING CHANGE:` or `Release-As:`
-    footer that Release Please needs goes on its own line in the pull
-    request body. A commit by a co-author ends with a `Co-Authored-By:`
-    trailer. `main` is always green and has no direct pushes.
+12. **Commits.** Commit messages and pull request titles are Conventional
+    Commits, checked by `.githooks/commit-msg` on every pull request and,
+    with `git config core.hooksPath .githooks`, on every commit. A
+    `BREAKING CHANGE:` or `Release-As:` footer goes on its own line in the
+    pull request body. A commit by a co-author ends with a `Co-Authored-By:`
+    trailer. `main` is always green.
 
 ## 3. Scope discipline
 
-14. **Dependencies point down.** Each package may import only what
+13. **Dependencies point down.** Each package may import only what
     `docs/design.md` lists for it, declares exactly that in `package.json`,
     and mirrors it in its project references; pnpm links nothing else, and
     a test keeps the three in sync. Only `cloudflare` knows about Cloudflare;
@@ -76,15 +69,16 @@ every contribution.
     and `engine` never import provers. A second platform is added only
     once the first is useful end to end; AWS (Lambda, SQS, DynamoDB) came
     after the Cloudflare simulator gate passed.
-15. **Small modules, small context.** Every package does one thing and has
+14. **Small modules, small context.** Every package does one thing and has
     a `README.md` of under a page stating its purpose, its public surface
     and what it may import, so that a change to it can be made by reading
     that package alone. A change that needs to touch more than two packages
     is a sign the boundary is wrong; fix the boundary or record why not.
-16. **Build for the current phase only.** No speculative abstractions.
+15. **Build for the current phase only.** No speculative abstractions;
+    generality is earned by a second concrete use, not assumed.
     `docs/roadmap.md` names the current phase and its gate; a phase is done
     when its gate passes in CI.
-17. **Open source hygiene.** Apache-2.0 license, `README`, `CONTRIBUTING`,
+16. **Open source hygiene.** Apache-2.0 license, `README`, `CONTRIBUTING`,
     `CHANGELOG`, and a code of conduct live at the repo root. Nothing private
     (keys, account ids, internal URLs, local notes) ever enters the repo.
 
