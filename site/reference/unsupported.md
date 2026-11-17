@@ -67,13 +67,18 @@ scenario's schema.
 **`pinned schedule <name> under seed <seed>: fault <n> (<fault> at <target> <op> where <conditions> at least <conditions>, call <call>) <why>`**
 A run of one of the scenario's pinned schedules did not place one of its
 faults, so it did not run what the scenario says; the verdict carries that
-run's schedule. Why is one of: `met no such call: the run made <count>
-matching call(s)` (a misspelt target or op, conditions the calls do not
-meet, or a call number past the calls the run makes, earlier faults
-included; under `faultsAt`, only the points it leaves count), `met call
-<call>, which allows only <kinds>` (that point does not take that kind of
-fault), or `met call <call>, which an earlier fault of the schedule took`
-(two faults of one schedule address the same call). Compare the address
+run's schedule. Why is one of:
+
+- `met no such call: the run made <count> matching call(s)`: a misspelt
+  target or op, conditions the calls do not meet, or a call number past
+  the calls the run makes, earlier faults included (under `faultsAt`, only
+  the points it leaves count);
+- `met call <call>, which allows only <kinds>`: that point does not take
+  that kind of fault;
+- `met call <call>, which an earlier fault of the schedule took`: two
+  faults of one schedule address the same call.
+
+Compare the address
 with the trace of the run.
 
 ## Setup and bindings
