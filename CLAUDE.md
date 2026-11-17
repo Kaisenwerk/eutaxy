@@ -44,7 +44,7 @@ every contribution.
    fail if the claim were false. Provider models (e.g. Durable Object
    semantics) cite the Cloudflare documentation they are based on.
 9. **Tests accompany behavior.** No behavior change without a test. Bug fixes
-    start with a failing test.
+   start with a failing test.
 10. **Zero runtime dependencies.** `spec` and `core` import nothing outside
     the repo. The published package has no runtime dependencies; Vitest and
     the Cloudflare Vitest plugin are peer dependencies. Dev dependencies are
