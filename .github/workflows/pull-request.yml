@@ -1,0 +1,30 @@
+name: Pull request
+
+# A pull request is squash-merged as "<title> (#<number>)" with its commits'
+# Co-Authored-By lines as the footer, so its title and the agents' commits
+# are checked by .github/pull-request.mjs. The title goes in through the
+# environment, never interpolated into the script.
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  rules:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: .github
+          persist-credentials: false
+      - name: Check the title and commits
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+          COMMITS: repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/commits
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api --paginate "$COMMITS" --jq '.[] | {email: .commit.author.email, message: .commit.message, parents: (.parents | length)}' > "$RUNNER_TEMP/commits.ndjson"
+          node .github/pull-request.mjs "$TITLE" "$RUNNER_TEMP/commits.ndjson"

@@ -53,11 +53,10 @@ every contribution.
 11. **Public API is versioned.** Exported API follows semver. Breaking changes
     get a changelog entry and a migration note.
 12. **Commits.** Commit messages and pull request titles are Conventional
-    Commits, checked by `.githooks/commit-msg` on every pull request and, as
-    the git hook `pnpm install` sets up, on every commit. A
-    `BREAKING CHANGE:` or `Release-As:` footer goes on its own line in the
-    pull request body. A commit by a co-author ends with a `Co-Authored-By:`
-    trailer. `main` is always green.
+    Commits; the Pull request workflow (`.github/pull-request.mjs`) checks
+    every pull request's title. A `BREAKING CHANGE:` or `Release-As:` footer
+    goes on its own line in the pull request body. A commit by a co-author
+    ends with a `Co-Authored-By:` trailer. `main` is always green.
 
 ## 3. Scope discipline
 

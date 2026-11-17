@@ -20,10 +20,11 @@ behaviour change, zero runtime dependencies, one package per concern.
 3. Every behaviour change comes with a test. Bug fixes start with a failing
    test.
 4. Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/)
-   and end with a `Co-Authored-By:` trailer for each co-author;
-   the git hook `pnpm install` sets up checks each one as you commit.
+   and end with a `Co-Authored-By:` trailer for each co-author.
 5. Open a pull request against `main`. Describe what changed and why in a
-   paragraph; link the roadmap phase it belongs to.
+   paragraph; link the roadmap phase it belongs to. Its title becomes the
+   squash commit's, so it is a Conventional Commit of at most 64
+   characters; a check on the pull request tests it.
 
 Work outside the current roadmap phase is best raised as an issue first.
 
