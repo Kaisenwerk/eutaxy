@@ -8,7 +8,7 @@ outline: 2
 
 # `eutaxy/cloudflare`
 
-`import { … } from "eutaxy/cloudflare";` 48 functions and values, 38 types; each links to the file that declares it.
+`import { … } from "eutaxy/cloudflare";` 49 functions and values, 38 types; each links to the file that declares it.
 
 ## Functions, classes and values
 
@@ -59,6 +59,12 @@ Run the scenario's check, with its specs observed, and return what the CLI reads
 `function cloudflareRegressionTest(verdict: Violated, options: CloudflareRegressionOptions): string`
 
 A Vitest regression test for a Cloudflare scenario, to run under the Cloudflare Vitest plugin. [Source](https://github.com/Kaisenwerk/eutaxy/blob/main/packages/cli/src/regression.ts)
+
+### `cloudflareUnsupportedTest`
+
+`function cloudflareUnsupportedTest(verdict: Unsupported, options: CloudflareRegressionOptions): string`
+
+A Vitest test for a Cloudflare scenario that replays the run that made the check `UNSUPPORTED` (see `emitUnsupportedTest`), to run under the Cloudflare Vitest plugin; `expect` is not used. [Source](https://github.com/Kaisenwerk/eutaxy/blob/main/packages/cli/src/regression.ts)
 
 ### `createCloudflarePlatform`
 

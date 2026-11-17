@@ -7,7 +7,7 @@ import {
   type Violated,
 } from "@eutaxy/core";
 import { describe, expect, test } from "vitest";
-import { emitRegressionTest } from "./regression.ts";
+import { emitRegressionTest, emitUnsupportedTest } from "./regression.ts";
 import {
   renderJson,
   renderSpecReport,
@@ -263,6 +263,92 @@ describe("renderJson", () => {
     expect(parsed.verdict.kind).toBe("VIOLATED");
     expect(parsed.verdict.trace.entries).toHaveLength(4);
     expect(json.startsWith('{"generator":"eutaxy","schemaVersion":1,"verdict":')).toBe(true);
+  });
+});
+
+describe("emitUnsupportedTest", () => {
+  const options = {
+    imports: ['import scenario from "./scenario.sim.ts";'],
+    platform: "fakePlatform()",
+    scenario: "scenario",
+  };
+  const unsupported = {
+    kind: "UNSUPPORTED",
+    scenario: "redelivery-calls-out",
+    seed: "cli",
+    cause: "unsupported_api",
+    reason:
+      "fetch to undeclared host undeclared.example; declare it as an external in the scenario",
+    schedule: {
+      seed: 7,
+      faults: [
+        { invocation: "m1#1", ordinal: 1, fault: "crash_after", target: "D1:DB", op: "run" },
+      ],
+    },
+    replay: {
+      name: "the run that reached UNSUPPORTED",
+      faults: [
+        {
+          at: { target: "D1:DB", op: "run", where: { args: { params: ["o-1"], sql: "INSERT" } } },
+          call: 1,
+          fault: "crash_after",
+        },
+      ],
+      seeds: [7],
+    },
+    reached: { runs: 3, effectPoints: 9, faultsInjected: 1, elapsedMs: 5 },
+    assumptions: [],
+  } as const;
+
+  test("replays the run by its faults' calls, not by invocation and position, and expects the same reason", () => {
+    const src = emitUnsupportedTest(unsupported, options);
+    expect(src).toContain('import { runPinned } from "eutaxy";');
+    expect(src).toContain(
+      'const pinned = {"faults":[{"at":{"op":"run","target":"D1:DB","where":{"args":{"params":["o-1"],"sql":"INSERT"}}},"call":1,"fault":"crash_after"}],"name":"the run that reached UNSUPPORTED","seeds":[7]} as const;',
+    );
+    expect(src).not.toContain("invocation");
+    expect(src).not.toContain("ordinal");
+    expect(src).toContain("  const run = await runPinned(scenario, platform, pinned);");
+    expect(src).toContain("  expect(run.unplaced).toEqual([]);");
+    expect(src).toContain(
+      '  expect(run.unsupportedReasons.join("; ")).toBe("fetch to undeclared host undeclared.example; declare it as an external in the scenario");',
+    );
+  });
+
+  test("arguments with a __proto__ key reach the test as data, not as a prototype", async () => {
+    const args = JSON.parse('{"__proto__":{"admin":true},"id":"o-1"}') as Record<string, unknown>;
+    const fault = unsupported.replay.faults[0];
+    const src = emitUnsupportedTest(
+      {
+        ...unsupported,
+        replay: {
+          ...unsupported.replay,
+          faults: [{ ...fault, at: { ...fault.at, where: { args: args as never } } }],
+        },
+      },
+      options,
+    );
+    const line = src.split("\n").find((l) => l.startsWith("const pinned = ")) ?? "";
+    expect(line).toMatch(/^const pinned = JSON\.parse\(/);
+    // The expression the test evaluates gives back the key as an own property.
+    const value = new Function(`return ${line.slice("const pinned = ".length, -1)}`)() as {
+      faults: { at: { where: { args: object } } }[];
+    };
+    expect(Object.keys(value.faults[0]?.at.where.args ?? {})).toEqual(["__proto__", "id"]);
+  });
+
+  test("refuses a cause one run's replay does not reach", () => {
+    for (const cause of ["pin_not_placed", "module_state_leak", "not_replayable"] as const)
+      expect(() => emitUnsupportedTest({ ...unsupported, cause }, options)).toThrow(
+        `a ${cause} verdict is not reached again by replaying one run; only unsupported_api is`,
+      );
+  });
+
+  test("refuses a verdict no run reached", () => {
+    const { replay: _replay, schedule: _schedule, ...before } = unsupported;
+    expect(() => emitUnsupportedTest(before, options)).toThrow(
+      "the verdict has no run to replay: it was reached before any run",
+    );
   });
 });
 

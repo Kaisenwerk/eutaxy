@@ -70,7 +70,7 @@ export {
   type WorkerRef,
 } from "./scenario.ts";
 export { scheduleCount, schedules } from "./schedules.ts";
-export { type EffectSelector, getPath, selectEffects } from "./selectors.ts";
+export { type EffectSelector, getPath, jsonEqual, selectEffects } from "./selectors.ts";
 export { type ShrinkState, shrinkCandidates } from "./shrink.ts";
 export {
   type Checked,

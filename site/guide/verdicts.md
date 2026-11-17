@@ -23,7 +23,14 @@ simulation, module-level state that leaked between runs, a run that did not
 replay. It is never a quiet pass. It also carries the schedule of the run
 that reached it (the seed and the faults, as the run had them, not
 shrunk): pass it to `replay()` to get that run's log and see how it got
-there. The text report lists it; `--json` has it as `verdict.schedule`.
+there. The text report lists it; `--json` has it as `verdict.schedule`,
+and as `verdict.replay` the same run with each fault addressed by the call
+it hit (target, op, arguments and call number), which `runPinned()`
+replays even after effects are added before it, in a run of one
+invocation at a time whose arguments do not come from the clock or
+randomness. When the run met
+something outside the model, `eutaxy check` writes a test beside the
+scenario (or at `--out`) that replays it and expects the same reason.
 
 ## Spec verdicts
 

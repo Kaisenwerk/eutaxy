@@ -1,5 +1,9 @@
-import type { Violated } from "@eutaxy/core";
-import { emitRegressionTest } from "@eutaxy/report";
+import type { Unsupported, Violated } from "@eutaxy/core";
+import {
+  emitRegressionTest,
+  emitUnsupportedTest,
+  type RegressionTestOptions,
+} from "@eutaxy/report";
 
 /**
  * What `cloudflareRegressionTest` needs to write the test: import paths of the scenario, the Worker and its
@@ -88,6 +92,27 @@ export function cloudflareRegressionTest(
   verdict: Violated,
   options: CloudflareRegressionOptions,
 ): string {
+  return emitRegressionTest(verdict, {
+    ...cloudflareTestParts(options),
+    ...(options.expect ? { expect: options.expect } : {}),
+  });
+}
+
+/**
+ * A Vitest test for a Cloudflare scenario that replays the run that made the check `UNSUPPORTED`
+ * (see `emitUnsupportedTest`), to run under the Cloudflare Vitest plugin; `expect` is not used.
+ */
+export function cloudflareUnsupportedTest(
+  verdict: Unsupported,
+  options: CloudflareRegressionOptions,
+): string {
+  return emitUnsupportedTest(verdict, cloudflareTestParts(options));
+}
+
+/** The imports, the platform and scenario expressions and the observers both kinds of test use. */
+function cloudflareTestParts(
+  options: CloudflareRegressionOptions,
+): Omit<RegressionTestOptions, "expect"> {
   const bindings = Object.keys(options.schemaPaths).sort();
   const callees = Object.keys(options.callees ?? {}).sort();
   /**
@@ -154,14 +179,13 @@ export function cloudflareRegressionTest(
   const objects = options.durableObjects ? ", durableObjects: cloudflareTest" : "";
   const handler = withExports ? "handler: worker.default" : "handler";
   const exports = withExports ? ", exports: worker" : "";
-  return emitRegressionTest(verdict, {
+  return {
     imports,
     platform: `createCloudflarePlatform({ env, ${handler}, schemas: ${schemas}${retries}${objects}${exports}${calleeOption}${aliases} })`,
     scenario:
       options.budgetMs === undefined
         ? "scenario"
         : `{ ...scenario, bounds: { ...scenario.bounds, budgetMs: ${options.budgetMs} } }`,
-    ...(options.expect ? { expect: options.expect } : {}),
     ...(options.engineModule ? { engineModule: options.engineModule } : {}),
     ...(options.specModules && options.specModules.length > 0
       ? {
@@ -171,5 +195,5 @@ export function cloudflareRegressionTest(
           })),
         }
       : {}),
-  });
+  };
 }

@@ -58,3 +58,50 @@ describe("eutaxy check with pinned schedules", () => {
     }
   }, 120_000);
 });
+
+describe("eutaxy check on an UNSUPPORTED run", () => {
+  test("writes a test that replays the run by its faults' calls, and exits 2", () => {
+    const out = mkdtempSync(join(tmpdir(), "eutaxy-unsupported-"));
+    try {
+      const outFile = join(out, "replay.test.ts");
+      const r = eutaxy([
+        "check",
+        "packages/eutaxy/workerd/unsupported-replay/scenario.sim.ts",
+        "--json",
+        "--seed",
+        "corpus",
+        "--out",
+        outFile,
+      ]);
+      expect(r.status, r.stderr).toBe(2);
+      const report = JSON.parse(r.stdout) as {
+        regressionTest: string;
+        verdict: { kind: string; cause: string; replay: { faults: { call: number }[] } };
+      };
+      expect(report.verdict.kind).toBe("UNSUPPORTED");
+      expect(report.verdict.cause).toBe("unsupported_api");
+      expect(report.verdict.replay.faults.map((f) => f.call)).toEqual([1]);
+      expect(report.regressionTest).toMatch(/replay\.test\.ts$/);
+      const src = readFileSync(outFile, "utf8");
+      expect(src).toContain('import { runPinned } from "eutaxy";');
+      expect(src).toContain('"call":1');
+      expect(src).not.toContain("invocation");
+      expect(src).toContain("the recorded run still reaches what made the check UNSUPPORTED");
+    } finally {
+      rmSync(out, { recursive: true, force: true });
+    }
+  }, 120_000);
+
+  test("writes nothing with --no-regression", () => {
+    const r = eutaxy([
+      "check",
+      "packages/eutaxy/workerd/unsupported-replay/scenario.sim.ts",
+      "--json",
+      "--seed",
+      "corpus",
+      "--no-regression",
+    ]);
+    expect(r.status, r.stderr).toBe(2);
+    expect((JSON.parse(r.stdout) as { regressionTest?: string }).regressionTest).toBeUndefined();
+  }, 120_000);
+});

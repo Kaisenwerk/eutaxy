@@ -37,7 +37,11 @@ import {
 } from "./callees.ts";
 import { checkTestSource, metaKey, vitestConfigSource } from "./generate.ts";
 import { globKey } from "./keys.ts";
-import { cloudflareRegressionTest } from "./regression.ts";
+import {
+  type CloudflareRegressionOptions,
+  cloudflareRegressionTest,
+  cloudflareUnsupportedTest,
+} from "./regression.ts";
 import { findSpecModules, type SpecModule, specFiles, specKey } from "./specs.ts";
 import { strayErrors, strayNote, unhandledErrorsFile, vitestFailure } from "./vitest-failure.ts";
 import type { CheckTransport } from "./workerd.ts";
@@ -55,7 +59,11 @@ export interface CheckOptions {
   /** Engines to run the PROVEN rung with, by name, on the scenario's spec modules. */
   readonly provers?: readonly string[];
   readonly json: boolean;
-  /** Where to write the regression test on a violation; default `<name>.regression.test.ts` beside the scenario. */
+  /**
+   * Where to write the regression test on a violation, or the test replaying the run that met
+   * something outside the model on an UNSUPPORTED verdict; default `<name>.regression.test.ts`
+   * beside the scenario.
+   */
   readonly out?: string;
   readonly noRegression: boolean;
   /** Emit a regression test that asserts the violation (for corpora) rather than one that expects it fixed. */
@@ -376,8 +384,15 @@ export async function runCheck(o: CheckOptions): Promise<number> {
     }
     // The regression test's path goes into the JSON report too (an optional field of schema 1), so a
     // caller that reads the report knows where the replay is without parsing the text.
+    // A violation gets a test that replays it; so does a run that met something outside the model,
+    // which replays by its faults' calls. Other UNSUPPORTED causes do not replay from one run.
+    const replayable =
+      verdict.kind === "VIOLATED" ||
+      (verdict.kind === "UNSUPPORTED" &&
+        verdict.cause === "unsupported_api" &&
+        verdict.replay !== undefined);
     const regressionPath =
-      verdict.kind === "VIOLATED" && !o.noRegression
+      replayable && !o.noRegression
         ? o.out
           ? resolve(o.cwd, o.out)
           : join(dir, `${name}.regression.test.ts`)
@@ -423,7 +438,7 @@ export async function runCheck(o: CheckOptions): Promise<number> {
           path: toPosix(relative(outDir, resolve(dir, String(step["entry"])))),
         };
       }
-      const source = cloudflareRegressionTest(verdict as Violated, {
+      const testOptions: CloudflareRegressionOptions = {
         scenarioPath: toPosix(relative(outDir, scenarioPath)),
         workerPath: toPosix(relative(outDir, resolve(dir, transport.worker.entry))),
         schemaPaths,
@@ -449,11 +464,17 @@ export async function runCheck(o: CheckOptions): Promise<number> {
               })),
             }
           : {}),
-      });
+      };
+      const source =
+        verdict.kind === "UNSUPPORTED"
+          ? cloudflareUnsupportedTest(verdict, testOptions)
+          : cloudflareRegressionTest(verdict as Violated, testOptions);
       mkdirSync(outDir, { recursive: true });
       writeFileSync(outPath, source);
       if (!o.json)
-        o.stdout(`\nRegression test written to ${relative(o.cwd, outPath) || outPath}\n`);
+        o.stdout(
+          `\n${verdict.kind === "UNSUPPORTED" ? "Test replaying the run" : "Regression test"} written to ${relative(o.cwd, outPath) || outPath}\n`,
+        );
     }
     // A refuted spec fails the check like a violation does; so does a conflict between engines.
     if (

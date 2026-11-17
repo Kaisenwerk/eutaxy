@@ -49,8 +49,10 @@ export {
   explore,
   type ObservedCall,
   observeCore,
+  type PinnedRun,
   replay,
   restrictSpec,
+  runPinned,
 } from "@eutaxy/engine";
 export {
   aggregate,
@@ -69,6 +71,7 @@ export {
 } from "@eutaxy/prover";
 export {
   emitRegressionTest,
+  emitUnsupportedTest,
   type RegressionTestOptions,
   renderJson,
   renderSpecs,

@@ -266,8 +266,12 @@ describe("pinned schedules", () => {
 
   test("explore refuses pinned schedules the scenario's validation would", async () => {
     await expect(
-      explore(pinning({ name: "p", faults: [] }), createFakePlatform(buggyConsumer), options),
-    ).rejects.toThrow("pinned[0].faults must name at least one fault");
+      explore(
+        pinning({ name: "p", faults: [], seeds: [] }),
+        createFakePlatform(buggyConsumer),
+        options,
+      ),
+    ).rejects.toThrow("pinned[0].seeds must name at least one seed; leave it out for seed 0");
   });
 
   test("the chooser counts only the calls its address matches, and draws turns as a seeded run does", () => {

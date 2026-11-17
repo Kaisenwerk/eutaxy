@@ -200,9 +200,9 @@ does not take wait for a measurement that asks for them):
 - An `UNSUPPORTED` verdict carries the schedule of the run that reached
   it, as `0.17.1`; in. A reason says what a run met and not which run:
   without the schedule, seeing how a run got there meant opening the
-  engine, which an adopter of the published package cannot do. A test
-  the command writes to replay such a run, as it writes one for a
-  violation, is v0.18's, with pinned schedules.
+  engine, which an adopter of the published package cannot do. The test
+  the command writes to replay such a run is in v0.18, with pinned
+  schedules.
 - A configurable number of `TESTED` draws on the command line (the API
   takes `inputs`).
 - The command loads the spec reader and the engines only where specs are
@@ -274,7 +274,9 @@ under numbers it records:
   `ScenarioSpec.pinned` (a fault at the `call`-th call a site matches,
   under listed seeds), `pin_not_placed` for a fault a run did not place,
   and `pinned.sim.ts` beside the planted bug, through `check()` and
-  `eutaxy check`; the test for an `UNSUPPORTED` run is next.
+  `eutaxy check`; and an `UNSUPPORTED` verdict's `replay`, the run as a
+  pinned schedule by call, which `runPinned` replays and the test the
+  command writes for a run that met something outside the model uses.
 - **The cost of a run with an object's timers.** A run of the
   `agent-poll` example (an Agent that schedules its close, two votes in
   flight) costs about eight times a run of the `workflow-approval` or

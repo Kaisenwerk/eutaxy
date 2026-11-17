@@ -32,7 +32,15 @@ export {
   type RawSide,
   rawRun,
 } from "./differential.ts";
-export { type ExploreOptions, explore, replay, replayRun, runOnce } from "./explore.ts";
+export {
+  type ExploreOptions,
+  explore,
+  type PinnedRun,
+  replay,
+  replayRun,
+  runOnce,
+  runPinned,
+} from "./explore.ts";
 export {
   createScriptedFetch,
   type FetchHooks,

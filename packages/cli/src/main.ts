@@ -24,8 +24,9 @@ check options:
   --prover <names>      also run the PROVEN rung with these engines on the scenario's specs
                         (comma-separated; known: lean, smt)
   --json                print the versioned JSON report instead of text
-  --out <path>          where to write the regression test on a violation
-  --no-regression       do not write a regression test
+  --out <path>          where to write the regression test on a violation, or the
+                        test replaying the run that met something outside the model
+  --no-regression       do not write either test
   --expect-violation    write a regression test that asserts the violation (for corpora)
   --keep                keep the generated .eutaxy/ files
 
