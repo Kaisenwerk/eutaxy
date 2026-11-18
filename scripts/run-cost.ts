@@ -17,7 +17,8 @@ import { fileURLToPath } from "node:url";
 
 /**
  * The most a run of `agent-poll` may cost, in runs of `workflow-approval`. Measured by this
- * script on a development machine at abce779: 8.4 to 9.0 times (66 to 74 ms against 7.3 to 8.3 ms);
+ * script at abce779: 8.4 to 9.0 times on a development machine (66 to 74 ms against 7.3 to 8.3 ms),
+ * 9.1 on the CI runner (73.2 ms against 8.1 ms);
  * the limit leaves room for that spread and stops a change that makes an object's run dearer by a
  * third. An object's run pays a real
  * zero timer (about 1.2 ms in workerd, which has no cheaper turn of its event loop) at each handoff

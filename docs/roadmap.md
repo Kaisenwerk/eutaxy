@@ -375,8 +375,9 @@ Measured again by `scripts/run-cost.ts` at abce779 (2026-11-18), with
 checks of 1 and 101 runs, each the least of two, the two scenarios
 interleaved: `agent-poll` 66 to 74 ms a run and `workflow-approval` 7.3
 to 8.3 ms on the development machine, a ratio of 8.4 to 9.0 over three
-measurements. The limit of twelve leaves room for that spread and stops a
-change that makes an object's run dearer by a third.
+measurements; on the CI runner, 73.2 ms against 8.1 ms, 9.1. The limit of
+twelve leaves room for that spread and stops a change that makes an
+object's run dearer by a third.
 
 The ceiling of 420 s sits above the CI suite's spread with no code change
 (289 s to 347 s over three runs here; 206 s to 274 s on one day at
