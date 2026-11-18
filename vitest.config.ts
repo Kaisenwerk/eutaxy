@@ -2,6 +2,7 @@ import { existsSync, readdirSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import { cloudflareTest } from "@cloudflare/vitest-plugin";
 import { defineConfig } from "vitest/config";
+import { ceilingFrom, SuiteCeiling } from "./tests/suite-ceiling.ts";
 
 /**
  * workerd logs every rejection nothing handled as an "uncaught exception",
@@ -112,8 +113,12 @@ const packageWorkerdProjects = readdirSync("packages", { withFileTypes: true })
       }),
   );
 
+/** The suite's ceiling, when the check job sets one: see tests/suite-ceiling.ts. */
+const ceiling = ceilingFrom(process.env["EUTAXY_SUITE_CEILING_S"]);
+
 export default defineConfig({
   test: {
+    ...(ceiling === undefined ? {} : { reporters: ["default", new SuiteCeiling(ceiling)] }),
     projects: [
       {
         test: {

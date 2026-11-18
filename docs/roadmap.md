@@ -286,7 +286,11 @@ under numbers it records:
 - **A ceiling on the suite.** The check job fails, naming its slowest
   files, once the test suite passes a ceiling, so growth like v0.17's
   (the check went from about 4 to 8.5 minutes on the CI runner in a
-  week, and was noticed by eye) stops the change that causes it.
+  week, and was noticed by eye) stops the change that causes it. In:
+  `tests/suite-ceiling.ts`, a Vitest reporter that times the run from its
+  start to its end and, above `EUTAXY_SUITE_CEILING_S`, fails it and
+  names its ten slowest files; the check job sets 420. Unset, as on a
+  development machine, it does nothing.
 
 Gate, in CI: a planted bug of the adopter's shape (a fence checked once,
 a step with two retries, two invocations in flight) is `BOUNDED` under
