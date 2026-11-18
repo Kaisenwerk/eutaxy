@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.18.0](https://github.com/Kaisenwerk/eutaxy/compare/v0.17.2...v0.18.0) (2026-11-18)
+
+
+### Features
+
+* **core:** fault sites say where a scenario's faults may go ([4a5cdc8](https://github.com/Kaisenwerk/eutaxy/commit/4a5cdc8f1c563d6a7bf96e29c66cef4980636419))
+* **core:** pinned schedules a scenario carries, addressed by what stays put ([8648d51](https://github.com/Kaisenwerk/eutaxy/commit/8648d51d0cc3219ec699e69f57afc59b55b11811))
+* **engine:** replay an UNSUPPORTED run by its faults' calls ([#24](https://github.com/Kaisenwerk/eutaxy/issues/24)) ([abce779](https://github.com/Kaisenwerk/eutaxy/commit/abce7798464e491e816ee9ee3ad2a6d928e91900))
+
+
+### Bug Fixes
+
+* **site:** keep the reasons page's code spans on one line ([#22](https://github.com/Kaisenwerk/eutaxy/issues/22)) ([1b15da9](https://github.com/Kaisenwerk/eutaxy/commit/1b15da960661671ad30461d71a382904e04c7b76))
+
+
+### Documentation
+
+* **roadmap:** close v0.18, runs where they count ([#27](https://github.com/Kaisenwerk/eutaxy/issues/27)) ([63475eb](https://github.com/Kaisenwerk/eutaxy/commit/63475eb914136efb99b67affa396556090a87bab))
+
 ## [0.17.2](https://github.com/Kaisenwerk/eutaxy/compare/v0.17.1...v0.17.2) (2026-11-14)
 
 
