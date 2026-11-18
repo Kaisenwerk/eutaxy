@@ -281,8 +281,23 @@ under numbers it records:
   `agent-poll` example (an Agent that schedules its close, two votes in
   flight) costs about eight times a run of the `workflow-approval` or
   `lease-pool` example (the table below), and an adopter's real Agent
-  ran at about 96 ms a run. Where that time goes is found before
-  anything changes, then brought down.
+  ran at about 96 ms a run. Measured where the time goes: delivery is
+  about 56 of 61 ms, nearly all of it real zero timers. Workerd's
+  cheapest turn of its event loop is a timer of about 1.2 ms (a message
+  posted to oneself costs microseconds but is no turn: neither I/O nor a
+  due timer completes meanwhile), and the scheduler takes one at each
+  handoff into and out of an object's I/O context, where a move inside
+  the object cannot wake it (it would resume in the object's context,
+  where workerd refuses its next call): about 43 waits a run, 28 of them
+  polls while an object's call is in flight, plus two ticks per
+  WebSocket frame. Run one invocation at a time the same scenario still
+  costs 39 ms, since the sequential path polls the same way. Ending a
+  wait early when a move brought the step to rest outside any object
+  gained nothing measurable. So the gate is the measured ratio, a guard
+  against growth, rather than a target the scheduler cannot reach
+  without a cheaper way across an object's I/O context, which waits
+  among the candidates below. In: `scripts/run-cost.ts`, which the check
+  job runs after the suite.
 - **A ceiling on the suite.** The check job fails, naming its slowest
   files, once the test suite passes a ceiling, so growth like v0.17's
   (the check went from about 4 to 8.5 minutes on the CI runner in a
@@ -295,8 +310,10 @@ by `eutaxy check` once the scenario says the step's attempts are where
 faults go; the same violation, pinned in the scenario by step name and
 attempt, is replayed by the command and reported, and the fixed Worker
 holds under both; a run of the `agent-poll` example's fixed scenario
-costs at most three times a run of `workflow-approval`'s, measured
-through the command on the same runner; the check job fails its suite
+costs at most twelve times a run of `workflow-approval`'s, measured
+through the command on the same runner after the suite (three times was
+the aim before the measurement above showed where an object's run spends
+its time); the check job fails its suite
 above 420 s; and every example and earlier test stays green.
 
 The measurement it starts on, taken on `main` at 587db5e (2026-11-15,
@@ -354,6 +371,14 @@ the development machine, medians of three:
 | `workflow-approval` | 1.8 s | 4.4 s    | 8.7 ms  |
 | `lease-pool`        | 1.6 s | 3.8 s    | 7.4 ms  |
 
+Measured again by `scripts/run-cost.ts` at abce779 (2026-11-18), with
+checks of 1 and 101 runs, each the least of two, the two scenarios
+interleaved: `agent-poll` 66 to 74 ms a run and `workflow-approval` 7.3
+to 8.3 ms on the development machine, a ratio of 8.4 to 9.0 over three
+measurements; on the CI runner, 73.2 ms against 8.1 ms, 9.1. The limit of
+twelve leaves room for that spread and stops a change that makes an
+object's run dearer by a third.
+
 The ceiling of 420 s sits above the CI suite's spread with no code change
 (289 s to 347 s over three runs here; 206 s to 274 s on one day at
 v0.16's close), so it fails a build only on real growth. The per-run gate
@@ -377,6 +402,13 @@ The `UNSUPPORTED` reasons that need model work of their own, most useful
 first. Each waits until a target's code reaches it rather than being
 built for coverage, and each becomes a phase, or joins one, with a gate
 when it does:
+- **A cheaper way across an object's I/O context.** A run with a Durable
+  Object pays a real zero timer (about 1.2 ms in workerd) at each
+  handoff into and out of the object, since a move inside the object
+  cannot wake the scheduler without resuming it in the object's context
+  (v0.18's measurement above: about 3.6 such waits per effect point). A
+  wake that crosses request contexts without a timer would bring an
+  object's run near an ordinary one's; none is known yet.
 - **Workers KV.** The most used binding the simulation does not proxy.
   KV is eventually consistent, so the model explores reads that see an
   older value within the documented propagation window, which is where

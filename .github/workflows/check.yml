@@ -42,3 +42,6 @@ jobs:
         env:
           EUTAXY_REQUIRE_LEAN: "1"
           EUTAXY_REQUIRE_Z3: "1"
+      - name: What a run of an object costs against an ordinary run (the v0.18 gate)
+        # After the suite, alone, so its parallel files do not load the runner meanwhile.
+        run: node scripts/run-cost.ts
