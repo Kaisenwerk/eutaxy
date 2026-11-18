@@ -301,7 +301,11 @@ under numbers it records:
 - **A ceiling on the suite.** The check job fails, naming its slowest
   files, once the test suite passes a ceiling, so growth like v0.17's
   (the check went from about 4 to 8.5 minutes on the CI runner in a
-  week, and was noticed by eye) stops the change that causes it.
+  week, and was noticed by eye) stops the change that causes it. In:
+  `tests/suite-ceiling.ts`, a Vitest reporter that times the run from its
+  start to its end and, above `EUTAXY_SUITE_CEILING_S`, fails it and
+  names its ten slowest files; the check job sets 420. Unset, as on a
+  development machine, it does nothing.
 
 Gate, in CI: a planted bug of the adopter's shape (a fence checked once,
 a step with two retries, two invocations in flight) is `BOUNDED` under
@@ -381,7 +385,13 @@ object's run dearer by a third.
 
 The ceiling of 420 s sits above the CI suite's spread with no code change
 (289 s to 347 s over three runs here; 206 s to 274 s on one day at
-v0.16's close), so it fails a build only on real growth. The per-run gate
+v0.16's close), so it fails a build only on real growth. The seven green
+runs on `main` from 493cfe2 to abce779 (2026-11-18, v0.18's work so far)
+took 272 s to 385 s, the two lowest and highest on neighbouring commits:
+the runner's load swings the suite by a third, and the ceiling's room
+above the highest run is now under a tenth. A run that trips it with no
+growth in the slowest files it names is the runner's load; the ceiling is
+raised only with such runs recorded here. The per-run gate
 is a ratio on one runner, so the runner's speed and load cancel out.
 
 Not taken in this phase, since no measurement asks for them yet: the

@@ -40,6 +40,8 @@ jobs:
           node packages/eutaxy/bin/eutaxy.mjs prover install smt
       - run: pnpm check
         env:
+          # The suite fails above this, naming its slowest files (tests/suite-ceiling.ts; the v0.18 gate).
+          EUTAXY_SUITE_CEILING_S: "420"
           EUTAXY_REQUIRE_LEAN: "1"
           EUTAXY_REQUIRE_Z3: "1"
       - name: What a run of an object costs against an ordinary run (the v0.18 gate)
