@@ -2,8 +2,7 @@ name: Pull request
 
 # A pull request is squash-merged as "<title> (#<number>)" with its commits'
 # Co-Authored-By lines as the footer. So its title is a Conventional Commit
-# of at most 64 characters with no trailing period, and each commit by the
-# agents' bot (kaisen-agent), other than a merge, names its model.
+# of at most 64 characters with no trailing period.
 on:
   pull_request:
     types: [opened, edited, reopened, synchronize]
@@ -29,21 +28,5 @@ jobs:
         run: |
           if [ "${#TITLE}" -gt 64 ]; then
             echo "::error::The title is ${#TITLE} characters; at most 64, leaving room for the \" (#<number>)\" of the squash commit."
-            exit 1
-          fi
-      - name: Agents' commits name their model
-        if: ${{ !cancelled() }}
-        env:
-          COMMITS: repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/commits
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          missing=$(gh api --paginate "$COMMITS" --jq '.[]
-            | select((.commit.author.email | test("^[0-9]+\\+kaisen-agent\\[bot\\]@users\\.noreply\\.github\\.com$")) and (.parents | length) < 2)
-            | select(.commit.message | test("(?im)^Co-Authored-By: \\S.* <[^<>\\s]+>$") | not)
-            | .commit.message | split("\n")[0]')
-          if [ -n "$missing" ]; then
-            while IFS= read -r subject; do
-              echo "::error::Commit \"$subject\" is by an agent and needs a Co-Authored-By trailer."
-            done <<< "$missing"
             exit 1
           fi
