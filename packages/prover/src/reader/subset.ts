@@ -16,12 +16,11 @@
  * widens one characterised class at a time. What each engine takes of it
  * is the engine's business (`restrictModule`). This module holds the
  * reads: a module through the compiler (`readSubset`), an expression or a
- * spec arrow from its text (`readExpression`, `readArrowBody`). It is also
- * the subset as the rest of the package sees it, re-exporting the tree
- * (`tree.ts`), typing (`typing.ts`), narrowing (`narrowing.ts`), renaming
- * (`rename.ts`) and restriction (`restrict.ts`). `expressions.ts` reads the
- * syntax, `types.ts` the compiler's types, `declarations.ts` a file's
- * functions, and `inline.ts` the calls read as their callee's body.
+ * spec arrow from its text (`readExpression`, `readArrowBody`). The tree
+ * is in `tree.ts`, typing in `typing.ts`, narrowing in `narrowing.ts`,
+ * renaming in `rename.ts`, restriction in `restrict.ts`; `expressions.ts`
+ * reads the syntax, `types.ts` the compiler's types, `declarations.ts` a
+ * file's functions, and `inline.ts` the calls read as their callee's body.
  */
 
 import type { Arrow } from "@eutaxy/spec";
@@ -464,28 +463,3 @@ function selfCalls(e: Expr, name: string): Extract<Expr, { kind: "call" }>[] {
   walk(e);
   return out;
 }
-
-export { insertNarrows, narrowsOf, tagNarrowsOf } from "./narrowing.ts";
-export { builtinsAssumption } from "./rebinding.ts";
-export { renameVars } from "./rename.ts";
-export { restrictModule } from "./restrict.ts";
-export {
-  type BinaryOp,
-  children,
-  describe,
-  type Expr,
-  type Field,
-  hasLoneSurrogate,
-  isListExpr,
-  type ListExpr,
-  listKinds,
-  type OutsideFunction,
-  OutsideSubset,
-  type Param,
-  type RecordType,
-  type SubsetFunction,
-  type SubsetModule,
-  type SubsetType,
-  type UnionType,
-} from "./tree.ts";
-export { type CalleeSignature, fits, type TypeContext, typeOf } from "./typing.ts";
