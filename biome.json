@@ -13,13 +13,11 @@
   },
   "formatter": { "indentStyle": "space", "indentWidth": 2, "lineWidth": 100 },
   "linter": {
-    "rules": { "preset": "recommended", "complexity": { "useLiteralKeys": "off" } }
-  },
-  "overrides": [
-    {
-      "includes": ["packages/prover/**"],
-      "linter": { "rules": { "suspicious": { "noImportCycles": "error" } } }
+    "rules": {
+      "preset": "recommended",
+      "complexity": { "useLiteralKeys": "off" },
+      "suspicious": { "noImportCycles": "error" }
     }
-  ],
+  },
   "javascript": { "formatter": { "quoteStyle": "double" } }
 }
