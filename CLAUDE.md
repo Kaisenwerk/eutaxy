@@ -20,8 +20,12 @@ every contribution.
 3. **Small, reviewable steps.** Each pull request should be small enough to
    review in minutes and describe in one paragraph.
 4. **Contribution flow.** Every change, the maintainers' included, reaches
-   `main` through a pull request, once `pnpm check` passes and the change
-   has been reviewed; a maintainer squash-merges it. Bug reports and feature
+   `main` through a pull request. Before it is opened, `pnpm check` passes,
+   the change was run, and it has been reviewed, with what the review finds
+   settled in the change itself. The pull request's title is a Conventional
+   Commit of at most 64 characters. Its body says what changes, why this
+   way, and how it was checked, and names any deliberate change in behavior.
+   The repository's owner merges every pull request. Bug reports and feature
    requests go in GitHub Issues; planning lives in `docs/roadmap.md`. Work
    outside the current phase of the roadmap needs its reason written into
    the roadmap.
