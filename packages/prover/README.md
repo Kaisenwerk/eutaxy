@@ -84,9 +84,8 @@ that takes fewer types sees it. `readArrowBody` reads a spec file's arrow
 expression. `closeCompiler` stops the compiler process. The reader's
 modules import one way: the tree (`tree.ts`), typing, narrowing and
 renaming over it, the syntax (`expressions.ts`), a file's declarations,
-inlining, then the reads (`subset.ts`, which re-exports the subset for
-the rest of the package). Biome's `noImportCycles` is an error, so a
-circular import fails `pnpm check`.
+inlining, then the reads (`subset.ts`). Biome's `noImportCycles` is an
+error, so a circular import fails `pnpm check`.
 
 `inPool` runs independent jobs a few at a time and returns their results
 in item order, so an engine's solver processes, or the report's module

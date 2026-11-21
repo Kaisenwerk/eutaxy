@@ -1,36 +1,33 @@
 // @eutaxy/prover/reader: modules and spec files read into SpecIR, and the pure TypeScript subset read into the tree every engine shares, through the TypeScript compiler's API. See ../../README.md.
 export { closeCompiler } from "./compiler.ts";
+export { insertNarrows, narrowsOf, tagNarrowsOf } from "./narrowing.ts";
+export { builtinsAssumption } from "./rebinding.ts";
+export { renameVars } from "./rename.ts";
+export { restrictModule } from "./restrict.ts";
 export { hintsOf, type ReadSpecsInput, readSpecs } from "./specs.ts";
 export {
+  type ReadSubsetOptions,
+  readArrowBody,
+  readExpression,
+  readSubset,
+} from "./subset.ts";
+export {
   type BinaryOp,
-  builtinsAssumption,
-  type CalleeSignature,
   children,
   describe,
   type Expr,
   type Field,
-  fits,
   hasLoneSurrogate,
-  insertNarrows,
   isListExpr,
   type ListExpr,
   listKinds,
-  narrowsOf,
   type OutsideFunction,
   OutsideSubset,
   type Param,
-  type ReadSubsetOptions,
   type RecordType,
-  readArrowBody,
-  readExpression,
-  readSubset,
-  renameVars,
-  restrictModule,
   type SubsetFunction,
   type SubsetModule,
   type SubsetType,
-  type TypeContext,
-  tagNarrowsOf,
-  typeOf,
   type UnionType,
-} from "./subset.ts";
+} from "./tree.ts";
+export { type CalleeSignature, fits, type TypeContext, typeOf } from "./typing.ts";
