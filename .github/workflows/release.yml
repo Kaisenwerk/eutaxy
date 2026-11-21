@@ -5,15 +5,20 @@ name: release
 # that pull request creates the GitHub release and the v* tag, and the
 # publish job then publishes eutaxy to npm through trusted
 # publishing (OIDC) with provenance. No npm token is stored anywhere.
+#
+# Release-please acts as the release App, not with this workflow's own token:
+# GitHub starts no workflow for a pull request opened with that token, so the
+# release pull request would never get its checks. The App's client ID is the
+# organization variable RELEASE_APP_CLIENT_ID and its key the organization
+# secret RELEASE_APP_PRIVATE_KEY.
 
 on:
   push:
     branches: [main]
 
-permissions:
-  contents: write
-  pull-requests: write
-  id-token: write
+# Release-please needs nothing from this workflow's own token; publish sets
+# what it needs.
+permissions: {}
 
 jobs:
   release-please:
@@ -23,9 +28,15 @@ jobs:
       tag_name: ${{ steps.release.outputs.tag_name }}
       version: ${{ steps.release.outputs.version }}
     steps:
+      - uses: actions/create-github-app-token@v3.4.0
+        id: app
+        with:
+          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
       - uses: googleapis/release-please-action@v5
         id: release
         with:
+          token: ${{ steps.app.outputs.token }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
