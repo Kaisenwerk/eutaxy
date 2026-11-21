@@ -47,7 +47,7 @@ import {
   withProgram,
   withSourceFile,
 } from "./compiler.ts";
-import { rebound } from "./subset.ts";
+import { rebound } from "./rebinding.ts";
 import { specTypeOf, unionOf } from "./types.ts";
 
 export interface ReadSpecsInput {

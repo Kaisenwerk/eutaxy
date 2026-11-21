@@ -23,7 +23,7 @@ import {
   TypeFormatFlags,
   type TypeReference,
 } from "typescript/sync";
-import type { Field, RecordType, SubsetType, UnionType } from "./subset.ts";
+import type { Field, RecordType, SubsetType, UnionType } from "./tree.ts";
 
 /** Levels of records and lists inside one another a type may hold before it is cut (a generic instantiating itself anew at each level never repeats). */
 const maxDepth = 16;

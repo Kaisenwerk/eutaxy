@@ -27,18 +27,16 @@ import {
 } from "typescript/ast";
 import * as is from "typescript/ast/is";
 import { isAsync, isConst, kindName, lineAt, textOf } from "./compiler.ts";
+import { insertNarrows, tagOf } from "./narrowing.ts";
 import {
   type BinaryOp,
   type Expr,
   hasLoneSurrogate,
-  insertNarrows,
   OutsideSubset,
   type SubsetType,
-  type TypeContext,
-  tagOf,
-  typeOf,
-} from "./subset.ts";
+} from "./tree.ts";
 import type { Refuse } from "./types.ts";
+import { type TypeContext, typeOf } from "./typing.ts";
 
 /**
  * A call to a function the text cannot call by name (a generic one, or one
