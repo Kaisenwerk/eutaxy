@@ -6,9 +6,9 @@ import {
   checkInvariant,
   checkInvariants,
   recomputePerMessageExpected,
-  sameViolation,
 } from "./invariants.ts";
 import { getPath, selectEffects } from "./selectors.ts";
+import { sameViolation } from "./violation.ts";
 
 /** A D1 insert result as the Cloudflare proxies will record it. */
 function insertResult(

@@ -2,9 +2,9 @@
 
 import type { EffectLog } from "./effect-log.ts";
 import type { Schedule } from "./faults.ts";
-import type { Violation } from "./invariants.ts";
 import type { PinnedSchedule } from "./pinned-schedules.ts";
 import type { Bounds } from "./scenario.ts";
+import type { Violation } from "./violation.ts";
 
 /** How far exploration got: runs, effect points, faults injected and time taken, and coverage when exhaustive. */
 export interface BoundsReached {

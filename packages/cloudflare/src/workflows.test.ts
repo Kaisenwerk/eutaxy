@@ -8,7 +8,7 @@
 import type { EffectRecord, RunHooks, ScenarioSpec } from "@eutaxy/core";
 import { explore, Run, replayChooser, runOnce, virtualEpoch } from "@eutaxy/engine";
 import { describe, expect, test } from "vitest";
-import { createCloudflarePlatform, type WorkerHandler } from "./platform.ts";
+import { createCloudflarePlatform } from "./platform.ts";
 import {
   defineScenario,
   external,
@@ -18,6 +18,7 @@ import {
   workflow,
   workflowRows,
 } from "./scenario.ts";
+import type { WorkerHandler } from "./worker.ts";
 import {
   constructWorkflow,
   deliverWorkflow,

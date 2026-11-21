@@ -37,8 +37,6 @@ export {
   checkInvariants,
   type Invariant,
   recomputePerMessageExpected,
-  sameViolation,
-  type Violation,
 } from "./invariants.ts";
 export {
   describePinnedFault,
@@ -107,3 +105,4 @@ export {
   type UnsupportedCause,
   type Violated,
 } from "./verdict.ts";
+export { sameViolation, type Violation } from "./violation.ts";

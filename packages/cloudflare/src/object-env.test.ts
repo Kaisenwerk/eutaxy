@@ -9,8 +9,9 @@ import { Run, replayChooser, runOnce } from "@eutaxy/engine";
 import { describe, expect, test } from "vitest";
 import { calleeEnv } from "./callees.ts";
 import { Backing, FakeStorage } from "./fake-durable-objects.ts";
-import { createCloudflarePlatform, type WorkerHandler } from "./platform.ts";
+import { createCloudflarePlatform } from "./platform.ts";
 import { callee, durableObject, http, service } from "./scenario.ts";
+import type { WorkerHandler } from "./worker.ts";
 
 type Model = { complete(question: string): Promise<{ steps: number }>; enabled: Promise<boolean> };
 

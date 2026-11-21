@@ -11,7 +11,7 @@ import { describe, expect, test } from "vitest";
 import { calleeEnv } from "./callees.ts";
 import { Backing, FakeStorage } from "./fake-durable-objects.ts";
 import { outsideRunEnv } from "./object-access.ts";
-import { createCloudflarePlatform, type WorkerHandler } from "./platform.ts";
+import { createCloudflarePlatform } from "./platform.ts";
 import {
   defineScenario,
   durableObject,
@@ -22,6 +22,7 @@ import {
   scriptedObject,
   unique,
 } from "./scenario.ts";
+import type { WorkerHandler } from "./worker.ts";
 
 /** What the calling object's storage did, in order; the objects a fault reset; machines constructed. */
 let order: string[] = [];

@@ -49,17 +49,7 @@ import {
 } from "./scenario.ts";
 import { deliverTick } from "./scheduled.ts";
 import { Connections, deliverWebSocket } from "./websocket.ts";
-
-/** The Worker's default export, as far as the platform drives it. */
-export interface WorkerHandler {
-  queue?(batch: MessageBatch<unknown>, env: unknown, ctx: ExecutionContext): void | Promise<void>;
-  fetch?(request: Request, env: unknown, ctx: ExecutionContext): Response | Promise<Response>;
-  scheduled?(
-    controller: ScheduledController,
-    env: unknown,
-    ctx: ExecutionContext,
-  ): void | Promise<void>;
-}
+import type { WorkerHandler } from "./worker.ts";
 
 /** A `WorkerEntrypoint` subclass: the Worker's default export when it exposes RPC methods. Its env is its own. */
 export type WorkerEntrypointClass = abstract new (ctx: ExecutionContext, env: never) => object;

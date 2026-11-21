@@ -10,8 +10,9 @@ import { describe, expect, test } from "vitest";
 import { calleeEnv } from "./callees.ts";
 import { Backing, FakeStorage } from "./fake-durable-objects.ts";
 import { FakeR2 } from "./fake-r2.ts";
-import { createCloudflarePlatform, type WorkerHandler } from "./platform.ts";
+import { createCloudflarePlatform } from "./platform.ts";
 import { durableObject, http, r2Bucket } from "./scenario.ts";
+import type { WorkerHandler } from "./worker.ts";
 
 /** What happened in order, across the stores and the object's storage. */
 let order: string[] = [];

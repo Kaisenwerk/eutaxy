@@ -7,7 +7,7 @@
 import type { EffectRecord, JsonValue, Platform, ScenarioSpec } from "@eutaxy/core";
 import { Run, replayChooser, runOnce, virtualEpoch } from "@eutaxy/engine";
 import { describe, expect, test } from "vitest";
-import { createCloudflarePlatform, type WorkerHandler } from "./platform.ts";
+import { createCloudflarePlatform } from "./platform.ts";
 import {
   defineScenario,
   external,
@@ -16,6 +16,7 @@ import {
   workflow,
   workflowRows,
 } from "./scenario.ts";
+import type { WorkerHandler } from "./worker.ts";
 
 /** workerd's base refuses to be constructed outside the runtime; this one refuses always. */
 class WorkflowEntrypoint {

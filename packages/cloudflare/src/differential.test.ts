@@ -2,8 +2,8 @@
 import type { ScenarioSpec } from "@eutaxy/core";
 import { describe, expect, test } from "vitest";
 import { runDifferential } from "./differential.ts";
-import type { WorkerHandler } from "./platform.ts";
 import { http, queue } from "./scenario.ts";
+import type { WorkerHandler } from "./worker.ts";
 
 function spec(messages = 2): ScenarioSpec {
   return {

@@ -6,9 +6,10 @@
 import type { EffectLog, ScenarioSpec, Schedule } from "@eutaxy/core";
 import { Run, replayChooser, runOnce } from "@eutaxy/engine";
 import { describe, expect, test } from "vitest";
-import { createCloudflarePlatform, type WorkerHandler } from "./platform.ts";
+import { createCloudflarePlatform } from "./platform.ts";
 import { queue, service, serviceCall } from "./scenario.ts";
 import { isServiceBinding, scriptedError } from "./services.ts";
+import type { WorkerHandler } from "./worker.ts";
 
 /** A test double for the runtime's Fetcher: fetch and connect, and a record of being called. */
 class FakeFetcher {

@@ -6,8 +6,9 @@
 import type { EffectLog, ScenarioSpec, Schedule } from "@eutaxy/core";
 import { Run, replayChooser, runOnce, virtualEpoch } from "@eutaxy/engine";
 import { describe, expect, test } from "vitest";
-import { createCloudflarePlatform, type WorkerHandler } from "./platform.ts";
+import { createCloudflarePlatform } from "./platform.ts";
 import { atLeastOncePerMessage, cron, defineScenario } from "./scenario.ts";
+import type { WorkerHandler } from "./worker.ts";
 
 const bounds = {
   maxFaultsPerRun: 1,

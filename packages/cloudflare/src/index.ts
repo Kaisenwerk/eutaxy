@@ -15,7 +15,6 @@ export {
   type CloudflarePlatformOptions,
   createCloudflarePlatform,
   type WorkerEntrypointClass,
-  type WorkerHandler,
 } from "./platform.ts";
 export {
   atLeastOncePerMessage,
@@ -85,3 +84,4 @@ export {
   workflowRows,
   workflowStep,
 } from "./scenario.ts";
+export type { WorkerHandler } from "./worker.ts";

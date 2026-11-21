@@ -15,7 +15,7 @@ import {
 import { Run, replayChooser, runOnce, virtualEpoch } from "@eutaxy/engine";
 import { describe, expect, test } from "vitest";
 import { FakeR2 } from "./fake-r2.ts";
-import { createCloudflarePlatform, type WorkerHandler } from "./platform.ts";
+import { createCloudflarePlatform } from "./platform.ts";
 import {
   defineScenario,
   http,
@@ -25,6 +25,7 @@ import {
   r2Rows,
   references,
 } from "./scenario.ts";
+import type { WorkerHandler } from "./worker.ts";
 
 type Step =
   | { op: "put"; key: string; text: string; onlyIf?: R2Conditional; meta?: Record<string, string> }

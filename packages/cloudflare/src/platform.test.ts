@@ -6,8 +6,9 @@
 import type { AtLeastOnce, EffectLog, ScenarioSpec, Schedule } from "@eutaxy/core";
 import { explore, Run, replayChooser, restrictSpec, runOnce } from "@eutaxy/engine";
 import { describe, expect, test } from "vitest";
-import { createCloudflarePlatform, type WorkerHandler } from "./platform.ts";
+import { createCloudflarePlatform } from "./platform.ts";
 import { atLeastOncePerMessage, http, queue } from "./scenario.ts";
+import type { WorkerHandler } from "./worker.ts";
 
 const acked: AtLeastOnce = {
   kind: "atLeastOnce",

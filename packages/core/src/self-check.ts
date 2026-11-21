@@ -13,9 +13,10 @@
 
 import type { JsonValue } from "./canonical-json.ts";
 import { appendEffect, type EffectLog, emptyLog } from "./effect-log.ts";
-import { checkInvariant, type Violation } from "./invariants.ts";
+import { checkInvariant } from "./invariants.ts";
 import type { EffectSelector } from "./selectors.ts";
 import { type Row, type RowCondition, rowMatches } from "./state.ts";
+import type { Violation } from "./violation.ts";
 
 /** A key as effects and rows carry it: "1" and 1 are different keys. */
 export type Key = "1" | 1 | "b";
