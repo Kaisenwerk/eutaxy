@@ -2,8 +2,8 @@
 
 import { canonicalJson, type JsonValue } from "./canonical-json.ts";
 import type { EffectLog, EffectRecord } from "./effect-log.ts";
-import type { Violation } from "./invariants.ts";
 import { type EffectSelector, getPath, jsonEqual, keyOf, selectEffects } from "./selectors.ts";
+import type { Violation } from "./violation.ts";
 
 /** A condition on one column of a row. */
 export type RowCondition =

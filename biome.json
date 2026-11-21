@@ -16,7 +16,9 @@
     "rules": {
       "preset": "recommended",
       "complexity": { "useLiteralKeys": "off" },
-      "suspicious": { "noImportCycles": "error" }
+      "suspicious": {
+        "noImportCycles": { "level": "error", "options": { "ignoreTypes": false } }
+      }
     }
   },
   "javascript": { "formatter": { "quoteStyle": "double" } }

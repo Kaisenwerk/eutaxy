@@ -8,8 +8,9 @@ import type { EffectLog, ScenarioSpec } from "@eutaxy/core";
 import { Run, replayChooser, runOnce } from "@eutaxy/engine";
 import { describe, expect, test } from "vitest";
 import { Backing, FakeStorage } from "./fake-durable-objects.ts";
-import { createCloudflarePlatform, type WorkerHandler } from "./platform.ts";
+import { createCloudflarePlatform } from "./platform.ts";
 import { durableObject, http, service } from "./scenario.ts";
+import type { WorkerHandler } from "./worker.ts";
 
 /** The runtime's base class, as far as construction goes: it is found by name. */
 class DurableObject<Env = unknown> {

@@ -10,8 +10,9 @@ import { Run, replayChooser, runOnce } from "@eutaxy/engine";
 import { describe, expect, test } from "vitest";
 import { calleeEnv } from "./callees.ts";
 import { Backing, FakeStorage } from "./fake-durable-objects.ts";
-import { createCloudflarePlatform, type WorkerHandler } from "./platform.ts";
+import { createCloudflarePlatform } from "./platform.ts";
 import { durableObject, http } from "./scenario.ts";
+import type { WorkerHandler } from "./worker.ts";
 
 /** What the objects' storages did, in order, and the objects a fault reset. */
 let order: string[] = [];

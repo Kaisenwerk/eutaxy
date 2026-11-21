@@ -11,8 +11,9 @@ import { describe, expect, test } from "vitest";
 import { runAlarm } from "./alarms.ts";
 import { BindingState, runInObject } from "./durable-objects.ts";
 import { Backing, FakeStorage } from "./fake-durable-objects.ts";
-import { createCloudflarePlatform, type WorkerHandler } from "./platform.ts";
+import { createCloudflarePlatform } from "./platform.ts";
 import { durableObject, http } from "./scenario.ts";
+import type { WorkerHandler } from "./worker.ts";
 
 /** A virtual time as milliseconds since the start of the run. */
 const since = () => Date.now() - virtualEpoch;

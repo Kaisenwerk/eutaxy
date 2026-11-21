@@ -474,4 +474,4 @@ An invariant broke: the violation, the shrunk schedule that reproduces it and it
 
 `interface Violation`
 
-An invariant that did not hold: its name, what went wrong, the keys involved and the effects that show it. [Source](https://github.com/Kaisenwerk/eutaxy/blob/main/packages/core/src/invariants.ts)
+An invariant that did not hold: its name, what went wrong, the keys involved and the effects that show it. [Source](https://github.com/Kaisenwerk/eutaxy/blob/main/packages/core/src/violation.ts)

@@ -8,7 +8,7 @@ import type { EffectLog, ScenarioSpec, Schedule } from "@eutaxy/core";
 import { Run, replayChooser, runOnce } from "@eutaxy/engine";
 import { describe, expect, test } from "vitest";
 import { Backing, FakeStorage } from "./fake-durable-objects.ts";
-import { createCloudflarePlatform, type WorkerHandler } from "./platform.ts";
+import { createCloudflarePlatform } from "./platform.ts";
 import {
   defineScenario,
   durableObject,
@@ -17,6 +17,7 @@ import {
   external,
   http,
 } from "./scenario.ts";
+import type { WorkerHandler } from "./worker.ts";
 
 /** Drops a live instance of the current fake namespace, as a runtime reset does. */
 let dropInstance: ((hex: string) => void) | null = null;

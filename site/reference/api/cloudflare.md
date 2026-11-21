@@ -528,7 +528,7 @@ A `WorkerEntrypoint` subclass: the Worker's default export when it exposes RPC m
 
 `interface WorkerHandler`
 
-The Worker's default export, as far as the platform drives it. [Source](https://github.com/Kaisenwerk/eutaxy/blob/main/packages/cloudflare/src/platform.ts)
+The Worker's default export, as far as the platform drives it. [Source](https://github.com/Kaisenwerk/eutaxy/blob/main/packages/cloudflare/src/worker.ts)
 
 ### `WorkflowSetup`
 

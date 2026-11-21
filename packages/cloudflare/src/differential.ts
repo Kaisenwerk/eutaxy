@@ -38,11 +38,7 @@ import { isD1 } from "./d1.ts";
 import type { DurableObjectTestHelpers } from "./durable-objects.ts";
 import { requestFor } from "./http.ts";
 import { isDurableObjectNamespace } from "./object-access.ts";
-import {
-  type CloudflarePlatformOptions,
-  createCloudflarePlatform,
-  type WorkerHandler,
-} from "./platform.ts";
+import { type CloudflarePlatformOptions, createCloudflarePlatform } from "./platform.ts";
 import { cloneJson } from "./queues.ts";
 import { isR2 } from "./r2.ts";
 import { callMethod, describeError, entrypointClass } from "./rpc.ts";
@@ -57,6 +53,7 @@ import {
   type RpcDrive,
 } from "./scenario.ts";
 import type { TickData } from "./scheduled.ts";
+import type { WorkerHandler } from "./worker.ts";
 
 /** A type, not an interface, so it is JSON data the comparison takes as it is. */
 export type AttemptRecord = {

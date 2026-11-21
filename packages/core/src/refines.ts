@@ -2,7 +2,6 @@
 
 import { canonicalJson, type JsonValue } from "./canonical-json.ts";
 import type { EffectLog, EffectRecord } from "./effect-log.ts";
-import type { Violation } from "./invariants.ts";
 import {
   compileSelector,
   type EffectSelector,
@@ -11,6 +10,7 @@ import {
   keyOf,
   selectEffects,
 } from "./selectors.ts";
+import type { Violation } from "./violation.ts";
 
 /**
  * The shell follows the core. Calls to a pure core function are recorded as

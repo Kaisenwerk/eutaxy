@@ -9,8 +9,9 @@ import type { EffectLog, ScenarioSpec, Schedule } from "@eutaxy/core";
 import { Run, replayChooser, runOnce } from "@eutaxy/engine";
 import { describe, expect, test } from "vitest";
 import { calleeEnv, callFaults, crossingError } from "./callees.ts";
-import { createCloudflarePlatform, type WorkerHandler } from "./platform.ts";
+import { createCloudflarePlatform } from "./platform.ts";
 import { callee, defineScenario, queue, service } from "./scenario.ts";
+import type { WorkerHandler } from "./worker.ts";
 
 /** The runtime's base class, as far as construction goes: it is found by name. */
 class WorkerEntrypoint<Env = unknown> {

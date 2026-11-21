@@ -2,7 +2,7 @@
 
 import type { FaultKind, RunHooks } from "@eutaxy/core";
 import { CrashSignal, note } from "@eutaxy/engine";
-import type { WorkerHandler } from "./platform.ts";
+import type { WorkerHandler } from "./worker.ts";
 
 const CUT_OFF: readonly FaultKind[] = ["cut_off"];
 
