@@ -21,10 +21,10 @@ behaviour change, zero runtime dependencies, one package per concern.
    test.
 4. Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/)
    and end with a `Co-Authored-By:` trailer for each co-author.
-5. Open a pull request against `main`. Describe what changed and why in a
-   paragraph; link the roadmap phase it belongs to. Its title becomes the
-   squash commit's, so it is a Conventional Commit of at most 64
-   characters; a check on the pull request tests it.
+5. Open a pull request against `main` and fill in the template it opens
+   with; link the roadmap phase it belongs to. Its title becomes the squash
+   commit's, so it is a Conventional Commit of at most 64 characters; a
+   check on the pull request tests it.
 
 Work outside the current roadmap phase is best raised as an issue first.
 

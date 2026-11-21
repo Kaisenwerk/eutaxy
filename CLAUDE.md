@@ -22,13 +22,11 @@ every contribution.
 4. **Contribution flow.** Every change, the maintainers' included, reaches
    `main` through a pull request. Before it is opened, `pnpm check` passes,
    the change was run, and it has been reviewed, with what the review finds
-   settled in the change itself. The pull request's title is a Conventional
-   Commit of at most 64 characters. Its body says what changes, why this
-   way, and how it was checked, and names any deliberate change in behavior.
-   The repository's owner merges every pull request. Bug reports and feature
-   requests go in GitHub Issues; planning lives in `docs/roadmap.md`. Work
-   outside the current phase of the roadmap needs its reason written into
-   the roadmap.
+   settled in the change itself. The pull request's title and body follow
+   `.github/pull_request_template.md`. The repository's owner merges every
+   pull request. Bug reports and feature requests go in GitHub Issues;
+   planning lives in `docs/roadmap.md`. Work outside the current phase of
+   the roadmap needs its reason written into the roadmap.
 
 ## 2. Engineering standards
 
