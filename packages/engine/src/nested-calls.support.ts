@@ -9,7 +9,7 @@ import type { Bounds, EffectRecord, FaultKind, Platform, ScenarioSpec } from "@e
 import { expect } from "vitest";
 import { replayChooser } from "./chooser.ts";
 import { hostInvocation, runInvocation } from "./deliver.ts";
-import { runOnce } from "./explore.ts";
+import { runOnce } from "./once.ts";
 import { Run } from "./run.ts";
 
 const budgetMs = 2_000;

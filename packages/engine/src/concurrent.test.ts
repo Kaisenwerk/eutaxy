@@ -1,8 +1,9 @@
 import { type AtMostOncePerKey, digestLog, type Platform, type ScenarioSpec } from "@eutaxy/core";
 import { describe, expect, test, vi } from "vitest";
 import { replayChooser, seededChooser } from "./chooser.ts";
-import { explore, replayRun, runOnce } from "./explore.ts";
+import { explore } from "./explore.ts";
 import { checkThenInsertConsumer, createFakePlatform, type FakeHandler } from "./fake-platform.ts";
+import { replayRun, runOnce } from "./once.ts";
 import { CrashSignal, Run } from "./run.ts";
 
 const once: AtMostOncePerKey = {
@@ -162,7 +163,7 @@ describe("concurrent invocations", () => {
   }, 10_000);
 
   test("on a host whose only way to the event loop is a timer (workerd) a decision costs one tick and nothing else", async () => {
-    const counts = await underFakeTimers("workerd-like", async (loadEngine) => {
+    const counts = await underFakeTimers("workerd-like", async () => {
       // Every way to the event loop the engine may take, counted as the engine arms it (before
       // the engine captures the globals): zero timers, and immediates, which are timers there too.
       const g = globalThis as unknown as Record<string, (...args: unknown[]) => unknown>;
@@ -176,7 +177,7 @@ describe("concurrent invocations", () => {
           return real(cb, ms, ...rest);
         };
       }
-      const { runOnce } = await loadEngine();
+      const { runOnce } = await import("./once.ts");
       const { Run: FreshRun } = await import("./run.ts");
       // A chooser sees every decision, choices or not: the first option each time. (The race
       // scenario sets no timers and nothing in it gets stuck, so every step is such a decision.)

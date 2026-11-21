@@ -8,8 +8,9 @@ import {
 } from "@eutaxy/core";
 import { describe, expect, test } from "vitest";
 import { replayChooser } from "./chooser.ts";
-import { explore, replay, replayRun } from "./explore.ts";
+import { explore, replay } from "./explore.ts";
 import { buggyConsumer, createFakePlatform } from "./fake-platform.ts";
+import { replayRun } from "./once.ts";
 import { Run } from "./run.ts";
 import { restrictSpec } from "./shrink.ts";
 

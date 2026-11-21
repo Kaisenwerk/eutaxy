@@ -18,7 +18,8 @@ import { describe, expect, test } from "vitest";
 import { type Chooser, replayChooser, seededChooser } from "./chooser.ts";
 import { realTick, virtualEpoch } from "./clock.ts";
 import { runInvocation } from "./deliver.ts";
-import { explore, replayRun, runOnce } from "./explore.ts";
+import { explore } from "./explore.ts";
+import { replayRun, runOnce } from "./once.ts";
 import { Run } from "./run.ts";
 import { waitLimit } from "./turns.ts";
 

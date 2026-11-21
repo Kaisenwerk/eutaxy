@@ -24,8 +24,9 @@ import type {
 } from "@eutaxy/core";
 import { describe, expect, test } from "vitest";
 import { virtualEpoch } from "./clock.ts";
-import { explore, replayRun } from "./explore.ts";
+import { explore } from "./explore.ts";
 import { buggyConsumer, checkThenInsertConsumer, createFakePlatform } from "./fake-platform.ts";
+import { replayRun } from "./once.ts";
 import { InjectedEffectError } from "./run.ts";
 
 const factorial = (n: number): number => (n <= 1 ? 1 : n * factorial(n - 1));

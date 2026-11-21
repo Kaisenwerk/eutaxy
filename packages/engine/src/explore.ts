@@ -37,8 +37,6 @@ import { replayRun, runOnce } from "./once.ts";
 import { concurrencySupported, Run } from "./run.ts";
 import { shrink } from "./shrink.ts";
 
-export { replayRun, runOnce } from "./once.ts";
-
 /** How `explore` searches: the seed, a cap on runs, the time budget, the share of runs with faults, and exhaustive mode. */
 export interface ExploreOptions {
   readonly seed: number | string;

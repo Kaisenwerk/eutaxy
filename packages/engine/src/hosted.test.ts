@@ -8,13 +8,14 @@
 import { type AtMostOncePerKey, digestLog, type ScenarioSpec } from "@eutaxy/core";
 import { describe, expect, test } from "vitest";
 import { replayChooser } from "./chooser.ts";
-import { explore, replayRun, runOnce } from "./explore.ts";
+import { explore } from "./explore.ts";
 import {
   buggyConsumer,
   checkThenInsertConsumer,
   createFakePlatform,
   type FakeHandler,
 } from "./fake-platform.ts";
+import { replayRun, runOnce } from "./once.ts";
 import { Run } from "./run.ts";
 
 const once: AtMostOncePerKey = {
