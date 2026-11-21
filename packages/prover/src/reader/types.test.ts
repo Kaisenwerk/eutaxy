@@ -3,7 +3,7 @@ import type { TypeNode } from "typescript/ast";
 import * as is from "typescript/ast/is";
 import { describe, expect, test } from "vitest";
 import { withProgram } from "./compiler.ts";
-import { OutsideSubset, type SubsetType } from "./subset.ts";
+import { OutsideSubset, type SubsetType } from "./tree.ts";
 import { SubsetTypes, specTypeOf } from "./types.ts";
 
 const path = "/virtual/types.ts";

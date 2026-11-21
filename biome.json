@@ -15,5 +15,11 @@
   "linter": {
     "rules": { "preset": "recommended", "complexity": { "useLiteralKeys": "off" } }
   },
+  "overrides": [
+    {
+      "includes": ["packages/prover/**"],
+      "linter": { "rules": { "suspicious": { "noImportCycles": "error" } } }
+    }
+  ],
   "javascript": { "formatter": { "quoteStyle": "double" } }
 }

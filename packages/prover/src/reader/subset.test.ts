@@ -1,15 +1,9 @@
 import { describe, expect, test } from "vitest";
-import {
-  type Expr,
-  listKinds,
-  readArrowBody,
-  readExpression,
-  readSubset,
-  renameVars,
-  restrictModule,
-  type SubsetType,
-  typeOf,
-} from "./subset.ts";
+import { renameVars } from "./rename.ts";
+import { restrictModule } from "./restrict.ts";
+import { readArrowBody, readExpression, readSubset } from "./subset.ts";
+import { type Expr, listKinds, type SubsetType } from "./tree.ts";
+import { typeOf } from "./typing.ts";
 
 const refund = `
 export interface RefundDecision {
