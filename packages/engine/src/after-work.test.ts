@@ -11,7 +11,7 @@ import { describe, expect, test } from "vitest";
 import { replayChooser, seededChooser } from "./chooser.ts";
 import { realTick, virtualEpoch } from "./clock.ts";
 import { runInvocation } from "./deliver.ts";
-import { runOnce } from "./explore.ts";
+import { runOnce } from "./once.ts";
 import { afterWorkTimerLimit, CrashSignal, Run } from "./run.ts";
 
 const bounds = (concurrent: number): Bounds => ({

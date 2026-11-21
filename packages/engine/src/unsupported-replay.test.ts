@@ -6,8 +6,9 @@
  */
 import type { AtMostOncePerKey, ScenarioSpec } from "@eutaxy/core";
 import { describe, expect, test } from "vitest";
-import { explore, replayRun, runPinned } from "./explore.ts";
+import { explore, runPinned } from "./explore.ts";
 import { createFakePlatform, type FakeHandler } from "./fake-platform.ts";
+import { replayRun } from "./once.ts";
 
 const once: AtMostOncePerKey = {
   kind: "atMostOncePerKey",

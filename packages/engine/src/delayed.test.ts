@@ -2,7 +2,7 @@ import type { EventRef, Platform, RunHooks, ScenarioSpec } from "@eutaxy/core";
 import { describe, expect, test } from "vitest";
 import { replayChooser } from "./chooser.ts";
 import { virtualEpoch } from "./clock.ts";
-import { runOnce } from "./explore.ts";
+import { runOnce } from "./once.ts";
 import { Run } from "./run.ts";
 
 /**

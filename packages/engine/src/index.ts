@@ -37,8 +37,6 @@ export {
   explore,
   type PinnedRun,
   replay,
-  replayRun,
-  runOnce,
   runPinned,
 } from "./explore.ts";
 export {
@@ -57,6 +55,7 @@ export {
   withoutNetwork,
 } from "./fetch.ts";
 export { type CoreObserver, type ObservedCall, observeCore } from "./observe.ts";
+export { replayRun, runOnce } from "./once.ts";
 export { patchProperty } from "./patch.ts";
 export { CrashSignal, InjectedEffectError, Run, type RunOptions } from "./run.ts";
 export { restrictSpec, type ShrinkOptions, type ShrinkResult, shrink } from "./shrink.ts";

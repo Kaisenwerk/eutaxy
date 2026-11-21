@@ -23,8 +23,8 @@ import {
 import { replayChooser } from "./chooser.ts";
 import { effectLatencyMs, patchGlobals, settleOn, type VirtualClock } from "./clock.ts";
 import type { Outcome } from "./deliver.ts";
-import { runOnce } from "./explore.ts";
 import { installScriptedFetch } from "./fetch.ts";
+import { runOnce } from "./once.ts";
 import { Run } from "./run.ts";
 
 /** The raw side cannot abandon an invocation the way the engine does; a stuck handler ends the comparison. */

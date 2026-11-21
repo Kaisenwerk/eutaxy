@@ -16,7 +16,7 @@ import {
   shrinkCandidates,
   type Violation,
 } from "@eutaxy/core";
-import { replayRun } from "./explore.ts";
+import { replayRun } from "./once.ts";
 
 export interface ShrinkOptions {
   readonly maxRuns: number;
