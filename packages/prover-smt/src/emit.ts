@@ -18,20 +18,21 @@
  */
 
 import {
+  type BinderRule,
   type Expr,
   isListExpr,
   OutsideSubset,
   type RecordType,
   readArrowBody,
+  readBinderType,
   renameVars,
   type SubsetFunction,
   type SubsetModule,
   type SubsetType,
   type TypeContext,
   typeOf,
-  type UnionType,
 } from "@eutaxy/prover/reader";
-import { type Arrow, describeType, type Property, type SpecType } from "@eutaxy/spec";
+import type { Arrow, Property, SpecType } from "@eutaxy/spec";
 
 export const F64 = "(_ FloatingPoint 11 53)";
 export const STR = "(Seq (_ BitVec 16))";
@@ -479,131 +480,19 @@ export function emitDatatypes(module: SubsetModule): string {
   return `(declare-datatypes (${names.map((n) => `(${n} 0)`).join(" ")}) (${bodies.join(" ")}))`;
 }
 
+/** What this engine does not take of binder types: arrays, which the Lean engine takes. */
+export const binderRule: BinderRule = { array: "arrays are not in the engine's subset yet" };
+
 /**
  * The subset type a binder ranges over, or `OutsideSubset`: `number` is
  * the double, a union of string literals is a string (constrained to the
  * literals in the script), a record is the module's datatype of that
  * name, `T | null` the option over `T`, a union of records the declared
  * union whose members match. Bigint and what the reader could not read
- * are outside.
+ * are outside. Read by the reader's `readBinderType` under `binderRule`.
  */
 export function binderType(name: string, t: SpecType, module: SubsetModule): SubsetType {
-  switch (t.kind) {
-    case "number":
-      return { kind: "int" };
-    case "boolean":
-      return { kind: "bool" };
-    case "string":
-      return { kind: "string" };
-    case "literal":
-      if (typeof t.value === "string") return { kind: "string" };
-      if (typeof t.value === "boolean") return { kind: "bool" };
-      return { kind: "int" };
-    case "bigint":
-      fail(`binder ${name} over bigint: the subset has no bigint`);
-      break;
-    case "union": {
-      const nulls = t.members.filter((m) => m.kind === "null");
-      if (t.members.some((m) => m.kind === "undefined"))
-        fail(`binder ${name} over ${describeType(t)}: undefined is not in the subset (null is)`);
-      const rest = t.members.filter((m) => m.kind !== "null");
-      let inner: SubsetType;
-      if (rest.every((m) => m.kind === "literal" && typeof m.value === "string"))
-        inner = { kind: "string" };
-      else if (rest.every((m) => m.kind === "literal" && typeof m.value === "boolean"))
-        inner = { kind: "bool" };
-      else if (rest.length === 1) inner = binderType(name, rest[0] as SpecType, module);
-      else if (rest.every((m) => m.kind === "record")) {
-        const union = findUnion(rest as readonly Extract<SpecType, { kind: "record" }>[], module);
-        if (!union)
-          fail(
-            `binder ${name} over ${describeType(t)}: no one union the module declares has exactly these members`,
-          );
-        inner = { kind: "union", name: union.name };
-      } else fail(`binder ${name} over ${describeType(t)}: a union the subset does not read`);
-      return nulls.length > 0 ? { kind: "nullable", inner } : inner;
-    }
-    case "record":
-      if (t.name !== undefined && module.records.some((r) => r.name === t.name))
-        return { kind: "record", name: t.name };
-      fail(
-        `binder ${name} over ${describeType(t)}: ${t.name === undefined ? "an inline record type" : `record type ${t.name} is outside the subset`}`,
-      );
-      break;
-    case "null":
-    case "undefined":
-      fail(`binder ${name} over ${t.kind}`);
-      break;
-    case "array":
-      fail(`binder ${name} over ${describeType(t)}: arrays are not in the engine's subset yet`);
-      break;
-    case "unknown":
-      fail(`binder ${name} over ${t.text}, which the reader could not read`);
-  }
-}
-
-/**
- * The one declared union these member types are, compared field by field
- * and type by type: a field holding one literal is that literal in the
- * union's member, a union of literals is a field of no literal, and
- * everything else reads to the field's own type. A record may be a member
- * of several unions, so tags and field names alone could name the wrong
- * one; when more than one union fits, none is chosen.
- */
-function findUnion(
-  members: readonly Extract<SpecType, { kind: "record" }>[],
-  module: SubsetModule,
-): UnionType | undefined {
-  const recordOf = (name: string) => module.records.find((r) => r.name === name);
-  // A nested record is compared by its fields, not its name: the spec reader and the subset reader
-  // may name one inline type differently (`Extract<U, …>` against `U.a`).
-  const recordFits = (sm: Extract<SpecType, { kind: "record" }>, rec: RecordType): boolean =>
-    sm.fields.length === rec.fields.length &&
-    rec.fields.every((f) => {
-      const sf = sm.fields.find((x) => x.name === f.name);
-      return sf !== undefined && fieldFits(sf.type, f);
-    });
-  const typeFits = (sf: SpecType, t: SubsetType): boolean => {
-    if (t.kind === "record") {
-      const rec = recordOf(t.name);
-      return sf.kind === "record" && rec !== undefined && recordFits(sf, rec);
-    }
-    if (t.kind === "nullable" && sf.kind === "union" && sf.members.some((m) => m.kind === "null")) {
-      const rest = sf.members.filter((m) => m.kind !== "null");
-      const inner: SpecType =
-        rest.length === 1 ? (rest[0] as SpecType) : { kind: "union", members: rest };
-      return typeFits(inner, t.inner);
-    }
-    if (t.kind === "union") {
-      const u = module.unions.find((x) => x.name === t.name);
-      if (!u || sf.kind !== "union" || sf.members.length !== u.members.length) return false;
-      return u.members.every((m) => {
-        const rec = recordOf(m.record);
-        return (
-          rec !== undefined && sf.members.some((sm) => sm.kind === "record" && recordFits(sm, rec))
-        );
-      });
-    }
-    try {
-      return JSON.stringify(binderType("field", sf, module)) === JSON.stringify(t);
-    } catch (err) {
-      if (err instanceof OutsideSubset) return false;
-      throw err;
-    }
-  };
-  function fieldFits(sf: SpecType, f: RecordType["fields"][number]): boolean {
-    if (f.literal !== undefined) return sf.kind === "literal" && sf.value === f.literal;
-    if (sf.kind === "literal") return false;
-    return typeFits(sf, f.type);
-  }
-  const fitting = module.unions.filter((u) => {
-    if (u.members.length !== members.length) return false;
-    return u.members.every((m) => {
-      const rec = recordOf(m.record);
-      return rec !== undefined && members.some((sm) => recordFits(sm, rec));
-    });
-  });
-  return fitting.length === 1 ? fitting[0] : undefined;
+  return readBinderType(name, t, module, binderRule);
 }
 
 /**

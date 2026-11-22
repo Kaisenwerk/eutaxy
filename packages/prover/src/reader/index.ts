@@ -1,4 +1,5 @@
 // @eutaxy/prover/reader: modules and spec files read into SpecIR, and the pure TypeScript subset read into the tree every engine shares, through the TypeScript compiler's API. See ../../README.md.
+export { type BinderRule, readBinderType } from "./binders.ts";
 export { closeCompiler } from "./compiler.ts";
 export {
   type EngineModule,

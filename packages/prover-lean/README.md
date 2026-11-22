@@ -3,8 +3,10 @@
 **Purpose.** Eutaxy's first-party engine: a pure TypeScript subset to Lean 4,
 one tactic script, translation validation. It reads a module through the
 reader's `readForEngine` with its two restrictions (the types `leanTakes`
-does not take, and division outside `Math.floor(x / c)`); what it owns
-from there is the translation and the run of Lean. Runs on the Node side, over a
+does not take, and division outside `Math.floor(x / c)`) and a spec's
+binder types through `readBinderType` with its `binderRule` (no nullable
+types, no unions); what it owns from there is the translation and the run
+of Lean. Runs on the Node side, over a
 process boundary: nothing here is loaded into workerd.
 
 **Public surface.** `leanProver` (the engine as a `Prover`: `available` when

@@ -191,6 +191,8 @@ need the real runtime live in its `workerd/` directory, one Worker each.
   to report on, the subset restricted by the engine's own rules, and the
   functions outside it with why, so an engine holds its restrictions and
   its translation and a user reads one reason whichever engine gave it.
+  A spec's binder types are read once as well (`readBinderType`), each
+  engine naming what it does not take and why.
 
 ## Spec language, invariants and refines
 

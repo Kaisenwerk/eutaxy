@@ -83,7 +83,10 @@ first-party engine opens with: the functions to report on, the subset
 restricted by each of the engine's `EngineRestriction`s in order, and the
 functions outside it with why (`EngineModule`); `engineGap` puts every
 function outside when an emitter refuses what the reader let through, and
-`outsideProofs` is what the engine reports for them. `readArrowBody` reads a spec file's arrow
+`outsideProofs` is what the engine reports for them. `readBinderType`
+reads a spec's binder type into the subset's type once for every engine,
+under the engine's `BinderRule` (what it does not take, each with the
+reason the user reads). `readArrowBody` reads a spec file's arrow
 (expression or block body) from its text in a scope of binder types,
 `renameVars` renames its parameters to the binders', `typeOf` types an
 expression. `closeCompiler` stops the compiler process. The reader's

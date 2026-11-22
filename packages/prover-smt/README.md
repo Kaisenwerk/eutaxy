@@ -13,8 +13,10 @@ datatype (`none` for `null`), a name narrowed by a null check bound to the
 option's value in the branch the check guards. Lists (arrays) and the
 operations on them are not taken here: a function or property using one is
 `unsupported`, and the Lean engine takes them. It reads a module through
-the reader's `readForEngine` with that one restriction; what it owns from
-there is the translation, the run of Z3 and the replay of its models. Runs on the
+the reader's `readForEngine` with that one restriction and a spec's binder
+types through `readBinderType` with its `binderRule` (no arrays); what it
+owns from there is the translation, the run of Z3 and the replay of its
+models. Runs on the
 Node side, over a process boundary: nothing here is loaded into workerd.
 
 **Public surface.** `smtProver` (the engine as a `Prover`: `available`

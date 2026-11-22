@@ -11,12 +11,14 @@
  */
 
 import {
+  type BinderRule,
   children,
   type Expr,
   hasLoneSurrogate,
   OutsideSubset,
   type RecordType,
   readArrowBody,
+  readBinderType,
   renameVars,
   type SubsetFunction,
   type SubsetModule,
@@ -24,7 +26,7 @@ import {
   type TypeContext,
   typeOf,
 } from "@eutaxy/prover/reader";
-import { type Arrow, describeType, type Property, type SpecType } from "@eutaxy/spec";
+import type { Arrow, Property, SpecType } from "@eutaxy/spec";
 
 /**
  * TypeScript names as Lean identifiers that can clash with nothing Lean
@@ -301,55 +303,23 @@ export function emitFunction(f: SubsetFunction, module: SubsetModule): string {
   ].join("\n");
 }
 
+/** What this engine does not take of binder types: nullable types and unions, which the SMT engine takes. */
+export const binderRule: BinderRule = {
+  nullable: "nullable types are not in the engine's subset yet",
+  union: "unions are not in the engine's subset yet",
+};
+
 /**
  * The subset type a binder ranges over, or `OutsideSubset`: `number` is
  * `Int` (the engine's integer model, an assumption every PROVEN carries),
  * a union of string literals is `String` (the proof covers every string,
  * more than the type admits), a record is the module's structure of that
- * name. Nullable types, tagged unions, bigint and whatever the reader
- * could not read are outside.
+ * name, an array a list. Nullable types, tagged unions, bigint and whatever
+ * the reader could not read are outside. Read by the reader's
+ * `readBinderType` under `binderRule`.
  */
 export function binderType(name: string, t: SpecType, module: SubsetModule): SubsetType {
-  switch (t.kind) {
-    case "number":
-      return { kind: "int" };
-    case "boolean":
-      return { kind: "bool" };
-    case "string":
-      return { kind: "string" };
-    case "literal":
-      if (typeof t.value === "string") return { kind: "string" };
-      if (typeof t.value === "boolean") return { kind: "bool" };
-      return { kind: "int" };
-    case "bigint":
-      // A BigInt passed to a function over number throws on the first mixed operation in JavaScript.
-      fail(`binder ${name} over bigint: the subset has no bigint`);
-      break;
-    case "union":
-      if (t.members.every((m) => m.kind === "literal" && typeof m.value === "string"))
-        return { kind: "string" };
-      if (t.members.some((m) => m.kind === "null" || m.kind === "undefined"))
-        fail(
-          `binder ${name} over ${describeType(t)}: nullable types are not in the engine's subset yet`,
-        );
-      fail(`binder ${name} over ${describeType(t)}: unions are not in the engine's subset yet`);
-      break;
-    case "record":
-      if (t.name !== undefined && module.records.some((r) => r.name === t.name))
-        return { kind: "record", name: t.name };
-      fail(
-        `binder ${name} over ${describeType(t)}: ${t.name === undefined ? "an inline record type" : `record type ${t.name} is outside the subset`}`,
-      );
-      break;
-    case "null":
-    case "undefined":
-      fail(`binder ${name} over ${t.kind}`);
-      break;
-    case "array":
-      return { kind: "list", element: binderType(name, t.element, module) };
-    case "unknown":
-      fail(`binder ${name} over ${t.text}, which the reader could not read`);
-  }
+  return readBinderType(name, t, module, binderRule);
 }
 
 /** An arrow of the spec file as a Bool term over the binders, its own parameter names renamed to theirs. */
