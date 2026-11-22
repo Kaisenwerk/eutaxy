@@ -6,6 +6,7 @@
  * connection from the server side, a client named `nobody` is turned away
  * before the upgrade is answered, and a close is counted too. `PingRoom`
  * answers pings on the runtime's auto-response, which Eutaxy refuses.
+ * `SlowRoom` takes its time over a close before it counts it.
  */
 
 import { DurableObject } from "cloudflare:workers";
@@ -13,6 +14,7 @@ import { DurableObject } from "cloudflare:workers";
 export interface Env {
   readonly ROOM: DurableObjectNamespace<Room>;
   readonly PING_ROOM: DurableObjectNamespace<PingRoom>;
+  readonly SLOW_ROOM: DurableObjectNamespace<SlowRoom>;
 }
 
 export class Room extends DurableObject<Env> {
@@ -54,12 +56,26 @@ export class PingRoom extends Room {
   }
 }
 
+/** A room that counts a close only some real time after it was told of it: after the run's snapshot, that is after the run. */
+export class SlowRoom extends Room {
+  override async webSocketClose(ws: WebSocket, code: number): Promise<void> {
+    await new Promise<void>((resolve) => setTimeout(resolve, 100));
+    await super.webSocketClose(ws, code);
+  }
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     const [, kind, room] = url.pathname.split("/");
     const namespace =
-      kind === "rooms" ? env.ROOM : kind === "ping-rooms" ? env.PING_ROOM : undefined;
+      kind === "rooms"
+        ? env.ROOM
+        : kind === "ping-rooms"
+          ? env.PING_ROOM
+          : kind === "slow-rooms"
+            ? env.SLOW_ROOM
+            : undefined;
     if (!namespace || !room) return new Response("not found", { status: 404 });
     return namespace.get(namespace.idFromName(room)).fetch(request);
   },

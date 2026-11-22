@@ -1101,10 +1101,26 @@ shares the reading of the limit and none of the proxy code.
   connections still open are torn down after the snapshot, outside the
   run: what the objects' `webSocketClose` handlers do then is not
   modelled; they run after the sandbox is gone, so a request one makes
-  while the teardown waits for the sockets to go is blocked and makes the
-  run `UNSUPPORTED`, but work a handler defers past a timer outlives the
-  teardown and is not caught (a known limit, as is a client's close as a
-  scenario event, which the run does not have yet). An object on
+  while the teardown waits is blocked and makes the run `UNSUPPORTED`.
+  The teardown waits for each object's handler to have returned from
+  the close of every socket the object held when the teardown began, and
+  from any call of it that began since, not only for the object to hold
+  no socket: a closed end is gone from the object's sockets before its
+  handler has run, and when it runs is the event loop's doing, so on a
+  loaded machine the handler would run after the next run has begun and
+  write into that run's storage. The handler is wrapped on the instance
+  the teardown enters before it closes anything (a framework gives each
+  instance a handler of its own, and the instance is a new one after an
+  eviction), and the wrapper notes each socket whose close it has
+  returned from; an instance that does not take the wrapper makes the
+  run `UNSUPPORTED`. The wait is by arrival with a bound in turns of the
+  event loop; a handler that has not returned by then makes the run
+  `UNSUPPORTED`. Known limits: a close made during the run (the object's
+  own, or the end a dying Worker held) is not waited for when its socket
+  has left the object and its handler has not returned as the teardown
+  begins; work a handler starts and does not await outlives the teardown
+  and is not caught; and a client's close is not yet a scenario event.
+  An object on
   `setWebSocketAutoResponse` makes the run `UNSUPPORTED`: the runtime
   answers those messages without waking the object, and Eutaxy, which
   hands every message to the handler, would not. A Worker that dies after
