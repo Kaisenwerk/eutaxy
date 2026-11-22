@@ -169,15 +169,19 @@ const hasLean = await leanInstalled();
 const required = process.env["EUTAXY_REQUIRE_LEAN"] === "1";
 
 describe.skipIf(!hasLean && !required)("the proof loop through the server", () => {
-  // A copy of the contract corpus's lists entry, without its proof file, where its imports resolve
-  // and no other test walks for spec files (the report tests walk the contract corpus itself, and a
-  // scratch directory there while one runs changes what it reports); .probe-* is gitignored.
+  // A copy of the contract corpus's lists entry, without its proof file, where no other test walks
+  // for spec files (the report tests walk the contract corpus itself, and a scratch directory there
+  // while one runs changes what it reports); .probe-* is gitignored. The spec file's import of the
+  // combinators is written as that directory resolves them: it has `eutaxy`, not `@eutaxy/spec`.
   const scratch = join(root, "corpus/planted-bugs", `.probe-mcp-${process.pid}`);
   const fixture = join(root, "corpus/prover-contracts/constructs/lists");
   beforeAll(() => {
     mkdirSync(scratch, { recursive: true });
     copyFileSync(join(fixture, "domain.ts"), join(scratch, "domain.ts"));
-    copyFileSync(join(fixture, "domain.props.ts"), join(scratch, "domain.props.ts"));
+    const spec = readFileSync(join(fixture, "domain.props.ts"), "utf8");
+    const here = spec.replace('from "@eutaxy/spec"', 'from "eutaxy/spec"');
+    if (here === spec) throw new Error("the fixture's spec file no longer imports @eutaxy/spec");
+    writeFileSync(join(scratch, "domain.props.ts"), here);
   });
   afterAll(() => rmSync(scratch, { recursive: true, force: true }));
   const rel = (p: string) => relative(root, p).split("\\").join("/");
@@ -215,7 +219,18 @@ describe.skipIf(!hasLean && !required)("the proof loop through the server", () =
       _meta: modernMeta,
     });
     const p = structured(proved);
-    const specs = p.report["specs"] as { property: string; kind: string; reason?: string }[];
+    const specs = p.report["specs"] as {
+      property: string;
+      kind: string;
+      cause?: string;
+      reason?: string;
+    }[];
+    // The spec file loads where it was copied to, so every property is decided by a rung: none is
+    // left unavailable for want of an import.
+    expect(
+      specs.filter((s) => s.cause === "unavailable"),
+      JSON.stringify(specs),
+    ).toEqual([]);
     expect(specs.find((s) => s.property === "countIsProduct")?.kind, JSON.stringify(specs)).toBe(
       "PROVEN",
     );
