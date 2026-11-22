@@ -9,6 +9,7 @@ import { expect, test } from "vitest";
 import { told } from "../told.ts";
 import autoResponse from "./auto-response.sim.ts";
 import serverClose from "./server-close.sim.ts";
+import slowClose from "./slow-close.sim.ts";
 import turnedAway from "./turned-away.sim.ts";
 import twoClients from "./two-clients.sim.ts";
 import handler from "./worker.ts";
@@ -34,8 +35,8 @@ function results<A, R = unknown>(
       ...(e.payload as { args: A; result: R }),
     }));
 }
-const stored = (log: Log, key: string) =>
-  lastSnapshot(log as never, "DO:ROOM")?.["lobby"]?.find((r) => r["key"] === key)?.["value"];
+const stored = (log: Log, key: string, binding = "ROOM") =>
+  lastSnapshot(log as never, `DO:${binding}`)?.["lobby"]?.find((r) => r["key"] === key)?.["value"];
 
 test("two clients, a crash on any send allowed: BOUNDED, nothing unsupported", async () => {
   const verdict = await check(twoClients, platform(), { seed: "gate", budgetMs: 30_000 });
@@ -138,4 +139,15 @@ test("a room on the runtime's auto-response is refused, not mis-modelled", async
   const verdict = await check(autoResponse, platform(), { seed: "gate", budgetMs: 10_000 });
   expect(verdict.kind, told(verdict)).toBe("UNSUPPORTED");
   expect(JSON.stringify(verdict)).toContain("setWebSocketAutoResponse");
+});
+
+test("a close handler that takes its time has finished before the next run begins: no run sees the close of the one before", async () => {
+  // Each run ends with ann's connection open, closed after the snapshot; the room counts that
+  // close 100 ms later. Counted in the run it belongs to, after its snapshot, it is in no snapshot;
+  // left to finish during the next run, it would be in that one's.
+  for (const run of [1, 2, 3]) {
+    const log = await replay(slowClose, platform(), { seed: 0, faults: [] });
+    expect(stored(log, "messages", "SLOW_ROOM"), `run ${run}`).toBe(1);
+    expect(stored(log, "closes", "SLOW_ROOM"), `run ${run}`).toBeUndefined();
+  }
 });

@@ -26,7 +26,8 @@
  * trace must repeat. A close the object makes during the run is recorded
  * too (op `close`). After the run's snapshot the connections still open are
  * torn down outside the run: what the objects' `webSocketClose` handlers
- * do then is not modelled (a request made then makes the run UNSUPPORTED).
+ * do then is not modelled (a request made then makes the run UNSUPPORTED),
+ * and the teardown waits until each has returned.
  */
 
 import {
@@ -126,6 +127,78 @@ function identityOf(ws: WebSocket, live: DurableObjectState): Identity {
 
 /** Turns of the event loop the teardown waits for the objects to let their connections go. */
 const closeTurns = 20;
+
+/**
+ * Turns of the event loop the teardown waits for an object's `webSocketClose` to have returned
+ * from the close of each socket the object held. A close is on its way once sent, and when the
+ * handler runs is the event loop's doing: on a loaded machine it runs after the next run began,
+ * and writes into that run's storage. So the wait is for the handler, by its return, and this is
+ * only its bound.
+ */
+export const closeHandlerTurns = 500;
+
+/** What a watched instance's `webSocketClose` has done: the sockets it returned from, and the calls still running. */
+export interface CloseWatch {
+  readonly handled: WeakSet<object>;
+  running: number;
+}
+
+const closeWatches = new WeakMap<object, CloseWatch>();
+
+/**
+ * Have this instance's `webSocketClose` tell which socket's close it has returned from. On the
+ * instance, not its class: a framework gives each instance a handler of its own (the Agents SDK
+ * does), and the instance entered just before the closes are sent is the one they reach. The
+ * wrapper only keeps track. `"none"` when the object has no such handler: the runtime then ends
+ * the connection itself, and there is nothing of the object's to wait for. `"unwatchable"` when
+ * it has one and the instance does not take the wrapper (it is frozen, or the handler is its own
+ * and fixed): when that handler has finished cannot be known.
+ */
+export function watchCloses(instance: unknown): CloseWatch | "none" | "unwatchable" {
+  if (instance === null || typeof instance !== "object") return "none";
+  const known = closeWatches.get(instance);
+  if (known) return known;
+  const original = (instance as { webSocketClose?: unknown }).webSocketClose;
+  if (typeof original !== "function") return "none";
+  const watch: CloseWatch = { handled: new WeakSet(), running: 0 };
+  try {
+    Object.defineProperty(instance, "webSocketClose", {
+      configurable: true,
+      writable: true,
+      value: async function (this: unknown, ...args: unknown[]): Promise<unknown> {
+        watch.running++;
+        try {
+          return await (original as (...a: unknown[]) => unknown).apply(this, args);
+        } finally {
+          watch.running--;
+          const ws = args[0];
+          if (typeof ws === "object" && ws !== null) watch.handled.add(ws);
+        }
+      },
+    });
+  } catch {
+    return "unwatchable";
+  }
+  closeWatches.set(instance, watch);
+  return watch;
+}
+
+/**
+ * Wait for something known to be on its way, a turn of the event loop at a time, until it has
+ * arrived or `turns` turns have passed. Whether it arrived. Not a fixed number of turns: how long
+ * a frame or a close takes to cross is the machine's load, not the schedule.
+ */
+export async function untilArrived(
+  arrived: () => boolean,
+  turns: number,
+  tick: () => Promise<void> = realTick,
+): Promise<boolean> {
+  for (let turn = 0; !arrived(); turn++) {
+    if (turn >= turns) return false;
+    await tick();
+  }
+  return true;
+}
 
 /** The run's connections; the platform clears it before each run, closing what is still open. */
 export class Connections {
@@ -251,19 +324,49 @@ export class Connections {
    * object has let its connections go, so nothing survives into the next run
    * (a hibernatable socket outlives eviction and `deleteAll`). The objects'
    * `webSocketClose` handlers run meanwhile, outside the run: nothing they
-   * do is observed. Returns why, when an object still holds a socket.
+   * do is observed, and each is waited for until it has returned. Returns
+   * why, when a handler has not returned or an object still holds a socket.
    */
   async teardown(objects: ObjectAccess): Promise<string | undefined> {
-    this.dropUnclaimed("the Worker died holding this connection");
+    // Every object a connection of this run reached: one the object closed itself is among them,
+    // since the close that answers it is handled by the object too.
     const reached = new Map<string, UpgradeInfo>();
-    for (const c of this.open.values()) {
+    for (const u of this.upgrades)
+      if (!u.claimed) reached.set(`${u.info.binding}/${u.info.id}`, u.info);
+    for (const c of this.open.values())
       reached.set(`${c.upgrade.binding}/${c.upgrade.id}`, c.upgrade);
+    // Before any close is sent, the handler of each is watched, and the sockets it holds are
+    // noted: each of them is closed by the end of this, and its close handled by that handler.
+    // Entered in every run: the instance is another one after an eviction. A call of the handler
+    // that began before this is not seen: only one that begins from here on counts as running.
+    const waits: { upgrade: UpgradeInfo; watch: CloseWatch; held: readonly object[] }[] = [];
+    let unwatchable: string | undefined;
+    for (const u of reached.values()) {
+      const found = await objects.run(u.binding, u.id, u.object, async (instance, live) => ({
+        watch: watchCloses(instance),
+        held: live.getWebSockets() as readonly object[],
+      }));
+      if (found === undefined || found.watch === "none") continue;
+      if (found.watch === "unwatchable")
+        unwatchable ??= `the webSocketClose handler of ${u.object} cannot be watched (the object is frozen, or the handler is a fixed property of it); when it has finished after the run closed its connections is not known`;
+      else waits.push({ upgrade: u, watch: found.watch, held: found.held });
+    }
+    this.dropUnclaimed("the Worker died holding this connection");
+    for (const c of this.open.values()) {
       if (c.closed) continue;
       try {
         c.client.close(1000, "run over");
       } catch {
         // the other side closed first; its close reaches the client end on its way
       }
+    }
+    // Told once the connections are closed: nothing of this run stays open either way.
+    if (unwatchable !== undefined) return unwatchable;
+    for (const { upgrade: u, watch, held } of waits) {
+      const returned = (): boolean =>
+        watch.running === 0 && held.every((ws) => watch.handled.has(ws));
+      if (!(await untilArrived(returned, closeHandlerTurns)))
+        return `the webSocketClose handler of ${u.object} had not finished ${closeHandlerTurns} turns of the event loop after the run closed its connections; what it does later would land in another run`;
     }
     for (const u of reached.values()) {
       let left = 0;

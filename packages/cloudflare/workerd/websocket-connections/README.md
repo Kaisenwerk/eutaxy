@@ -24,3 +24,7 @@ connections.
   that delivery, so the room counts that close (code 1011) before the
   snapshot; the connections still open at the end are torn down after the
   snapshot, outside the run.
+- **A close handler that takes its time**: a room that counts a close only
+  some real time after it was told of it. The teardown waits for the
+  handler to return, so the count is made before the next run begins and
+  no run's snapshot holds the close of the run before.

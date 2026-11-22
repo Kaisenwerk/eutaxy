@@ -259,6 +259,21 @@ matched. Give each socket a `serializeAttachment` or a tag.
 **`Durable Object <binding> <object> has no webSocketMessage handler; only the Hibernation API is modelled`**
 Answer in `webSocketMessage` instead.
 
+**`the webSocketClose handler of <object> had not finished <n> turns of the event loop after the run closed its connections; what it does later would land in another run`**
+After the run's snapshot the connections still open are closed, and the
+check waits for the object's `webSocketClose` to have returned from each
+before it starts another run: a handler still running would write into
+the next run's storage. Yours had not returned within the bound: it waits
+on a long timer, or never returns. Make the handler finish from what the
+object already holds.
+
+**`the webSocketClose handler of <object> cannot be watched (the object is frozen, or the handler is a fixed property of it); when it has finished after the run closed its connections is not known`**
+To know when the close handler has returned, the check wraps it on the
+object. Yours does not take the wrapper: the instance is frozen or sealed,
+or `webSocketClose` is defined on it as a property that cannot be
+redefined. Leave the instance unfrozen, and define the handler as a
+method of the class.
+
 **`a Durable Object made a request while its WebSocket connections were torn down after the run; what webSocketClose does is not modelled`**
 After the run Eutaxy closes the connections; the object's close handler
 then made a request. Keep `webSocketClose` to storage, or out of the
