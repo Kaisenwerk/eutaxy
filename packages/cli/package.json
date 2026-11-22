@@ -5,6 +5,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./main": "./src/main.ts",
     "./workerd": "./src/workerd.ts",
     "./regression": "./src/regression.ts"
   },

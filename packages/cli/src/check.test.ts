@@ -4,7 +4,13 @@ import { join } from "node:path";
 import type { SpecVerdict } from "@eutaxy/core";
 import type { Prover } from "@eutaxy/prover";
 import { afterAll, describe, expect, test } from "vitest";
-import { consoleOutput, needsObjectHelpers, proveSpecs } from "./check.ts";
+import {
+  consoleOutput,
+  enginesNamed,
+  needsObjectHelpers,
+  proverNames,
+  proveSpecs,
+} from "./check.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "eutaxy-prove-"));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -113,5 +119,20 @@ describe("needsObjectHelpers", () => {
     expect(needsObjectHelpers([{ kind: "d1" }, { kind: "durable_object" }])).toBe(true);
     expect(needsObjectHelpers([{ kind: "scripted_object" }])).toBe(true);
     expect(needsObjectHelpers([{ kind: "d1" }, { kind: "service" }])).toBe(false);
+  });
+});
+
+describe("enginesNamed", () => {
+  test("the engines by name, in the order named", async () => {
+    expect(proverNames).toEqual(["lean", "smt"]);
+    const named = await enginesNamed(["smt", "lean"]);
+    expect("engines" in named && named.engines.map((e) => e.name)).toEqual(["smt", "lean"]);
+    expect(await enginesNamed([])).toEqual({ engines: [] });
+  });
+
+  test("an unknown name is the error, whatever is named beside it", async () => {
+    expect(await enginesNamed(["lean", "coq"])).toEqual({
+      error: "unknown prover coq; known: lean, smt",
+    });
   });
 });

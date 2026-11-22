@@ -9,7 +9,6 @@
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { basename, dirname, join, relative } from "node:path";
-import { readSpecs } from "@eutaxy/prover/reader";
 import type { ModuleSpecs } from "@eutaxy/spec";
 import { specKey } from "./keys.ts";
 
@@ -30,8 +29,44 @@ export interface SpecModule {
 
 const skipDirs = new Set(["node_modules", ".eutaxy", "dist", ".git"]);
 
+/** What the spec reader needs that a project without specs need not have. */
+export const typescriptNeeded =
+  "the TypeScript compiler, version 7.1 or later (typescript), which this project does not have: add it to the project's dev dependencies, or update the one there";
+
+/** A spec file was to be read, or an engine run, where the TypeScript compiler is not installed. */
+export class TypescriptNeeded extends Error {}
+
+/**
+ * Whether an import failed because the project has no TypeScript compiler the reader can use: none
+ * installed (Node finds no package `typescript`), or an older one, which lacks the modules the
+ * reader imports (no such export in its package, or no such file in it).
+ */
+export function typescriptMissing(err: unknown): boolean {
+  const e = err as { code?: string; message?: string } | null;
+  if (e?.code !== "ERR_MODULE_NOT_FOUND" && e?.code !== "ERR_PACKAGE_PATH_NOT_EXPORTED")
+    return false;
+  // The package by name, or a path inside it; not a package whose name only starts the same.
+  return /(^|[\\/'"\s])typescript([\\/'"\s]|$)/.test(e.message ?? "");
+}
+
+/**
+ * The spec reader, loaded when a spec file is first read: it runs the
+ * TypeScript compiler, which a project that writes no specs need not have
+ * installed, so the command does not load it before then.
+ */
+async function reader(): Promise<typeof import("@eutaxy/prover/reader")> {
+  try {
+    return await import("@eutaxy/prover/reader");
+  } catch (err) {
+    if (typescriptMissing(err))
+      throw new TypescriptNeeded(`reading a spec file needs ${typescriptNeeded}`);
+    throw err;
+  }
+}
+
 /** Read one module and its spec file; their imports resolve from where they are. */
-export function readSpecModule(modulePath: string, specPath: string): ModuleSpecs {
+export async function readSpecModule(modulePath: string, specPath: string): Promise<ModuleSpecs> {
+  const { readSpecs } = await reader();
   return readSpecs({
     module: readFileSync(modulePath, "utf8"),
     spec: readFileSync(specPath, "utf8"),
@@ -40,14 +75,17 @@ export function readSpecModule(modulePath: string, specPath: string): ModuleSpec
   });
 }
 
-/** Spec files under `dir`, each with its module; a spec file without a module beside it is an error entry. */
-export function findSpecModules(dir: string): SpecModule[] {
+/**
+ * Spec files under `dir`, each with its module; a spec file without a module beside it is an error
+ * entry. A directory with no spec file is walked without the spec reader being loaded.
+ */
+export async function findSpecModules(dir: string): Promise<SpecModule[]> {
   const out: SpecModule[] = [];
-  const walk = (at: string): void => {
+  const walk = async (at: string): Promise<void> => {
     for (const entry of readdirSync(at, { withFileTypes: true })) {
       const path = join(at, entry.name);
       if (entry.isDirectory()) {
-        if (!skipDirs.has(entry.name)) walk(path);
+        if (!skipDirs.has(entry.name)) await walk(path);
         continue;
       }
       if (!entry.name.endsWith(specSuffix)) continue;
@@ -70,10 +108,15 @@ export function findSpecModules(dir: string): SpecModule[] {
         });
         continue;
       }
-      out.push({ key, path: modulePath, specPath: path, specs: readSpecModule(modulePath, path) });
+      out.push({
+        key,
+        path: modulePath,
+        specPath: path,
+        specs: await readSpecModule(modulePath, path),
+      });
     }
   };
-  walk(dir);
+  await walk(dir);
   return out.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
 }
 

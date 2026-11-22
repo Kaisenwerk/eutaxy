@@ -16,18 +16,22 @@ Workers over a service binding and a Workflow.
 - Node 24 or later.
 - A Worker project with a wrangler config (`wrangler.jsonc`, `.json` or
   `.toml`).
-- TypeScript 7.1. Until its release, that is `typescript@7.1.0-beta`: the
-  spec reader asks your compiler for the types of your functions. Inside
-  Vitest, `eutaxy/cloudflare` loads without the compiler, so a project on
-  an older TypeScript runs scenarios with the beta as Eutaxy's own dev
-  dependency.
+- For specs and proofs only: TypeScript 7.1. Until its release, that is
+  `typescript@7.1.0-beta`: the spec reader asks your compiler for the
+  types of your functions. A project that only checks scenarios needs no
+  TypeScript installed: `eutaxy/cloudflare` loads without the compiler, and
+  so does `eutaxy check` as long as the scenario's directory holds no spec
+  file (`*.props.ts`) and no `--prover` is given. `eutaxy report` and
+  `eutaxy prover install` need it.
 - Optional: a prover toolchain, installed with one command
   (`npx eutaxy prover install lean`, `… smt`). See [Provers](/guide/provers).
 
 ## Install
 
 ```sh
-pnpm add -D eutaxy vitest @cloudflare/vitest-plugin typescript@7.1.0-beta
+pnpm add -D eutaxy vitest @cloudflare/vitest-plugin
+# with specs or proofs, the compiler too:
+pnpm add -D typescript@7.1.0-beta
 ```
 
 `eutaxy` has no runtime dependencies. Vitest and the Cloudflare Vitest
