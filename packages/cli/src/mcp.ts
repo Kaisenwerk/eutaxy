@@ -16,9 +16,10 @@
 
 import { dirname } from "node:path";
 import { createInterface } from "node:readline";
-import { type CheckOptions, exitCodes, provers, runCheck } from "./check.ts";
+import { type CheckOptions, exitCodes, loadProver, proverNames, runCheck } from "./check.ts";
 import { runDraft } from "./draft.ts";
-import { type ReportOptions, runReport } from "./report.ts";
+import type { ReportOptions } from "./report.ts";
+import { typescriptMissing, typescriptNeeded } from "./specs.ts";
 import { eutaxyVersion } from "./version.ts";
 
 /** The protocol revisions served: the stateless one by `_meta`, the handshake ones by `initialize`. */
@@ -79,11 +80,26 @@ export interface McpContext {
 
 const realRunners: Runners = {
   check: runCheck,
-  report: runReport,
+  // The report and the engines load the spec reader, and with it the TypeScript compiler: loaded
+  // when a tool that needs them is called, so the server starts in a project without it.
+  report: async (o) => {
+    try {
+      return await (await import("./report.ts")).runReport(o);
+    } catch (err) {
+      if (!typescriptMissing(err)) throw err;
+      o.stderr(`eutaxy report needs ${typescriptNeeded}\n`);
+      return exitCodes.error;
+    }
+  },
   status: async () => {
     const engines: Json[] = [];
-    for (const [name, engine] of Object.entries(provers)) {
-      const a = await engine.available();
+    for (const name of proverNames) {
+      // An engine that cannot be loaded (no TypeScript compiler here) is not installed, with why:
+      // the others are still reported.
+      const a = await loadProver(name).then(
+        (engine) => engine.available(),
+        (err: unknown) => ({ unavailable: err instanceof Error ? err.message : String(err) }),
+      );
       engines.push({
         name,
         ...("unavailable" in a
@@ -169,7 +185,7 @@ interface Tool {
   readonly run: (args: Params, ctx: McpContext, runners: Runners) => Promise<ToolResult>;
 }
 
-const engineNames = Object.keys(provers);
+const engineNames: string[] = [...proverNames];
 const proversSchema: Json = {
   type: "array",
   items: { type: "string", enum: engineNames },
