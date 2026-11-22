@@ -33,6 +33,7 @@ import { lastSnapshot } from "@eutaxy/core";
 import { replay } from "@eutaxy/engine";
 import { describe, expect, test } from "vitest";
 import { told } from "../told.ts";
+import { untimed } from "../untimed.ts";
 import { carts } from "./scenario.sim.ts";
 import * as worker from "./worker.ts";
 
@@ -88,6 +89,7 @@ test("every schedule with one fault, one invocation in flight, holds exhaustivel
     seed: "calls",
     budgetMs: 60_000,
     exhaustive: true,
+    now: untimed,
     maxRuns: 1_000,
   });
   expect(verdict.kind, told(verdict)).toBe("BOUNDED");
