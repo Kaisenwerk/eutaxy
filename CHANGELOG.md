@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.19.0](https://github.com/Kaisenwerk/eutaxy/compare/v0.18.0...v0.19.0) (2026-11-22)
+
+
+### Features
+
+* **cli:** need no TypeScript for a project that writes no specs ([#43](https://github.com/Kaisenwerk/eutaxy/issues/43)) ([4a8cc01](https://github.com/Kaisenwerk/eutaxy/commit/4a8cc0167f33c5f706a4511b6a1eec15b38e17f5))
+* **cli:** show the Workers' console output with check --console ([#41](https://github.com/Kaisenwerk/eutaxy/issues/41)) ([fae7d6f](https://github.com/Kaisenwerk/eutaxy/commit/fae7d6ff7d5972f39680cb0c0c1def002d5bee4d))
+* **cloudflare:** set a var or secret from the scenario ([#42](https://github.com/Kaisenwerk/eutaxy/issues/42)) ([26dd68c](https://github.com/Kaisenwerk/eutaxy/commit/26dd68cc714c17447bc819c8752fcc105a7d62ab))
+
+
+### Bug Fixes
+
+* **cloudflare:** report an object that resets itself ([#44](https://github.com/Kaisenwerk/eutaxy/issues/44)) ([bf1c415](https://github.com/Kaisenwerk/eutaxy/commit/bf1c4151592ab5e6ae6fe8211e61e765166484ea))
+* **cloudflare:** wait for close handlers before the next run ([#45](https://github.com/Kaisenwerk/eutaxy/issues/45)) ([f23ae7b](https://github.com/Kaisenwerk/eutaxy/commit/f23ae7b117d9dfe9d792174b63262a38597f5e6c))
+* **engine:** make an invocation's parallel calls turns ([#34](https://github.com/Kaisenwerk/eutaxy/issues/34)) ([f6b6db1](https://github.com/Kaisenwerk/eutaxy/commit/f6b6db1cbd2d9539f76accb2222b8491c0af6d0f))
+
+
+### Documentation
+
+* **roadmap:** close v0.19, parallel calls and one spine ([#46](https://github.com/Kaisenwerk/eutaxy/issues/46)) ([6814040](https://github.com/Kaisenwerk/eutaxy/commit/68140407a7203cc153fa6c40a6d312bc7f6764e5))
+
 ## [0.18.0](https://github.com/Kaisenwerk/eutaxy/compare/v0.17.2...v0.18.0) (2026-11-18)
 
 
