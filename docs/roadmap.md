@@ -170,6 +170,10 @@ a new phase's gate is built where its tests will stay.
   that measurement; the gate is the measured ratio, at most twelve, a
   guard against growth (`scripts/run-cost.ts`, after the suite), and a
   cheaper way across an object's I/O context waits among the candidates.
+  A reading above twelve is taken again, three readings in all, keeping
+  the least of each timing: the runner's load alone read 13.11 on code
+  that had read 9.19 twenty minutes before, and a run dearer by well more
+  than the readings' spread stays above however often it is read.
   The suite fails above 540 s on the CI runner, naming its slowest files
   (`tests/suite-ceiling.ts`); it took 272 s to 385 s over the phase's
   green runs on `main`, and the runner's load alone swings it: unchanged
