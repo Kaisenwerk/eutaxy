@@ -23,7 +23,7 @@ assignment through a spec's `when` and `ensures`: held, discarded,
 refuted, or a malformed property), `render`. The `PROVEN` rung: the
 `Prover` interface every engine implements (`available`, `prove` over a
 module's source and its specs, answering `PROVEN`, `REFUTED` or `UNKNOWN`
-per property as `ProofOutcome`, and the `OpenGoal`s it gave up on, with the statements it tried, when it takes supplied proofs), and `aggregate` (the simulator's verdicts
+per property as `ProofOutcome`, and the `OpenGoal`s it gave up on, with the statements it tried, when it takes supplied proofs), `unknownOutcome` and `proofsOf` (an engine's `UNKNOWN`, and every property of some functions with an outcome), and `aggregate` (the simulator's verdicts
 folded with the engines' reports: `PROVEN` with the lower rungs' counts,
 `REFUTED` at the `PROVEN` rung, `CONFLICT` when engines disagree or an
 engine proves against a simulator counterexample, the verdict unchanged
@@ -78,7 +78,12 @@ function the compiler reports an error in, or that hides one behind
 `@ts-ignore`, is outside with the message. `fits` is the
 subset's assignability (a member where its union is, `null` or the inner
 type where a nullable is); `restrictModule` is the module as an engine
-that takes fewer types sees it. `readArrowBody` reads a spec file's arrow
+that takes fewer types sees it, and `readForEngine` is what every
+first-party engine opens with: the functions to report on, the subset
+restricted by each of the engine's `EngineRestriction`s in order, and the
+functions outside it with why (`EngineModule`); `engineGap` puts every
+function outside when an emitter refuses what the reader let through, and
+`outsideProofs` is what the engine reports for them. `readArrowBody` reads a spec file's arrow
 (expression or block body) from its text in a scope of binder types,
 `renameVars` renames its parameters to the binders', `typeOf` types an
 expression. `closeCompiler` stops the compiler process. The reader's

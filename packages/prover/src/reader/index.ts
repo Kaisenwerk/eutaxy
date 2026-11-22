@@ -1,5 +1,12 @@
 // @eutaxy/prover/reader: modules and spec files read into SpecIR, and the pure TypeScript subset read into the tree every engine shares, through the TypeScript compiler's API. See ../../README.md.
 export { closeCompiler } from "./compiler.ts";
+export {
+  type EngineModule,
+  type EngineRestriction,
+  engineGap,
+  outsideProofs,
+  readForEngine,
+} from "./engine.ts";
 export { insertNarrows, narrowsOf, tagNarrowsOf } from "./narrowing.ts";
 export { builtinsAssumption } from "./rebinding.ts";
 export { renameVars } from "./rename.ts";

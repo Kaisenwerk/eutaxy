@@ -11,7 +11,7 @@
  */
 
 import type { Counterexample, SpecVerdict } from "@eutaxy/core";
-import type { ModuleSpecs, SpecError } from "@eutaxy/spec";
+import type { FunctionSpec, ModuleSpecs, SpecError } from "@eutaxy/spec";
 
 /** A proof engine's name and version, as verdicts record it. */
 export interface EngineId {
@@ -33,6 +33,14 @@ export type ProofOutcome =
       readonly cause: "gave_up" | "unsupported" | "unavailable";
       readonly reason: string;
     };
+
+/** An engine's `UNKNOWN` for a property: it gave up, does not take it, or cannot run here. */
+export function unknownOutcome(
+  cause: "gave_up" | "unsupported" | "unavailable",
+  reason: string,
+): ProofOutcome {
+  return { kind: "UNKNOWN", cause, reason };
+}
 
 /** An engine's outcome for one property of one function. */
 export interface PropertyProof {
@@ -77,6 +85,20 @@ export interface ProveInput {
   /** The spec file's path, for an engine that replays a counterexample through the spec itself. */
   readonly specPath?: string;
   readonly timeoutMs?: number;
+}
+
+/** Every property of the functions with an outcome: the one given, or the one given for its function. */
+export function proofsOf(
+  fns: readonly FunctionSpec[],
+  outcome: ProofOutcome | ((fn: FunctionSpec) => ProofOutcome),
+): PropertyProof[] {
+  return fns.flatMap((fn) =>
+    fn.properties.map((property) => ({
+      function: fn.name,
+      property: property.name,
+      outcome: typeof outcome === "function" ? outcome(fn) : outcome,
+    })),
+  );
 }
 
 /** A proof engine: whether it can run here, and proving a module's properties. */

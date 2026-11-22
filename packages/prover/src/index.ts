@@ -37,6 +37,8 @@ export {
   type PropertyProof,
   type ProveInput,
   type Prover,
+  proofsOf,
+  unknownOutcome,
 } from "./provers.ts";
 export { refutes, shrinkRefutation } from "./shrink.ts";
 export { type TestedInput, type TestedOptions, testedRung } from "./tested.ts";

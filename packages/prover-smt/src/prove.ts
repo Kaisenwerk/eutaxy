@@ -24,15 +24,18 @@ import {
   type PropertyProof,
   type Prover,
   type ProveInput as ProverInput,
+  proofsOf,
   render,
   shrinkRefutation,
+  unknownOutcome,
 } from "@eutaxy/prover";
 import {
   builtinsAssumption,
+  engineGap,
   listKinds,
   OutsideSubset,
-  readSubset,
-  restrictModule,
+  outsideProofs,
+  readForEngine,
   type SubsetModule,
 } from "@eutaxy/prover/reader";
 import { type Fn, type Forall, type FunctionSpec, isSpec, type Property } from "@eutaxy/spec";
@@ -77,10 +80,7 @@ const proven: Extract<ProofOutcome, { kind: "PROVEN" }> = {
   assumptions: engineAssumptions,
 };
 
-const unknown = (
-  cause: "gave_up" | "unsupported" | "unavailable",
-  reason: string,
-): ProofOutcome => ({ kind: "UNKNOWN", cause, reason });
+const unknown = unknownOutcome;
 
 /** The scripts for the module's functions in the subset, and the functions with specs outside it with why. */
 export interface Prepared {
@@ -98,35 +98,16 @@ const key = (fn: string, property: string): string => `${fn}\u0000${property}`;
 
 /** Read and emit: every function the subset takes, and a script per property of the ones with specs. */
 export function prepare(input: ProveInput): Prepared {
-  const wanted = input.functions ? new Set(input.functions) : undefined;
-  const fns = input.specs.functions.filter((f) => !wanted || wanted.has(f.name));
   // Lists are read, but this engine does not take them: functions using one are outside here, so the
   // prelude never meets them and the module's other functions still go through.
-  const module = restrictModule(
-    readSubset(
-      input.source,
-      fns.map((f) => f.name),
-      input.modulePath === undefined ? {} : { path: input.modulePath },
-    ),
-    (t) => t.kind !== "list" && t.kind !== "nothing",
-    "arrays are not in this engine's subset (the Lean engine takes them)",
-    listKinds,
-  );
-  const outside = new Map<string, string>();
-  for (const o of module.outside)
-    if (fns.some((f) => f.name === o.name))
-      outside.set(
-        o.name,
-        `outside the engine's subset${o.line > 0 ? ` (line ${o.line})` : ""}: ${o.message}`,
-      );
-  for (const fn of fns) {
-    const read = module.functions.find((f) => f.name === fn.name);
-    if (read && read.offset !== fn.offset)
-      outside.set(
-        fn.name,
-        `outside the engine's subset (line ${fn.line}): the ${fn.name} the spec names is not the module's top-level declaration of that name (line ${read.line})`,
-      );
-  }
+  const read = readForEngine(input, [
+    {
+      takes: (t) => t.kind !== "list" && t.kind !== "nothing",
+      reason: "arrays are not in this engine's subset (the Lean engine takes them)",
+      bodies: listKinds,
+    },
+  ]);
+  const { module, fns, outside } = read;
   const scripts = new Map<string, PropertyScript>();
   const skipped = new Map<string, string>();
   let pre = "";
@@ -147,7 +128,7 @@ export function prepare(input: ProveInput): Prepared {
   } catch (err) {
     // The emitter refusing something the reader let through is an engine gap: every function is unsupported, none guessed.
     if (!(err instanceof OutsideSubset)) throw err;
-    for (const fn of fns) outside.set(fn.name, `outside the engine's subset: ${err.message}`);
+    engineGap(read, err.message);
     scripts.clear();
   }
   return { module, fns, outside, scripts, skipped, prelude: pre };
@@ -234,23 +215,10 @@ export async function proveModule(input: ProveInput): Promise<SmtModuleProofs> {
   const { fns, outside, scripts, skipped, module, prelude: smt } = prepare(input);
   const specErrors = input.specs.errors;
   const inSubset = fns.filter((f) => !outside.has(f.name));
-  const results: PropertyProof[] = fns
-    .filter((f) => outside.has(f.name))
-    .flatMap((f) =>
-      f.properties.map((property) => ({
-        function: f.name,
-        property: property.name,
-        outcome: unknown("unsupported", outside.get(f.name) as string),
-      })),
-    );
+  const results: PropertyProof[] = outsideProofs(fns, outside);
   if (inSubset.length === 0) return { results, specErrors };
   const allWith = (outcome: ProofOutcome): SmtModuleProofs => ({
-    results: [
-      ...results,
-      ...inSubset.flatMap((fn) =>
-        fn.properties.map((p) => ({ function: fn.name, property: p.name, outcome })),
-      ),
-    ],
+    results: [...results, ...proofsOf(inSubset, outcome)],
     smt,
     specErrors,
   });

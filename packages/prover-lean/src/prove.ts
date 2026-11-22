@@ -11,22 +11,25 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { basename } from "node:path";
-import type {
-  ModuleProofs,
-  OpenGoal,
-  ProofOutcome,
-  PropertyProof,
-  Prover,
-  ProveInput as ProverInput,
+import {
+  type ModuleProofs,
+  type OpenGoal,
+  type ProofOutcome,
+  type PropertyProof,
+  type Prover,
+  type ProveInput as ProverInput,
+  proofsOf,
+  unknownOutcome,
 } from "@eutaxy/prover";
 import {
   builtinsAssumption,
   children,
   type Expr,
+  engineGap,
   listKinds,
   OutsideSubset,
-  readSubset,
-  restrictModule,
+  outsideProofs,
+  readForEngine,
   type SubsetFunction,
   type SubsetModule,
   type SubsetType,
@@ -89,21 +92,7 @@ const proven: Extract<ProofOutcome, { kind: "PROVEN" }> = {
   assumptions: engineAssumptions,
 };
 
-const unknown = (
-  cause: "gave_up" | "unsupported" | "unavailable",
-  reason: string,
-): ProofOutcome => ({
-  kind: "UNKNOWN",
-  cause,
-  reason,
-});
-
-/** Every property of the functions, with one outcome. */
-function allWith(fns: readonly FunctionSpec[], outcome: ProofOutcome): PropertyProof[] {
-  return fns.flatMap((fn) =>
-    fn.properties.map((property) => ({ function: fn.name, property: property.name, outcome })),
-  );
-}
+const unknown = unknownOutcome;
 
 /** The emitted Lean for the module's functions in the subset, and the functions with specs outside it with why. */
 export interface Prepared {
@@ -125,42 +114,16 @@ export interface Prepared {
  */
 export function prepare(input: ProveInput): Prepared {
   const specs = input.specs;
-  const wanted = input.functions ? new Set(input.functions) : undefined;
-  const fns = specs.functions.filter((f) => !wanted || wanted.has(f.name));
   // Nullable types and tagged unions are read, but this engine does not take them yet: the SMT engine does.
   // Division leaves the integers this engine models, except as Math.floor(x / c).
-  const module = restrictModule(
-    restrictModule(
-      readSubset(
-        input.source,
-        fns.map((f) => f.name),
-        input.modulePath === undefined ? {} : { path: input.modulePath },
-      ),
-      leanTakes,
-      "nullable types and tagged unions are not in the Lean engine's subset yet",
-    ),
-    () => true,
-    divisionOutside,
-    new Set(),
-    dividesOutside,
-  );
-  const outside = new Map<string, string>();
-  for (const o of module.outside)
-    if (fns.some((f) => f.name === o.name))
-      outside.set(
-        o.name,
-        `outside the engine's subset${o.line > 0 ? ` (line ${o.line})` : ""}: ${o.message}`,
-      );
-  // A spec belongs to one declaration: the one the reader found at that offset. A nested function (in a
-  // namespace, say) named like a top-level one must not lend its properties to the top-level body.
-  for (const fn of fns) {
-    const read = module.functions.find((f) => f.name === fn.name);
-    if (read && read.offset !== fn.offset)
-      outside.set(
-        fn.name,
-        `outside the engine's subset (line ${fn.line}): the ${fn.name} the spec names is not the module's top-level declaration of that name (line ${read.line})`,
-      );
-  }
+  const read = readForEngine(input, [
+    {
+      takes: leanTakes,
+      reason: "nullable types and tagged unions are not in the Lean engine's subset yet",
+    },
+    { takes: () => true, reason: divisionOutside, bodies: new Set(), refused: dividesOutside },
+  ]);
+  const { module, fns, outside } = read;
   const properties: { function: string; property: Property }[] = fns
     .filter((fn) => !outside.has(fn.name))
     .flatMap((fn) =>
@@ -199,7 +162,7 @@ export function prepare(input: ProveInput): Prepared {
   } catch (err) {
     // The emitter refusing something the reader let through is an engine gap: every function is unsupported, none guessed.
     if (!(err instanceof OutsideSubset)) throw err;
-    for (const fn of fns) outside.set(fn.name, `outside the engine's subset: ${err.message}`);
+    engineGap(read, err.message);
     const empty: Emitted = { source: "", theorems: [], skipped: [] };
     return { module, emitted: empty, fns, outside, specErrors };
   }
@@ -267,19 +230,11 @@ function suppliedOutcome(
 export async function proveModule(input: ProveInput): Promise<LeanModuleProofs> {
   const { module, emitted, fns, outside, specErrors, supplied } = prepare(input);
   const inSubset = fns.filter((f) => !outside.has(f.name));
-  const unsupported = fns
-    .filter((f) => outside.has(f.name))
-    .flatMap((f) =>
-      f.properties.map((property) => ({
-        function: f.name,
-        property: property.name,
-        outcome: unknown("unsupported", outside.get(f.name) as string),
-      })),
-    );
+  const unsupported = outsideProofs(fns, outside);
   if (inSubset.length === 0) return { results: unsupported, specErrors };
   const lean = emitted.source;
   const rest = (outcome: ProofOutcome): LeanModuleProofs => ({
-    results: [...unsupported, ...allWith(inSubset, outcome)],
+    results: [...unsupported, ...proofsOf(inSubset, outcome)],
     lean,
     specErrors,
   });
