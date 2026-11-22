@@ -11,7 +11,7 @@ can rely on it.
 
 ## As of now
 
-The phases through v0.18 are done; `docs/design.md` describes what they
+The phases through v0.19 are done; `docs/design.md` describes what they
 built. A phase's gate is its go/no-go and passed in CI when the phase
 closed; after the release what a gate's Workers hold is protection against
 regressions, which belongs with the code it protects. So once a phase is
@@ -198,12 +198,41 @@ a new phase's gate is built where its tests will stay.
   violation pinned by step name and attempt and replayed by the command;
   the fixed Worker holding under both; the per-run ratio and the suite's
   ceiling met in CI; and every example and earlier test green.
+- **v0.19, parallel calls, a steadier suite, one spine.** A handler that
+  awaits two calls together (`Promise.all` over two object stubs) had its
+  chains race in real time when one invocation ran at a time, and a check
+  that saw two orders reported `module_state_leak`: the one gap in the
+  model that gave a wrong reason rather than none. The first run that
+  shows such calls now makes the check start over with every asynchronous
+  effect a turn (`docs/design.md`, "Calls in parallel inside one
+  invocation"). A slow runner does not fail `main`: the tests whose
+  verdict rested on exploration finishing within a budget of real time
+  run on a clock that does not move, and the suite's ceiling sits above
+  the runner's recorded swing (the numbers are with v0.18, above). The
+  two prover engines, written beside each other, read a module through
+  one spine, so the model's translation has one place to live; the subset
+  reader is split along its seams, and no module imports in a circle,
+  which lint now refuses. The release also took in what an
+  adopter asked of the command and two cases where a verdict could be
+  wrong or depend on the machine. `eutaxy check --console` shows what the
+  Workers wrote to the console during the check, a callee's included: to
+  read why a callee refused a call, an adopter had to run the generated
+  test by hand. A scenario gives the Worker or a callee a var or a secret
+  by its (qualified) binding name (`envVar()`, `secret()`): the command
+  carried a callee's `vars` into the isolate but not its secrets, which no
+  wrangler config holds, so a callee that requires one did not start. A
+  project that writes no specs needs no TypeScript. An object that resets
+  itself and is called again is reported, where the call's takeover
+  adopted it silently. A dropped WebSocket end's close is waited for by
+  its arrival, not by two real ticks, which a loaded machine can outlast.
+  Gate: a Worker awaiting calls into two objects together ends in a
+  verdict with every order run
+  (`packages/cloudflare/workerd/parallel-object-calls`), and both engines
+  pass the prover contract corpus on the shared spine.
 
 Notes on releases along the way:
-- `0.18.0` closes v0.18; the patch work after it ships as `0.18.x`, and
-  the next minor opens with v0.19. It also carries what was ready as
-  `0.17.3` (fault sites, pinned schedules, the `UNSUPPORTED` replay),
-  released with the phase rather than before it.
+- `0.19.0` closes v0.19; the patch work after it ships as `0.19.x`, and
+  the next minor opens with v0.20.
 - `0.9.0` needs TypeScript 7.1 in the project (`typescript@7.1.0-beta`
   until the release on 2026-11-24, then the release): the spec reader runs
   the project's compiler. The reader follows the compiler's own releases
@@ -288,10 +317,10 @@ a measurement that asks for them):
   (it still delivers one event at a time); latency on scripted externals;
   Workflow rollback handlers.
 
-## After v0.18
+## After v0.19
 
-Each phase's text is made exact, gate included, when it starts. v0.19 is
-the current phase; v0.20 needs the semantics the phases before it settled.
+Each phase's text is made exact, gate included, when it starts. v0.20 is
+the current phase, and its gate is written with its first change.
 
 ### Candidates: the larger gaps in the model
 
@@ -327,45 +356,6 @@ cannot see (a promise nothing settles, real I/O past the budget, a raw TCP
 socket) is reported rather than guessed. The leak check could fire less
 often with fresh module state per run, at a cost in speed (among the
 patch work's performance items, waiting for a measurement).
-
-### v0.19 — Parallel calls, a steadier suite, one spine
-
-The first three pieces are done; the release then takes in what an
-adopter asked of the command and two cases where a verdict could be wrong
-or depend on the machine, in this order:
-- **Calls in parallel inside one invocation are turns.** A handler that
-  awaits two calls together (`Promise.all` over two object stubs) had its
-  chains race in real time when one invocation ran at a time, and a check
-  that saw two orders reported `module_state_leak`. It was the one
-  candidate among the model's gaps that gave a wrong reason rather than
-  none, so it goes ahead of the others: the first run that shows such
-  calls makes the check start over with every asynchronous effect a turn
-  (`docs/design.md`, "Calls in parallel inside one invocation").
-- **A slow runner does not fail `main`.** One test's verdict rests on
-  exhaustive exploration finishing within a budget of real time, and the
-  suite's 420 s ceiling sits about 60 s above its usual time: a runner a
-  third slower failed both on code that had passed three times.
-- **One spine for the two prover engines**, which were written beside each
-  other, so the model's translation has one place to live. The subset
-  reader is already split along its seams, and no module imports in a
-  circle.
-- **A Worker's console output, on request.** `eutaxy check --console` shows
-  what the Workers wrote to the console during the check, a callee's
-  included: to read why a callee refused a call, an adopter had to run the
-  generated test by hand.
-- **A var or a secret from the scenario**, for the Worker or a callee, by
-  its (qualified) binding name (`envVar()`, `secret()`): the command
-  carried a callee's `vars` into the isolate but not its secrets, which no
-  wrangler config holds, so a callee that requires one did not start.
-- **No TypeScript for a project that writes no specs.**
-- **An object that resets itself and is called again is reported**, where
-  the call's takeover adopted it silently.
-- **A dropped WebSocket end's close is waited for by its arrival**, not by
-  two real ticks, which a loaded machine can outlast.
-
-Gate: a Worker awaiting calls into two objects together ends in a verdict
-with every order run (`packages/cloudflare/workerd/parallel-object-calls`),
-and both engines pass the prover contract corpus on the shared spine.
 
 ### v0.20 — The model proven
 
