@@ -7,10 +7,12 @@ import {
   d1Schema,
   d1Write,
   defineScenario,
+  envVar,
   external,
   fetchCall,
   http,
   queue,
+  secret,
 } from "./scenario.ts";
 
 const payments = queue("payments", [
@@ -146,5 +148,39 @@ describe("http caller timing", () => {
         invariants: [atMostOncePerKey("once", d1Write("DB"), d1Param(0))],
       }),
     ).toThrow(/delaysMs\[0\][\s\S]*delaysMs\[1\][\s\S]*deadlineMs must be a positive integer/);
+  });
+});
+
+describe("a var or a secret from the scenario", () => {
+  const once = atMostOncePerKey("once", d1Write("DB"), d1Param(0));
+  const scenario = (setup: NonNullable<Parameters<typeof defineScenario>[0]["setup"]>) =>
+    defineScenario({
+      name: "env",
+      worker: { entry: "./w.ts", config: "./wrangler.jsonc" },
+      drive: payments,
+      setup,
+      invariants: [once],
+    });
+
+  test("envVar and secret are setup steps of one kind, the Worker's by name and a callee's by its qualified name", () => {
+    const spec = scenario([envVar("REGION", "eu"), secret("orders/API_KEY", "test-key")]);
+    expect(spec.setup).toEqual([
+      { kind: "env", binding: "REGION", value: "eu", secret: false },
+      { kind: "env", binding: "orders/API_KEY", value: "test-key", secret: true },
+    ]);
+    // A var may be any JSON value, as a wrangler config's is.
+    expect(scenario([envVar("LIMITS", { perMinute: 60 })]).setup[0]?.["value"]).toEqual({
+      perMinute: 60,
+    });
+  });
+
+  test("a name given a value twice, a missing name and a secret that is not text are refused", () => {
+    expect(() => scenario([envVar("REGION", "eu"), secret("REGION", "x")])).toThrow(
+      /"REGION" is given a value twice \(envVar\(\) or secret\(\)\)/,
+    );
+    expect(() => scenario([envVar("", "eu")])).toThrow(/envVar\(\) needs a binding name/);
+    expect(() => scenario([secret("API_KEY", 42 as unknown as string)])).toThrow(
+      /secret\("API_KEY"\) needs a string: a secret is text/,
+    );
   });
 });

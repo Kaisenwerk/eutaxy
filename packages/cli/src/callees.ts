@@ -64,6 +64,16 @@ export interface CalleeConfig {
 }
 
 /** The `callee` steps of a setup, as the scenario wrote them. */
+/**
+ * The vars and secrets the scenario's setup gives a value (`envVar()`, `secret()`), by binding name,
+ * a callee's under its qualified one: what the isolate's env holds for them.
+ */
+export function envSteps(setup: ScenarioSpec["setup"]): Record<string, JsonValue> {
+  const out: Record<string, JsonValue> = {};
+  for (const s of setup) if (s.kind === "env") out[String(s["binding"])] = s["value"] as JsonValue;
+  return out;
+}
+
 export function calleeSteps(setup: ScenarioSpec["setup"]): CalleeStep[] {
   return setup
     .filter((s) => s.kind === "callee")
@@ -344,6 +354,8 @@ export function miniflareOptionsSource(
    * callee hosted inside the call), never by the Worker its config names, which the isolate may not hold.
    */
   callerServices: readonly string[] = [],
+  /** The vars and secrets the scenario gives a value (`envSteps`), over what the configs give. */
+  env: Readonly<Record<string, JsonValue>> = {},
 ): string {
   const d1: Record<string, string> = {};
   const r2: Record<string, string> = {};
@@ -383,6 +395,7 @@ export function miniflareOptionsSource(
     for (const q of c.queues) queues[qualified(c.name, q.binding)] = q.queue;
     for (const [k, v] of Object.entries(c.vars)) vars[qualified(c.name, k)] = v;
   }
+  Object.assign(vars, env);
   const options: Record<string, object> = {};
   const add = (key: string, value: object) => {
     if (Object.keys(value).length > 0) options[key] = value;

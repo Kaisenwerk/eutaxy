@@ -8,7 +8,7 @@ outline: 2
 
 # `eutaxy/cloudflare`
 
-`import { … } from "eutaxy/cloudflare";` 49 functions and values, 38 types; each links to the file that declares it.
+`import { … } from "eutaxy/cloudflare";` 51 functions and values, 39 types; each links to the file that declares it.
 
 ## Functions, classes and values
 
@@ -132,6 +132,12 @@ The storage of one object (by the name its id was made from) as rows `{ key, val
 
 One SQL table of a SQLite-backed object (by the name its id was made from) at the end of the run, its rows as the table holds them, for state invariants. [Source](https://github.com/Kaisenwerk/eutaxy/blob/main/packages/cloudflare/src/scenario.ts)
 
+### `envVar`
+
+`function envVar(binding: string, value: JsonValue): EnvSetup`
+
+Give a var its value: the Worker's (`"REGION"`), or a callee's (`"orders/REGION"`). [Source](https://github.com/Kaisenwerk/eutaxy/blob/main/packages/cloudflare/src/scenario.ts)
+
 ### `everyRow`
 
 `function everyRow(name: string, query: StateQuery, holds: readonly RowCondition[]): EveryRow`
@@ -245,6 +251,12 @@ Run both sides and compare. [Source](https://github.com/Kaisenwerk/eutaxy/blob/m
 `function scriptedObject(binding: string, options: { readonly methods?: { readonly [method: string]: ScriptedReply }; readonly fetch?: readonly ServiceResponse[]; } = {}): ScriptedObjectSetup`
 
 Script a Durable Object namespace: its objects' RPC methods answer from `methods` and their `fetch()` from `fetch`, and no object of it runs. [Source](https://github.com/Kaisenwerk/eutaxy/blob/main/packages/cloudflare/src/scenario.ts)
+
+### `secret`
+
+`function secret(binding: string, value: string): EnvSetup`
+
+Give a secret its value: the Worker's (`"API_KEY"`), or a callee's (`"orders/API_KEY"`). [Source](https://github.com/Kaisenwerk/eutaxy/blob/main/packages/cloudflare/src/scenario.ts)
 
 ### `service`
 
@@ -391,6 +403,12 @@ A SQLite-backed object's starting storage: its `CREATE TABLE` statements, and ro
 `interface DurableObjectTestHelpers`
 
 The Cloudflare Vitest plugin's test helpers, as exported by `cloudflare:test` (pass the module namespace). [Source](https://github.com/Kaisenwerk/eutaxy/blob/main/packages/cloudflare/src/durable-objects.ts)
+
+### `EnvSetup`
+
+`interface EnvSetup`
+
+A var or a secret given its value by the scenario: the Worker's by its binding name, a callee's by its qualified one (`<worker name>/<binding>`). [Source](https://github.com/Kaisenwerk/eutaxy/blob/main/packages/cloudflare/src/scenario.ts)
 
 ### `HttpCallerOptions`
 

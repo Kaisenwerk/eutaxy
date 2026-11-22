@@ -2,13 +2,14 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { callee } from "@eutaxy/cloudflare";
+import { callee, envVar, secret } from "@eutaxy/cloudflare";
 import { afterAll, describe, expect, test } from "vitest";
 import {
   bindingCarries,
   type CalleeConfig,
   calleeSteps,
   classAlias,
+  envSteps,
   isolateBindings,
   isolateOf,
   loadScenario,
@@ -434,5 +435,25 @@ describe("the scenario side", () => {
     ]);
     expect(mentionsCallee('setup: [callee("X", { entry, config })]')).toBe(true);
     expect(mentionsCallee("service('X')")).toBe(false);
+  });
+});
+
+describe("the scenario's vars and secrets", () => {
+  test("are read from the setup by binding name, a callee's under its qualified one", () => {
+    expect(
+      envSteps([
+        callee("INVENTORY", { entry: "./i.ts", config: "./i.jsonc" }),
+        envVar("REGION", "eu"),
+        secret("inventory/API_KEY", "test-key"),
+      ]),
+    ).toEqual({ REGION: "eu", "inventory/API_KEY": "test-key" });
+    expect(envSteps([])).toEqual({});
+  });
+
+  test("go into the isolate's bindings, with no callee too", () => {
+    expect(
+      miniflareOptionsSource([], undefined, [], { REGION: "eu", "inventory/API_KEY": "k" }),
+    ).toBe('{"bindings":{"REGION":"eu","inventory/API_KEY":"k"}}');
+    expect(miniflareOptionsSource([], undefined, [], {})).toBe("{}");
   });
 });

@@ -139,3 +139,21 @@ test("two binding names that map to one identifier get distinct import names", (
   expect(text).toContain('import schema_orders_DB_2 from "./other.sql?raw";');
   expect(text).toContain('schemas: { "orders/DB": schema_orders_DB, orders_DB: schema_orders_DB_2 }');
 });
+
+test("a scenario that gives vars or secrets a value: the test names them at its top, with no value", () => {
+  const plain = cloudflareRegressionTest(verdict, {
+    scenarioPath: "./scenario.sim.ts",
+    workerPath: "./worker.ts",
+    schemaPaths: {},
+  });
+  expect(plain).not.toContain("Needs the scenario's vars and secrets");
+  const text = cloudflareRegressionTest(verdict, {
+    scenarioPath: "./scenario.sim.ts",
+    workerPath: "./worker.ts",
+    schemaPaths: {},
+    envBindings: ["REGION", "notes/API_KEY"],
+  });
+  expect(text).toContain(
+    "// Needs the scenario's vars and secrets in this test's isolate: REGION, notes/API_KEY.\n// Give them to the Cloudflare plugin as miniflare: { bindings: { … } } with the values the scenario's setup has,\n// or run this test under the config eutaxy check --keep leaves in .eutaxy/.",
+  );
+});

@@ -1,0 +1,7 @@
+{
+  "name": "notes",
+  "main": "worker.ts",
+  "compatibility_date": "2026-10-01",
+  // The config's own value; the scenario's envVar("notes/TIER") replaces it for the check.
+  "vars": { "TIER": "from-the-config" }
+}
