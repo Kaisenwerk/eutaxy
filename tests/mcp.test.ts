@@ -169,9 +169,10 @@ const hasLean = await leanInstalled();
 const required = process.env["EUTAXY_REQUIRE_LEAN"] === "1";
 
 describe.skipIf(!hasLean && !required)("the proof loop through the server", () => {
-  // A copy of the contract corpus's lists entry, without its proof file, beside it, where its imports
-  // resolve; .probe-* is gitignored.
-  const scratch = join(root, "corpus/prover-contracts", `.probe-mcp-${process.pid}`);
+  // A copy of the contract corpus's lists entry, without its proof file, where its imports resolve
+  // and no other test walks for spec files (the report tests walk the contract corpus itself, and a
+  // scratch directory there while one runs changes what it reports); .probe-* is gitignored.
+  const scratch = join(root, "corpus/planted-bugs", `.probe-mcp-${process.pid}`);
   const fixture = join(root, "corpus/prover-contracts/constructs/lists");
   beforeAll(() => {
     mkdirSync(scratch, { recursive: true });
