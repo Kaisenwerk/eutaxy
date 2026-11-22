@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { SpecVerdict } from "@eutaxy/core";
 import type { Prover } from "@eutaxy/prover";
 import { afterAll, describe, expect, test } from "vitest";
-import { needsObjectHelpers, proveSpecs } from "./check.ts";
+import { consoleOutput, needsObjectHelpers, proveSpecs } from "./check.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "eutaxy-prove-"));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -60,6 +60,51 @@ describe("proveSpecs", () => {
     );
     expect(seen).toEqual([["f"]]);
     expect(out[0]).toMatchObject({ kind: "PROVEN", engine: { name: "fake" }, tested: 100 });
+  });
+});
+
+describe("consoleOutput", () => {
+  const dir = mkdtempSync(join(tmpdir(), "eutaxy-console-"));
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+  const line = (type: string, content: string) => `${JSON.stringify({ type, content })}\n`;
+
+  test("what was written, as Vitest reported it, whichever stream it went to", () => {
+    const file = join(dir, "r.console.jsonl");
+    writeFileSync(
+      file,
+      line("stdout", "front: received\n") +
+        line("stderr", "notes: refused\n") +
+        line("stdout", "two\nlines\n"),
+    );
+    expect(consoleOutput(file)).toBe(
+      "Console output during the check, every run, as Vitest reported it:\nfront: received\nnotes: refused\ntwo\nlines\n",
+    );
+  });
+
+  test("colour escapes a console adds to an object it prints are removed", () => {
+    const file = join(dir, "colour.console.jsonl");
+    const esc = String.fromCharCode(27);
+    writeFileSync(
+      file,
+      line("stdout", `{ a: ${esc}[33m1${esc}[39m, b: ${esc}[1;32m'x'${esc}[0m }\n`),
+    );
+    expect(consoleOutput(file)).toBe(
+      "Console output during the check, every run, as Vitest reported it:\n{ a: 1, b: 'x' }\n",
+    );
+  });
+
+  test("a last write without a line end still ends the output with one", () => {
+    const file = join(dir, "open.console.jsonl");
+    writeFileSync(file, line("stdout", "no newline"));
+    expect(consoleOutput(file).endsWith("no newline\n")).toBe(true);
+  });
+
+  test("nothing written, or no file at all, says so", () => {
+    const empty = join(dir, "empty.console.jsonl");
+    writeFileSync(empty, "");
+    const none = "Nothing was written to the console during the check.\n";
+    expect(consoleOutput(empty)).toBe(none);
+    expect(consoleOutput(join(dir, "missing.console.jsonl"))).toBe(none);
   });
 });
 

@@ -31,6 +31,15 @@ on a violation.
 | `--no-regression`    | Write neither test                                                                      |
 | `--expect-violation` | Write a regression test that asserts the violation is still there                       |
 | `--keep`             | Keep the generated `.eutaxy/` directory                                                 |
+| `--console`          | Show what the Workers wrote to the console during the check, on stderr (see below)      |
+
+`--console` prints, on stderr and before the verdict, what was written to
+the console inside the isolate while the check ran: the Workers' own
+`console.log` and the like, a callee's included, and anything the scenario
+file itself writes. A check runs the scenario many times, so a line a
+handler writes once appears once per run. Each stream keeps its order, but
+within one stretch of synchronous code what went to `console.log` is shown
+before what went to `console.error`. Colour codes are removed.
 
 What it does:
 1. Reads the spec files of the modules the scenario's `specs` names, on the

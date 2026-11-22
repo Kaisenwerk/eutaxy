@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { checkTestSource, metaKey, vitestConfigSource } from "./generate.ts";
+import { checkTestSource, consoleFile, metaKey, vitestConfigSource } from "./generate.ts";
 
 describe("generated check test", () => {
   test("imports the scenario, resolves schemas and the worker by glob, and stores the verdict in task meta", () => {
@@ -28,6 +28,24 @@ describe("generated check test", () => {
   test("passes the time budget through when one is given", () => {
     const src = checkTestSource({ seed: "s", budgetMs: 60_000, scenarioImport: "../x.sim.ts" });
     expect(src).toContain('seed: "s", budgetMs: 60000 });');
+  });
+
+  test("the vitest config keeps what the Workers write to the console only when asked", () => {
+    const args = ["/p/wrangler.jsonc", "/p/.eutaxy/x.check.test.ts", "/p/.eutaxy/r.json"] as const;
+    const quiet = vitestConfigSource(...args);
+    expect(quiet).not.toContain("onUserConsoleLog");
+    expect(quiet).not.toContain("appendFileSync");
+    const kept = vitestConfigSource(...args, undefined, true);
+    expect(kept).toContain('import { appendFileSync, writeFileSync } from "node:fs";');
+    expect(kept).toContain("onUserConsoleLog(log) {");
+    expect(consoleFile("/p/.eutaxy/r.json")).toBe("/p/.eutaxy/r.console.jsonl");
+    expect(kept).toContain(
+      'appendFileSync("/p/.eutaxy/r.console.jsonl", JSON.stringify({ type: log.type, content: log.content }) + "\\n");',
+    );
+    // Apart from that, the same config.
+    expect(
+      kept.replace(/, onUserConsoleLog[\s\S]*?\n {4}\}/, "").replace("appendFileSync, ", ""),
+    ).toBe(quiet);
   });
 
   test("the vitest config points the Cloudflare plugin at the wrangler file", () => {

@@ -29,6 +29,8 @@ check options:
   --no-regression       do not write either test
   --expect-violation    write a regression test that asserts the violation (for corpora)
   --keep                keep the generated .eutaxy/ files
+  --console             show what the Workers wrote to the console during the check,
+                        on stderr
 
 draft writes a scenario skeleton from a wrangler config (JSON or JSONC; default:
 wrangler.jsonc or wrangler.json in the current directory) and the Worker module it names
@@ -76,6 +78,7 @@ export async function main(argv: readonly string[], io: Io): Promise<number> {
     "no-regression",
     "expect-violation",
     "keep",
+    "console",
     "help",
     "exhaustive",
     "goals",
@@ -201,6 +204,7 @@ export async function main(argv: readonly string[], io: Io): Promise<number> {
     "no-regression",
     "expect-violation",
     "keep",
+    "console",
   ];
   const unknownFlag = Object.keys(flags).find((k) => !checkFlags.includes(k));
   if (unknownFlag !== undefined) {
@@ -233,6 +237,7 @@ export async function main(argv: readonly string[], io: Io): Promise<number> {
     noRegression: flags["no-regression"] === true,
     expectViolation: flags["expect-violation"] === true,
     keep: flags["keep"] === true,
+    console: flags["console"] === true,
     stdout: io.stdout,
     stderr: io.stderr,
   });
