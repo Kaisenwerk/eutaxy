@@ -176,11 +176,13 @@ a new phase's gate is built where its tests will stay.
   code took 333 s, 355 s and 359 s, then 453.6 s (`557091e` on `main`),
   then 384 s when run again, a swing of 36%. The slowest green run and
   that swing give 524 s, and the ceiling sits just above. The phase had
-  set it at 420 s, which that 453.6 s run tripped. A run that trips the
-  ceiling with no growth in the files it names is the runner's load, and
-  the ceiling is raised only with such runs recorded here. In the same
-  run a test that asserts every schedule was run, a second's work, spent
-  its 30 s budget and failed. Such tests under
+  set it at 420 s, which that 453.6 s run tripped, and so did a pull
+  request's run a day later at 461.1 s, whose change added two seconds
+  of tests and whose slowest files were ones it did not touch. A run
+  that trips the ceiling with no growth in the files it names is the
+  runner's load, and the ceiling is raised only with such runs recorded
+  here. In the 453.6 s run a test that asserts every schedule was run, a
+  second's work, spent its 30 s budget and failed. Such tests under
   `packages/cloudflare/workerd` and in the corpus now pass a clock that
   does not move, so the budget never ends their exploration early and a
   loaded runner slows them without failing them; the two that run the
