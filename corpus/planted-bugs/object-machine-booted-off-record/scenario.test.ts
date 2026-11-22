@@ -64,6 +64,8 @@ test("exhaustive exploration finds it too, and every schedule of the fix holds",
     seed: "corpus",
     budgetMs: 30_000,
     exhaustive: true,
+    // A clock that does not move: every schedule is run however slow the runner is.
+    now: () => 0,
   });
   expect(holds.kind, renderText(holds)).toBe("BOUNDED");
   expect(holds.reached.exhaustive?.complete).toBe(true);

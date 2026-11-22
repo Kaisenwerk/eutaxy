@@ -170,13 +170,25 @@ a new phase's gate is built where its tests will stay.
   that measurement; the gate is the measured ratio, at most twelve, a
   guard against growth (`scripts/run-cost.ts`, after the suite), and a
   cheaper way across an object's I/O context waits among the candidates.
-  The suite fails above 420 s on the CI runner, naming its slowest files
+  The suite fails above 540 s on the CI runner, naming its slowest files
   (`tests/suite-ceiling.ts`); it took 272 s to 385 s over the phase's
-  green runs on `main` with the runner's load alone swinging it by a
-  third, so a run that trips the ceiling with no growth in the files it
-  names is the runner's load, and the ceiling is raised only with such
-  runs recorded here. Gate: the planted bug of the adopter's shape
-  (`workflow-fence-after-every-attempt`) `BOUNDED` under sampling with
+  green runs on `main`, and the runner's load alone swings it: unchanged
+  code took 333 s, 355 s and 359 s, then 453.6 s (`557091e` on `main`),
+  then 384 s when run again, a swing of 36%. The slowest green run and
+  that swing give 524 s, and the ceiling sits just above. The phase had
+  set it at 420 s, which that 453.6 s run tripped, and so did a pull
+  request's run a day later at 461.1 s, whose change added two seconds
+  of tests and whose slowest files were ones it did not touch. A run
+  that trips the ceiling with no growth in the files it names is the
+  runner's load, and the ceiling is raised only with such runs recorded
+  here. In the 453.6 s run a test that asserts every schedule was run, a
+  second's work, spent its 30 s budget and failed. Such tests under
+  `packages/cloudflare/workerd` and in the corpus now pass a clock that
+  does not move, so the budget never ends their exploration early and a
+  loaded runner slows them without failing them; the two that run the
+  command (`tests/systems`) cannot, and give it 100 s. Gate: the planted
+  bug of the adopter's shape (`workflow-fence-after-every-attempt`)
+  `BOUNDED` under sampling with
   three faults a run, asserted, and `VIOLATED` by `eutaxy check` once the
   scenario says the step's attempts are where faults go; the same
   violation pinned by step name and attempt and replayed by the command;

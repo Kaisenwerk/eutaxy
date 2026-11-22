@@ -25,7 +25,7 @@ function eutaxyWithin(
   ms: number,
 ): Promise<{ status: number; stdout: string; stderr: string }> {
   return new Promise((done, fail) => {
-    const child = spawn(process.execPath, [bin, ...args, "--budget-ms", "30000"], {
+    const child = spawn(process.execPath, [bin, ...args, "--budget-ms", "100000"], {
       cwd: root,
       stdio: ["ignore", "pipe", "pipe"],
       detached: true,

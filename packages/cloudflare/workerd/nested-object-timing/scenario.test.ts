@@ -18,6 +18,7 @@ import { lastSnapshot } from "@eutaxy/core";
 import { replay } from "@eutaxy/engine";
 import { describe, expect, test } from "vitest";
 import { told } from "../told.ts";
+import { untimed } from "../untimed.ts";
 import { nested, type Timing } from "./scenario.sim.ts";
 import * as worker from "./worker.ts";
 
@@ -63,6 +64,7 @@ describe.each([1, 2] as const)("with %i invocation(s) in flight", (concurrency) 
         seed: "gate",
         budgetMs: 30_000,
         exhaustive: true,
+        now: untimed,
         maxRuns: 1_000,
       });
       expect(verdict.kind, told(verdict)).toBe("BOUNDED");
@@ -80,7 +82,7 @@ describe.each([1, 2] as const)("with %i invocation(s) in flight", (concurrency) 
           nested(method, concurrency, 1),
           platform(),
           concurrency === 1
-            ? { seed: "gate", budgetMs: 30_000, exhaustive: true, maxRuns: 1_000 }
+            ? { seed: "gate", budgetMs: 30_000, exhaustive: true, maxRuns: 1_000, now: untimed }
             : { seed: "gate", budgetMs: 30_000, maxRuns: 50 },
         );
         expect(verdict.kind, told(verdict)).toBe("BOUNDED");

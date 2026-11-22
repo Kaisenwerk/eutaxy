@@ -23,6 +23,7 @@ import { lastSnapshot } from "@eutaxy/core";
 import { replay } from "@eutaxy/engine";
 import { describe, expect, test } from "vitest";
 import { told } from "../told.ts";
+import { untimed } from "../untimed.ts";
 import { turn } from "./scenario.sim.ts";
 import * as worker from "./worker.ts";
 
@@ -70,6 +71,7 @@ test.each([0, 180_000])(
       seed: "gate",
       budgetMs: 30_000,
       exhaustive: true,
+      now: untimed,
       maxRuns: 1_000,
     });
     expect(verdict.kind, told(verdict)).toBe("BOUNDED");

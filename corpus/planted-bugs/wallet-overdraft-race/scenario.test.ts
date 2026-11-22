@@ -73,6 +73,8 @@ test("exhaustive exploration finds the race, and every schedule of the fixed wal
     seed: "corpus",
     budgetMs: 30_000,
     exhaustive: true,
+    // A clock that does not move: every schedule is run however slow the runner is.
+    now: () => 0,
   });
   expect(fixed.kind, renderText(fixed)).toBe("BOUNDED");
   expect(fixed.reached.exhaustive?.complete).toBe(true);
