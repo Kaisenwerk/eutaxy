@@ -92,10 +92,11 @@ writes fails until the insert is idempotent.
 ## Install
 
 ```sh
-pnpm add -D eutaxy vitest @cloudflare/vitest-plugin typescript@7.1.0-beta
+pnpm add -D eutaxy vitest @cloudflare/vitest-plugin
 ```
 
-Eutaxy needs Node 24 and TypeScript 7.1 (inside Vitest, `eutaxy/cloudflare`
-loads without the compiler). It has no runtime dependencies; the prover
+Eutaxy needs Node 24. Specs and proofs also need TypeScript 7.1
+(`typescript@7.1.0-beta` until its release); a project that only checks
+scenarios needs no TypeScript installed. It has no runtime dependencies; the prover
 toolchains (Lean 4, Z3) are optional. Continue with
 [Getting started](/guide/getting-started).

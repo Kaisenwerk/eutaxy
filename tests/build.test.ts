@@ -24,6 +24,29 @@ function run(cmd: string, args: readonly string[], cwd: string): string {
   });
 }
 
+/**
+ * The bare specifiers an entry's bundle imports as it loads: its `import … from` statements and
+ * those of the chunks they name, not what an `import()` reaches later.
+ */
+function loadedAtStart(entry: string): string[] {
+  const seen = new Set<string>();
+  const externals = new Set<string>();
+  const queue = [entry];
+  for (let file = queue.pop(); file !== undefined; file = queue.pop()) {
+    // A line of generated source the bundle holds as text can look like an import of a file that
+    // is no chunk: only chunks are followed.
+    if (seen.has(file) || !existsSync(join(dist, file))) continue;
+    seen.add(file);
+    const text = readFileSync(join(dist, file), "utf8");
+    for (const m of text.matchAll(/^\s*(?:import|export)\b[^;'"()]*?["']([^"']+)["']/gm)) {
+      const spec = m[1] as string;
+      if (spec.startsWith("./")) queue.push(spec.slice(2));
+      else externals.add(spec);
+    }
+  }
+  return [...externals].sort();
+}
+
 /** The bare specifiers an entry's bundle imports, following its own chunks. */
 function externalImports(entry: string): string[] {
   const seen = new Set<string>();
@@ -80,7 +103,42 @@ describe("published package", () => {
       const imported = externalImports(entry);
       expect(imported, `${entry} imports ${imported.join(", ")}`).toEqual([]);
     }
+    // The command loads the spec reader and the engines where a command reads specs or proves, by an
+    // `import()`: as it starts it imports no TypeScript compiler, so a project that only checks
+    // scenarios need not have one. The compiler is still reached later, from the chunks it loads.
+    for (const entry of ["bin.mjs", "cli.mjs"])
+      expect(loadedAtStart(entry).filter((s) => /^typescript(\/|$)/.test(s))).toEqual([]);
+    // The check means something: some chunk of the bundle does import the compiler.
+    expect(
+      readdirSync(dist)
+        .filter((n) => n.endsWith(".mjs"))
+        .some((n) => /from\s*["']typescript\//.test(readFileSync(join(dist, n), "utf8"))),
+    ).toBe(true);
     expect(run(process.execPath, [join(dist, "bin.mjs"), "help"], root)).toContain("Usage:");
+    // And the built command checks a scenario with no spec file where every import of the compiler
+    // fails, as in a project that has not installed it (`no-typescript.mjs`).
+    const withoutCompiler = run(
+      process.execPath,
+      [
+        "--import",
+        join(root, "tests", "no-typescript.mjs"),
+        join(dist, "bin.mjs"),
+        "check",
+        "tests/systems/scripted-object-of-a-callee/sequential.sim.ts",
+        "--json",
+        "--seed",
+        "gate",
+        "--max-runs",
+        "1",
+        "--no-regression",
+        "--budget-ms",
+        "30000",
+      ],
+      root,
+    );
+    expect((JSON.parse(withoutCompiler) as { verdict: { kind: string } }).verdict.kind).toBe(
+      "BOUNDED",
+    );
     // report runs each module in a process started on the bundled chunk that holds it; the bin must
     // not be that chunk, or the process would run the command again.
     let out = "";
@@ -143,6 +201,10 @@ describe("published package", () => {
         field,
       ).toEqual([]);
     }
+    // The compiler is a peer only for specs and proofs: a project without it installs cleanly.
+    expect(
+      (pkg["peerDependenciesMeta"] as Record<string, { optional?: boolean }>)["typescript"],
+    ).toEqual({ optional: true });
     expect(Object.keys(pkg["peerDependencies"] as object).sort()).toEqual([
       "@aws-sdk/client-dynamodb",
       "@aws-sdk/util-dynamodb",

@@ -257,7 +257,7 @@ export async function runReport(o: ReportOptions): Promise<number> {
   const root = resolve(o.cwd, o.dir ?? ".");
   let engines: Prover[] = [];
   if (o.provers && o.provers.length > 0) {
-    const named = enginesNamed(o.provers);
+    const named = await enginesNamed(o.provers);
     if ("error" in named) {
       o.stderr(`${named.error}\n`);
       return exitCodes.error;
@@ -266,7 +266,7 @@ export async function runReport(o: ReportOptions): Promise<number> {
   }
   let modules: SpecModule[];
   try {
-    modules = findSpecModules(root);
+    modules = await findSpecModules(root);
   } catch (err) {
     o.stderr(`cannot read ${root}: ${err instanceof Error ? err.message : String(err)}\n`);
     return exitCodes.error;

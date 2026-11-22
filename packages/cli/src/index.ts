@@ -4,7 +4,8 @@ export {
   type CheckOptions,
   enginesNamed,
   exitCodes,
-  provers,
+  loadProver,
+  proverNames,
   proveSpecs,
   runCheck,
 } from "./check.ts";
