@@ -55,14 +55,17 @@ declares exactly that, and pnpm links nothing else.
 ## Installing
 
 ```sh
-pnpm add -D eutaxy vitest @cloudflare/vitest-plugin typescript@7.1.0-beta
+pnpm add -D eutaxy vitest @cloudflare/vitest-plugin
+# with specs or proofs, the TypeScript compiler too:
+pnpm add -D typescript@7.1.0-beta
 ```
 
-Requires Node 24 and TypeScript 7.1 (the beta until it is released): the
-spec reader asks your compiler for the types of your functions. Inside
-Vitest, `eutaxy/cloudflare` loads without the compiler, so a project on an
-older TypeScript runs scenarios with the 7.1 beta as Eutaxy's own dev
-dependency. Published as `eutaxy` on npm. A `--prover` engine also
+Requires Node 24. Specs and proofs also need TypeScript 7.1 (the beta until
+it is released): the spec reader asks your compiler for the types of your
+functions. A project that only checks scenarios needs no TypeScript
+installed: `eutaxy/cloudflare` loads without the compiler, and so does
+`eutaxy check` while the scenario's directory holds no spec file.
+Published as `eutaxy` on npm. A `--prover` engine also
 needs its pinned toolchain on the machine, which one command installs:
 `npx eutaxy prover install lean`, or `… smt` for Z3 (checksum-verified,
 into Eutaxy's cache; a toolchain installed by hand serves too). Without it

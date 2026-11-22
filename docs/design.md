@@ -169,7 +169,11 @@ need the real runtime live in its `workerd/` directory, one Worker each.
   do not enforce this: imports by package name resolve through
   `node_modules` and are exempt from the composite file-list check.)
 - Only `prover` imports the TypeScript compiler's API, from its reader
-  alone; `typescript` is its peer dependency, and so the facade's.
+  alone; `typescript` is its peer dependency, and so the facade's, where
+  it is optional: the command loads the reader and the engines by
+  `import()` where a command reads a spec file or names an engine, so a
+  project that only checks scenarios need not have the compiler, and what
+  does need it says so when it is missing or older than 7.1.
 - Only `cloudflare` knows about Cloudflare and only `aws` knows about AWS;
   each is a sibling package implementing `Platform`, and the engine, the
   invariants, the shrinker, the report and the CLI are shared.

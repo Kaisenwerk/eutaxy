@@ -17,8 +17,6 @@ import {
   type Violated,
 } from "@eutaxy/core";
 import { aggregate, type EngineReport, type Prover } from "@eutaxy/prover";
-import { leanProver } from "@eutaxy/prover-lean";
-import { smtProver } from "@eutaxy/prover-smt";
 import { renderSpecs, renderText } from "@eutaxy/report";
 import {
   bindingCarries,
@@ -49,7 +47,15 @@ import {
   cloudflareRegressionTest,
   cloudflareUnsupportedTest,
 } from "./regression.ts";
-import { findSpecModules, type SpecModule, specFiles, specKey } from "./specs.ts";
+import {
+  findSpecModules,
+  type SpecModule,
+  specFiles,
+  specKey,
+  TypescriptNeeded,
+  typescriptMissing,
+  typescriptNeeded,
+} from "./specs.ts";
 import { strayErrors, strayNote, unhandledErrorsFile, vitestFailure } from "./vitest-failure.ts";
 import type { CheckTransport } from "./workerd.ts";
 
@@ -86,18 +92,37 @@ export interface CheckOptions {
 export const exitCodes = { BOUNDED: 0, VIOLATED: 1, UNSUPPORTED: 2, error: 3 } as const;
 
 /** The engines `--prover` can name. */
-export const provers: Readonly<Record<string, Prover>> = { lean: leanProver, smt: smtProver };
+export const proverNames = ["lean", "smt"] as const;
 
-/** The engines named, or the error naming the first unknown one. */
-export function enginesNamed(
+/**
+ * An engine, loaded when it is first named: the engines read through the TypeScript compiler,
+ * which a project that proves nothing need not have installed.
+ */
+export async function loadProver(name: (typeof proverNames)[number]): Promise<Prover> {
+  try {
+    return name === "lean"
+      ? (await import("@eutaxy/prover-lean")).leanProver
+      : (await import("@eutaxy/prover-smt")).smtProver;
+  } catch (err) {
+    if (typescriptMissing(err)) throw new Error(`the ${name} engine needs ${typescriptNeeded}`);
+    throw err;
+  }
+}
+
+/** The engines named, or the error naming the first unknown one, or why one could not be loaded. */
+export async function enginesNamed(
   names: readonly string[],
-): { readonly engines: Prover[] } | { readonly error: string } {
+): Promise<{ readonly engines: Prover[] } | { readonly error: string }> {
+  const known = (name: string): name is (typeof proverNames)[number] =>
+    (proverNames as readonly string[]).includes(name);
+  // Every name is checked before any engine is loaded.
+  for (const name of names)
+    if (!known(name)) return { error: `unknown prover ${name}; known: ${proverNames.join(", ")}` };
   const engines: Prover[] = [];
-  for (const name of names) {
-    const engine = provers[name];
-    if (!engine)
-      return { error: `unknown prover ${name}; known: ${Object.keys(provers).join(", ")}` };
-    engines.push(engine);
+  try {
+    for (const name of names) if (known(name)) engines.push(await loadProver(name));
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err) };
   }
   return { engines };
 }
@@ -112,10 +137,12 @@ export async function proveSpecs(
   observed: readonly { readonly module: string; readonly functions: readonly string[] }[],
   specs: readonly SpecVerdict[],
   engines: readonly Prover[],
-  modules: readonly SpecModule[] = findSpecModules(dir),
+  /** The spec modules under `dir`, when the caller has read them already. */
+  given?: readonly SpecModule[],
   /** Told each engine's report on each module, for what the verdicts do not carry: the open goals. */
   onReport?: (module: SpecModule, report: EngineReport) => void,
 ): Promise<readonly SpecVerdict[]> {
+  const modules = given ?? (await findSpecModules(dir));
   let out = specs;
   for (const m of observed) {
     // Verdicts carry the module as a normalized key ("./domain.ts"); the observed path is as the scenario wrote it.
@@ -243,6 +270,17 @@ export async function runCheck(o: CheckOptions): Promise<number> {
     o.stderr(`scenario not found: ${scenarioPath}\n`);
     return exitCodes.error;
   }
+  // The engines named, before anything runs: a name that is none, or an engine that cannot be loaded
+  // (it reads through the TypeScript compiler), is told now and not after the whole check.
+  let engines: Prover[] = [];
+  if (o.provers && o.provers.length > 0) {
+    const named = await enginesNamed(o.provers);
+    if ("error" in named) {
+      o.stderr(`${named.error}\n`);
+      return exitCodes.error;
+    }
+    engines = named.engines;
+  }
   const dir = dirname(scenarioPath);
   const name = basename(scenarioPath)
     .replace(/\.sim\.ts$/, "")
@@ -352,7 +390,16 @@ export async function runCheck(o: CheckOptions): Promise<number> {
         ...(Object.keys(isolate.aliases).length === 0 ? {} : { aliases: isolate.aliases }),
       }),
     );
-    const specModules = findSpecModules(dir);
+    // Read through the TypeScript compiler, which is loaded only once a spec file is found: a
+    // directory with none is checked without it.
+    let specModules: SpecModule[];
+    try {
+      specModules = await findSpecModules(dir);
+    } catch (err) {
+      if (!(err instanceof TypescriptNeeded)) throw err;
+      o.stderr(`the scenario's directory holds spec files (*.props.ts): ${err.message}\n`);
+      return exitCodes.error;
+    }
     for (const f of specFiles(specModules, workDir)) {
       mkdirSync(dirname(join(workDir, f.name)), { recursive: true });
       writeFileSync(join(workDir, f.name), f.source);
@@ -422,14 +469,8 @@ export async function runCheck(o: CheckOptions): Promise<number> {
     const report = transport.report as { verdict: ScenarioVerdict; specs?: readonly SpecVerdict[] };
     const verdict = report.verdict;
     let specs = report.specs ?? [];
-    if (o.provers && o.provers.length > 0) {
-      const named = enginesNamed(o.provers);
-      if ("error" in named) {
-        o.stderr(`${named.error}\n`);
-        return exitCodes.error;
-      }
-      specs = await proveSpecs(dir, transport.observed ?? [], specs, named.engines, specModules);
-    }
+    if (engines.length > 0)
+      specs = await proveSpecs(dir, transport.observed ?? [], specs, engines, specModules);
     // The regression test's path goes into the JSON report too (an optional field of schema 1), so a
     // caller that reads the report knows where the replay is without parsing the text.
     // A violation gets a test that replays it; so does a run that met something outside the model,

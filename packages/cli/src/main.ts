@@ -1,9 +1,8 @@
 import { parseArgs } from "./args.ts";
-import { exitCodes, runCheck } from "./check.ts";
+import { exitCodes, proverNames, runCheck } from "./check.ts";
 import { runDraft } from "./draft.ts";
-import { type Engine, engines, runInstall } from "./install.ts";
-import { serveStdio } from "./mcp.ts";
-import { runReport } from "./report.ts";
+import type { Engine } from "./install.ts";
+import { typescriptMissing, typescriptNeeded } from "./specs.ts";
 
 const usage = `eutaxy — deterministic simulation checks and spec verdicts for Cloudflare Workers
 
@@ -72,6 +71,25 @@ export interface Io {
   readonly stderr: (text: string) => void;
 }
 
+/**
+ * A part of the command that reads specs or runs an engine, loaded when its command is given: it
+ * loads the TypeScript compiler, which a project that only checks scenarios need not have
+ * installed. Undefined, with why on stderr, when the compiler is not there.
+ */
+async function needingTypescript<T>(
+  what: string,
+  load: () => Promise<T>,
+  io: Io,
+): Promise<T | undefined> {
+  try {
+    return await load();
+  } catch (err) {
+    if (!typescriptMissing(err)) throw err;
+    io.stderr(`${what} needs ${typescriptNeeded}\n`);
+    return undefined;
+  }
+}
+
 export async function main(argv: readonly string[], io: Io): Promise<number> {
   const { positionals, flags } = parseArgs(argv, [
     "json",
@@ -106,9 +124,16 @@ export async function main(argv: readonly string[], io: Io): Promise<number> {
       io.stderr(`mcp takes no arguments\n\n${usage}`);
       return exitCodes.error;
     }
+    // The server, the installer and the report are loaded where a command needs them: the last two
+    // load the engines and the spec reader, and with them the TypeScript compiler, which a project
+    // that only checks scenarios need not have installed.
+    const { serveStdio } = await import("./mcp.ts");
     return serveStdio({ cwd: io.cwd, log: io.stderr });
   }
   if (command === "prover") {
+    // The usage is checked first, from the engines' names alone; the installer is loaded once there
+    // is something to install.
+    const engines: readonly string[] = proverNames;
     const names = engines.join("|");
     if (positionals[1] !== "install" || positionals.length !== 3) {
       io.stderr(`prover takes: install <${names}>\n\n${usage}`);
@@ -126,7 +151,13 @@ export async function main(argv: readonly string[], io: Io): Promise<number> {
       );
       return exitCodes.error;
     }
-    return runInstall({
+    const installer = await needingTypescript(
+      "eutaxy prover install",
+      () => import("./install.ts"),
+      io,
+    );
+    if (installer === undefined) return exitCodes.error;
+    return installer.runInstall({
       engine,
       from: str("from"),
       json: flags["json"] === true,
@@ -145,6 +176,9 @@ export async function main(argv: readonly string[], io: Io): Promise<number> {
       return exitCodes.error;
     }
     const dir = positionals[1];
+    const report = await needingTypescript("eutaxy report", () => import("./report.ts"), io);
+    if (report === undefined) return exitCodes.error;
+    const { runReport } = report;
     return runReport({
       cwd: io.cwd,
       ...(dir === undefined ? {} : { dir }),

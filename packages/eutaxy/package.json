@@ -80,6 +80,9 @@
     "typescript": ">=7.1.0-beta"
   },
   "peerDependenciesMeta": {
+    "typescript": {
+      "optional": true
+    },
     "@cloudflare/workers-types": {
       "optional": true
     },

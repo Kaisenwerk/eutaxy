@@ -252,10 +252,6 @@ a measurement that asks for them):
   schedules.
 - A configurable number of `TESTED` draws on the command line (the API
   takes `inputs`).
-- The command loads the spec reader and the engines only where specs are
-  read or proved, so the TypeScript compiler becomes an optional peer
-  (today `eutaxy/cloudflare` loads without it inside Vitest, but the
-  command needs it from its first line).
 - An audit of supplied proofs from outside the Lean process that
   elaborated them (a compiled checker over the `.olean`, replaying the
   kernel), when a target checks proofs its own repository did not write;
