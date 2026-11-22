@@ -55,6 +55,12 @@ export interface CloudflareRegressionOptions {
    * replay needs them in its own, so the test says so at its top.
    */
   readonly calleeBindings?: readonly string[];
+  /**
+   * The vars and secrets the scenario gives a value, by name: the check put them in its isolate, and
+   * the replay needs them in its own, so the test says so at its top. Names only: the scenario has
+   * the values.
+   */
+  readonly envBindings?: readonly string[];
   /** Qualified binding names that are aliases of the caller's bindings, passed to the platform. */
   readonly aliases?: Readonly<Record<string, string>>;
   readonly expect?: "holds" | "violates";
@@ -139,8 +145,17 @@ function cloudflareTestParts(
           `// Needs the callees' bindings in this test's isolate under their qualified names: ${(options.calleeBindings ?? []).join(", ")}.`,
           "// Declare them in the wrangler config, or run this test under the config eutaxy check --keep leaves in .eutaxy/.",
         ];
+  const envNote =
+    (options.envBindings ?? []).length === 0
+      ? []
+      : [
+          `// Needs the scenario's vars and secrets in this test's isolate: ${(options.envBindings ?? []).join(", ")}.`,
+          "// Give them to the Cloudflare plugin as miniflare: { bindings: { … } } with the values the scenario's setup has,",
+          "// or run this test under the config eutaxy check --keep leaves in .eutaxy/.",
+        ];
   const imports = [
     ...note,
+    ...envNote,
     'import { createCloudflarePlatform } from "eutaxy/cloudflare";',
     'import { env } from "cloudflare:workers";',
     ...(options.durableObjects ? ['import * as cloudflareTest from "cloudflare:test";'] : []),

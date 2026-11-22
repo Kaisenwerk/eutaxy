@@ -704,6 +704,62 @@ export function callee(
   };
 }
 
+/**
+ * A var or a secret given its value by the scenario: the Worker's by its
+ * binding name, a callee's by its qualified one (`<worker name>/<binding>`).
+ * A Worker reads both the same way, off `env`; `secret` says the value is
+ * one, so the platform's own messages do not print it. `eutaxy check` puts
+ * the value in the isolate's env (over a var of that name the wrangler
+ * config gives); under Vitest the Cloudflare plugin's `miniflare.bindings`
+ * does, and the platform checks at the start of every run that the env
+ * holds it, since a Worker that reads `undefined` for a secret it requires
+ * fails in ways that say nothing of why. A name that is a binding of
+ * another kind, or qualified by a Worker that is no callee, is refused.
+ * The values are a test's, never one that works anywhere real: a trace
+ * records what the Worker does, so a secret it sends in a request's header
+ * is in the trace and the JSON report, and the scenario file and the files
+ * `--keep` leaves hold it as written.
+ */
+export interface EnvSetup extends PlatformData {
+  readonly kind: "env";
+  readonly binding: string;
+  readonly value: JsonValue;
+  readonly secret: boolean;
+}
+
+/** Give a var its value: the Worker's (`"REGION"`), or a callee's (`"orders/REGION"`). See `EnvSetup`. */
+export function envVar(binding: string, value: JsonValue): EnvSetup {
+  return { kind: "env", binding, value, secret: false };
+}
+
+/** Give a secret its value: the Worker's (`"API_KEY"`), or a callee's (`"orders/API_KEY"`). See `EnvSetup`. */
+export function secret(binding: string, value: string): EnvSetup {
+  return { kind: "env", binding, value, secret: true };
+}
+
+/** A var or a secret has a name, one value, and a secret's is a string, as the runtime gives it. */
+function validateEnvSetups(setup: ScenarioSpec["setup"]): string[] {
+  const errors: string[] = [];
+  const seen = new Set<string>();
+  for (const step of setup) {
+    if (step.kind !== "env") continue;
+    const what = step["secret"] === true ? "secret" : "envVar";
+    const binding = String(step["binding"] ?? "");
+    if (binding === "") {
+      errors.push(`${what}() needs a binding name`);
+      continue;
+    }
+    if (step["secret"] === true && typeof step["value"] !== "string")
+      errors.push(`secret(${JSON.stringify(binding)}) needs a string: a secret is text`);
+    if (step["value"] === undefined)
+      errors.push(`${what}(${JSON.stringify(binding)}) needs a value`);
+    if (seen.has(binding))
+      errors.push(`${JSON.stringify(binding)} is given a value twice (envVar() or secret())`);
+    seen.add(binding);
+  }
+  return errors;
+}
+
 /** A callee and a script for one binding would contradict each other; a callee needs both files named. */
 function validateCalleeSetups(setup: ScenarioSpec["setup"]): string[] {
   const errors: string[] = [];
@@ -832,6 +888,7 @@ export interface CloudflareScenarioInput {
       };
   readonly setup?: readonly (
     | CalleeSetup
+    | EnvSetup
     | D1Setup
     | DurableObjectSetup
     | R2Setup
@@ -1222,6 +1279,7 @@ export function defineScenario(input: CloudflareScenarioInput): ScenarioSpec {
     ...validateScenario(spec),
     ...validateDurableObjectSetups(spec.setup),
     ...validateCalleeSetups(spec.setup),
+    ...validateEnvSetups(spec.setup),
     ...validateScriptedObjectSetups(spec.setup, spec.invariants),
     ...(drive.kind === "http" ? validateHttpDrive(drive) : []),
     ...(drive.kind === "rpc" ? validateRpcDrive(drive) : []),

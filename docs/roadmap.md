@@ -257,10 +257,6 @@ a measurement that asks for them):
   kernel), when a target checks proofs its own repository did not write;
   today a proof file is trusted as the spec file beside it is.
 - A GitHub Action over the JSON schema.
-- A setup step that gives a Worker or a callee a var or a secret by its
-  (qualified) binding name: the command carries a callee's `vars` into
-  the isolate but not its secrets, and a caller's come from the process
-  environment, outside the scenario.
 - The documentation site at eutaxy.dev (`site/`, VitePress, deployed to
   GitHub Pages by the `pages` workflow) is kept current with every change,
   outside the phases because it changes no behaviour; `docs/design.md` and
@@ -354,7 +350,9 @@ or depend on the machine, in this order:
   included: to read why a callee refused a call, an adopter had to run the
   generated test by hand.
 - **A var or a secret from the scenario**, for the Worker or a callee, by
-  its (qualified) binding name.
+  its (qualified) binding name (`envVar()`, `secret()`): the command
+  carried a callee's `vars` into the isolate but not its secrets, which no
+  wrangler config holds, so a callee that requires one did not start.
 - **No TypeScript for a project that writes no specs.**
 - **An object that resets itself and is called again is reported**, where
   the call's takeover adopted it silently.

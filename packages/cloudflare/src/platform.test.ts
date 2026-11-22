@@ -7,7 +7,7 @@ import type { AtLeastOnce, EffectLog, ScenarioSpec, Schedule } from "@eutaxy/cor
 import { explore, Run, replayChooser, restrictSpec, runOnce } from "@eutaxy/engine";
 import { describe, expect, test } from "vitest";
 import { createCloudflarePlatform } from "./platform.ts";
-import { atLeastOncePerMessage, http, queue } from "./scenario.ts";
+import { atLeastOncePerMessage, envVar, http, queue, secret } from "./scenario.ts";
 import type { WorkerHandler } from "./worker.ts";
 
 const acked: AtLeastOnce = {
@@ -795,5 +795,86 @@ describe("caller timing on the http drive", () => {
       },
     ]);
     expect(ops(log)).toEqual(["req-1#1 call response", "req-1#1 result response"]);
+  });
+});
+
+describe("a var or a secret the scenario gives a value", () => {
+  const noop: Handler = async () => {};
+  /** A platform whose scenario has one callee, the Worker named `orders`, behind the binding ORDERS. */
+  const withOrders = (env: object, aliases: Record<string, string> = {}) =>
+    createCloudflarePlatform({
+      env,
+      handler: { queue: noop },
+      schemas: {},
+      callees: { ORDERS: { name: "orders", exports: {} } },
+      aliases,
+    });
+  const refusal = (reset: Promise<void>): Promise<string> =>
+    reset.then(
+      () => "started",
+      (err: unknown) => String(err),
+    );
+
+  test("a run starts when the Worker's env holds each with that value, a callee's under its qualified name", async () => {
+    const s = spec({
+      setup: [
+        envVar("REGION", "eu"),
+        secret("orders/API_KEY", "test-key"),
+        envVar("LIMITS", { n: 1 }),
+      ],
+    });
+    const env = { REGION: "eu", "orders/API_KEY": "test-key", LIMITS: { n: 1 } };
+    await expect(withOrders(env).reset(s)).resolves.toBeUndefined();
+  });
+
+  test("a var that is missing or holds another value stops the run, saying where to set it", async () => {
+    const s = spec({ setup: [envVar("REGION", "eu")] });
+    await expect(platformFor(noop, {}).reset(s)).rejects.toThrow(
+      'the scenario\'s envVar("REGION") is not in the Worker\'s env: eutaxy check puts it there when it can import the scenario in Node; under Vitest give the Cloudflare plugin miniflare: { bindings: { "REGION": "eu" } }',
+    );
+    await expect(platformFor(noop, { REGION: "us" }).reset(s)).rejects.toThrow(
+      "the scenario's envVar(\"REGION\") is not in the Worker's env with that value",
+    );
+  });
+
+  test("a missing secret is named and its value is not printed", async () => {
+    const s = spec({ setup: [secret("orders/API_KEY", "test-key")] });
+    const failure = await refusal(withOrders({}).reset(s));
+    expect(failure).toContain(
+      "the scenario's secret(\"orders/API_KEY\") is not in the Worker's env",
+    );
+    expect(failure).toContain('{ bindings: { "orders/API_KEY": <the secret> } }');
+    expect(failure).not.toContain("test-key");
+  });
+
+  test("a name qualified by a Worker that is no callee of the scenario is refused, whatever the env holds", async () => {
+    const s = spec({ setup: [secret("Orders/API_KEY", "test-key")] });
+    expect(await refusal(withOrders({ "Orders/API_KEY": "test-key" }).reset(s))).toContain(
+      'the scenario\'s secret("Orders/API_KEY") names a Worker "Orders" that is not a callee of the scenario (its callees: orders)',
+    );
+    expect(
+      await refusal(platformFor(noop, { "x/Y": "v" }).reset(spec({ setup: [envVar("x/Y", "v")] }))),
+    ).toContain('names a Worker "x" that is not a callee of the scenario, which has none');
+  });
+
+  test("a name that is a binding of another kind, or another name of one, is refused", async () => {
+    // What a D1 database or a service binding is in the env: an object with methods, not a value.
+    class Database {
+      prepare(): void {}
+    }
+    const s = spec({ setup: [envVar("DB", "a string")] });
+    expect(await refusal(platformFor(noop, { DB: new Database() }).reset(s))).toContain(
+      "the scenario's envVar(\"DB\") takes the name of a binding: the Worker's env holds one of another kind under DB",
+    );
+    const aliased = spec({ setup: [secret("orders/DB", "test-key")] });
+    expect(
+      await refusal(
+        withOrders({ DB: new Database(), "orders/DB": "test-key" }, { "orders/DB": "DB" }).reset(
+          aliased,
+        ),
+      ),
+    ).toContain(
+      'the scenario\'s secret("orders/DB") takes the name of a binding: orders/DB is another name of DB',
+    );
   });
 });

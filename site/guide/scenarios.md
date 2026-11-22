@@ -178,11 +178,37 @@ Setup steps run before every run, so each run starts from the same state.
 | `scriptedObject(binding, { methods, fetch })`           | Scripts a Durable Object namespace: every object of it answers its methods and `fetch()` from the script; none runs |
 | `service(binding, { methods, fetch })`                  | Scripts the Worker behind a service binding: each method's reply, the replies to `fetch()`; never calls it |
 | `callee(binding, { entry, config, entrypoint? })` | Runs the Worker behind a service binding for real, from its module and wrangler config; its bindings are set up under `<name>/<binding>` |
+| `envVar(binding, value)`, `secret(binding, value)` | Gives a var or a secret its value for the check: the Worker's by its binding name, a callee's by `<name>/<binding>`; over a var the wrangler config gives |
 
 A Durable Object namespace, R2 bucket, Workflow binding or service binding
 the Worker uses without its setup step makes the run `UNSUPPORTED`: state
 left over from one run would leak into the next, and a real peer would be
 called.
+
+A secret is set with `wrangler secret put`, so no wrangler config holds it,
+and a Worker that requires one reads `undefined` in a check unless the
+scenario gives it:
+
+```ts
+setup: [
+  callee("ORDERS", { entry: "./orders/worker.ts", config: "./orders/wrangler.jsonc" }),
+  secret("orders/API_KEY", "test-key"), // the callee's, under its qualified name
+  envVar("REGION", "eu"), // the Worker's own; replaces the wrangler config's value
+],
+```
+
+`eutaxy check` puts the values in the Workers' `env`. In a Vitest project
+of your own, and for the regression test the command writes, give them to
+the Cloudflare plugin as
+`miniflare: { bindings: { "orders/API_KEY": "test-key", REGION: "eu" } }`;
+a run does not start while the `env` lacks one, and says which. A name that
+is a binding of another kind, or qualified by a Worker that is not a callee
+of the scenario, is refused.
+
+The values are a test's: use none that works anywhere real. `secret` keeps
+the value out of Eutaxy's own messages, not out of the trace: a trace
+records what the Worker does, so a secret the Worker sends in a request's
+header is in the trace and in the JSON report.
 
 A service binding's script names each method's reply, a value returned or
 an error thrown to the caller, and the replies to `fetch()` through the

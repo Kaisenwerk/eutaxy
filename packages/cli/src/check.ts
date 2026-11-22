@@ -23,6 +23,7 @@ import {
   type CalleeConfig,
   calleeSteps,
   describeCallee,
+  envSteps,
   isolateBindings,
   isolateOf,
   type LoadedScenario,
@@ -342,6 +343,8 @@ export async function runCheck(o: CheckOptions): Promise<number> {
   const isolate = isolateOf(callees, callees.length > 0 ? callerResources : undefined);
   // The caller's service bindings, replaced in the isolate: the platform answers each one.
   const callerServices = (callerResources?.services ?? []).map((s) => s.binding).filter((b) => b);
+  // The vars and secrets the scenario gives a value: in the isolate's env, the Worker's and the callees'.
+  const env = envSteps(loaded?.setup ?? []);
   for (const reason of isolate.notAdded) o.stderr(`not added to the test's isolate: ${reason}\n`);
   mkdirSync(workDir, { recursive: true });
   try {
@@ -415,7 +418,7 @@ export async function runCheck(o: CheckOptions): Promise<number> {
           reportPath,
           {
             main: mainPath,
-            miniflare: miniflareOptionsSource(callees, isolate, callerServices),
+            miniflare: miniflareOptionsSource(callees, isolate, callerServices, env),
           },
           o.console === true,
         ),
@@ -430,8 +433,8 @@ export async function runCheck(o: CheckOptions): Promise<number> {
           loaded
             ? {
                 main: resolve(dir, loaded.worker.entry),
-                ...(callerServices.length > 0
-                  ? { miniflare: miniflareOptionsSource([], undefined, callerServices) }
+                ...(callerServices.length > 0 || Object.keys(env).length > 0
+                  ? { miniflare: miniflareOptionsSource([], undefined, callerServices, env) }
                   : {}),
               }
             : undefined,
@@ -535,6 +538,7 @@ export async function runCheck(o: CheckOptions): Promise<number> {
               calleeBindings: isolateBindings(callees).filter((b) => !(b in isolate.aliases)),
               ...(transport.aliases === undefined ? {} : { aliases: transport.aliases }),
             }),
+        ...(Object.keys(env).length === 0 ? {} : { envBindings: Object.keys(env) }),
         ...(o.budgetMs === undefined ? {} : { budgetMs: o.budgetMs }),
         ...(needsObjectHelpers(transport.setup) ? { durableObjects: true } : {}),
         ...(transport.setup.some((s) => s.kind === "workflow") ||

@@ -11,6 +11,8 @@ import {
   type DeliveryResult,
   type EventRef,
   invocationOf,
+  type JsonValue,
+  jsonEqual,
   type Platform,
   type RunHooks,
   type ScenarioSpec,
@@ -31,6 +33,7 @@ import {
 import type { CalleeModule } from "./callees.ts";
 import {
   type DurableObjectTestHelpers,
+  isPlainData,
   scriptsOutsideRuns,
   simulateConstruction,
   simulatingConstruction,
@@ -297,6 +300,35 @@ export function createCloudflarePlatform(options: CloudflarePlatformOptions): Pl
             s["binding"] === canonical(name),
         ),
       );
+      // A var or a secret the scenario gives a value is in the isolate's env with that value, or the
+      // run does not start: a Worker reading undefined for it fails in ways that say nothing of why.
+      for (const step of spec.setup) {
+        if (step.kind !== "env") continue;
+        const name = String(step["binding"]);
+        const isSecret = step["secret"] === true;
+        const what = `the scenario's ${isSecret ? "secret" : "envVar"}(${JSON.stringify(name)})`;
+        // A qualified name is a callee's: one that names no callee would reach no Worker at all.
+        const worker = name.includes("/") ? name.slice(0, name.indexOf("/")) : undefined;
+        const known = Object.values(options.callees ?? {}).map((c) => c.name);
+        if (worker !== undefined && !known.includes(worker))
+          throw new Error(
+            `${what} names a Worker ${JSON.stringify(worker)} that is not a callee of the scenario${known.length > 0 ? ` (its callees: ${known.join(", ")})` : ", which has none"}`,
+          );
+        // Another name of a binding, or a binding of another kind: what a Worker reads there is
+        // that binding, whatever value the step gives.
+        if (name in aliases)
+          throw new Error(
+            `${what} takes the name of a binding: ${name} is another name of ${canonical(name)}`,
+          );
+        if (env[name] !== undefined && !isPlainData(env[name]))
+          throw new Error(
+            `${what} takes the name of a binding: the Worker's env holds one of another kind under ${name}`,
+          );
+        if (jsonEqual(env[name] as JsonValue | undefined, step["value"] as JsonValue)) continue;
+        throw new Error(
+          `${what} is not in the Worker's env${name in env ? " with that value" : ""}: eutaxy check puts it there when it can import the scenario in Node; under Vitest give the Cloudflare plugin miniflare: { bindings: { ${JSON.stringify(name)}: ${isSecret ? "<the secret>" : JSON.stringify(step["value"])} } }`,
+        );
+      }
       for (const [binding, setup] of ownedSetups(spec.setup, bindings)) {
         // One resource is set up once, under the name it is known by.
         if (setup.binding in aliases)
