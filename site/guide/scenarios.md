@@ -298,6 +298,17 @@ two invocations read the same row, both decide, both write.
 bounds: { maxConcurrentInvocations: 2, maxFaultsPerRun: 0 },
 ```
 
+One invocation can also have two calls in flight by itself: a handler that
+awaits two calls together (`Promise.all` over two Durable Object stubs, or
+a call started and awaited later). Nothing needs setting for that. The
+first run that shows such calls makes the check start over with each
+asynchronous effect a turn, so both orders of the two calls are run and a
+replay gives the same order, with `maxConcurrentInvocations: 1` too. The
+verdict's assumptions say when that happened. On a platform that runs one
+invocation at a time (AWS today) the calls land in real time's order, and
+a run that does not repeat is reported as
+[`not_replayable`](/reference/unsupported), naming the two calls.
+
 ## Core specs
 
 `specs` names the modules of the Worker's pure core, relative to the

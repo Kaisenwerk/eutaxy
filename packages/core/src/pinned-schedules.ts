@@ -45,6 +45,12 @@ export interface PinnedSchedule {
    * and the schedule written from it keeps them.
    */
   readonly turns?: readonly number[];
+  /**
+   * Present when the run the schedule was written from made every
+   * asynchronous effect a turn although one invocation ran at a time (see
+   * `Schedule.effectsAsTurns`): its runs do the same from their start.
+   */
+  readonly effectsAsTurns?: true;
 }
 
 /** The seeds a pinned schedule runs under. */
@@ -84,6 +90,8 @@ export function validatePinnedSchedules(pinned: readonly PinnedSchedule[]): read
     for (const t of p.turns ?? [])
       if (!(Number.isInteger(t) && t >= 0))
         errors.push(`${label}.turns: ${String(t)} is not a turn (an index from 0)`);
+    if (p.effectsAsTurns !== undefined && p.effectsAsTurns !== true)
+      errors.push(`${label}.effectsAsTurns is true or left out, got ${String(p.effectsAsTurns)}`);
   });
   return errors;
 }

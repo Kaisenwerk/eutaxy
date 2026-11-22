@@ -33,8 +33,8 @@ import {
 } from "@eutaxy/core";
 import { type PinnedChooser, pinnedChooser, seededChooser } from "./chooser.ts";
 import { ExhaustiveDriver } from "./exhaustive.ts";
-import { replayRun, runOnce } from "./once.ts";
-import { concurrencySupported, Run } from "./run.ts";
+import { cannotTakeTurns, mustTakeTurns, replayRun, runOnce, takesTurns } from "./once.ts";
+import { concurrencySupported, type ParallelCalls, Run } from "./run.ts";
 import { shrink } from "./shrink.ts";
 
 /** How `explore` searches: the seed, a cap on runs, the time budget, the share of runs with faults, and exhaustive mode. */
@@ -106,11 +106,19 @@ const engineAssumptions: readonly string[] = [
   "outbound fetch never reaches the network: requests are answered from the scenario's declared externals, an external's dedupeBy guarantee is honoured by replaying the first response per key, and an undeclared host makes the run UNSUPPORTED",
 ];
 
-/** What a verdict rests on about concurrency, for these bounds. */
-function concurrencyAssumption(bounds: Bounds): string {
-  if (bounds.maxConcurrentInvocations === 1)
+/**
+ * What a verdict rests on about concurrency, for these bounds. `turns`: one
+ * invocation at a time, with every effect a turn since an invocation made
+ * calls in parallel.
+ */
+function concurrencyAssumption(bounds: Bounds, turns: boolean): string {
+  if (bounds.maxConcurrentInvocations === 1 && !turns)
     return "one invocation at a time (maxConcurrentInvocations = 1)";
-  return `up to ${bounds.maxConcurrentInvocations} invocations in flight, interleaved only at asynchronous effects (proxied bindings, fetch): code between two such effects runs without interruption (except continuations of a promise it settles for another invocation, which run then and are still attributed to their own invocation), Web Crypto calls are waited for like I/O, other non-effect awaits (body reads included) settle within one turn of the event loop, synchronous effects are not interleaving points, an effect made by code another effect hosts (an object calling out during a call) is a turn of its own unless that code cannot be interrupted (an object inside blockConcurrencyWhile), when it runs within the hosting effect's turn, the next turn is a seeded pick among parked invocations, starting a new event while a slot is free, and firing the earliest timer already due (at or before the virtual now, which effects advance), timers firing in due order among themselves, and a timer not yet due fires (virtual time passing to it) only when nothing else can move`;
+  const inFlight =
+    bounds.maxConcurrentInvocations === 1
+      ? "one invocation at a time (maxConcurrentInvocations = 1), an object's work after its answer running to rest before the next event starts, the calls an invocation makes in parallel (two awaited together)"
+      : `up to ${bounds.maxConcurrentInvocations} invocations in flight,`;
+  return `${inFlight} interleaved only at asynchronous effects (proxied bindings, fetch): code between two such effects runs without interruption (except continuations of a promise it settles for another invocation, which run then and are still attributed to their own invocation), Web Crypto calls are waited for like I/O, other non-effect awaits (body reads included) settle within one turn of the event loop, synchronous effects are not interleaving points, an effect made by code another effect hosts (an object calling out during a call) is a turn of its own unless that code cannot be interrupted (an object inside blockConcurrencyWhile), when it runs within the hosting effect's turn, the next turn is a seeded pick among parked invocations, starting a new event while a slot is free, and firing the earliest timer already due (at or before the virtual now, which effects advance), timers firing in due order among themselves, and a timer not yet due fires (virtual time passing to it) only when nothing else can move`;
 }
 
 /** Where two JSON values first differ, as a path into them (`.tables.audit[0].at`), with the two values there. */
@@ -218,9 +226,14 @@ async function pinnedRun(
   platform: Platform,
   pinned: PinnedSchedule,
   seed: number,
+  turns: boolean,
 ): Promise<{ run: Run; chooser: PinnedChooser; log: EffectLog }> {
   const chooser = pinnedChooser(pinned, seed);
-  const run = new Run({ bounds: spec.bounds, chooser });
+  const run = new Run({
+    bounds: spec.bounds,
+    chooser,
+    turns: turns || pinned.effectsAsTurns === true,
+  });
   const log = await runOnce(spec, platform, run);
   return { run, chooser, log };
 }
@@ -237,7 +250,12 @@ export async function runPinned(
 ): Promise<PinnedRun> {
   const errors = validatePinnedSchedules([pinned]);
   if (errors.length > 0) throw new Error(errors.join("; "));
-  const { run, chooser, log } = await pinnedRun(spec, platform, pinned, seed);
+  if (pinned.effectsAsTurns === true)
+    mustTakeTurns(platform, `pinned schedule ${JSON.stringify(pinned.name)}`);
+  let { run, chooser, log } = await pinnedRun(spec, platform, pinned, seed, false);
+  // An invocation's calls in parallel: run again with every effect a turn, as `explore` runs it.
+  if (run.parallelCalls?.turnsWouldOrder === true && takesTurns(platform))
+    ({ run, chooser, log } = await pinnedRun(spec, platform, pinned, seed, true));
   return {
     log,
     schedule: run.schedule,
@@ -265,6 +283,40 @@ export async function explore(
   platform: Platform,
   options: ExploreOptions,
 ): Promise<ScenarioVerdict> {
+  const start = (options.now ?? (() => Date.now()))();
+  const first = await exploreAs(scenario, platform, options, { turns: false, start, runs: 0 });
+  if (!("parallelCalls" in first)) return first;
+  // An invocation made calls in parallel: the scenario again, from its start, with every effect a
+  // turn, so the order of such calls is the schedule's. The runs made so far count, and so does
+  // their time.
+  const again = await exploreAs(scenario, platform, options, {
+    turns: true,
+    start,
+    runs: first.runs,
+  });
+  if ("parallelCalls" in again)
+    throw new Error("a run whose effects are turns reported parallel calls");
+  return again;
+}
+
+/** A run or a replay of an exploration that leaves an invocation's parallel calls to real time showed some: explore again with turns. */
+interface ParallelCallsSeen {
+  readonly parallelCalls: string;
+  /** Runs made before it was seen, that one included. */
+  readonly runs: number;
+}
+
+/**
+ * `explore`, with every effect a turn whatever the bounds (`mode.turns`) or
+ * not; `mode.start` and `mode.runs` are when the exploration began and the
+ * runs it has made already.
+ */
+async function exploreAs(
+  scenario: ScenarioSpec,
+  platform: Platform,
+  options: ExploreOptions,
+  mode: { readonly turns: boolean; readonly start: number; readonly runs: number },
+): Promise<ScenarioVerdict | ParallelCallsSeen> {
   const budgetMs = options.budgetMs;
   if (budgetMs !== undefined && !(Number.isFinite(budgetMs) && budgetMs > 0))
     throw new Error(`budgetMs must be a positive finite number, got ${budgetMs}`);
@@ -283,13 +335,40 @@ export async function explore(
     ...engineAssumptions.slice(0, 1),
     faultAssumption(spec.bounds),
     ...engineAssumptions.slice(1),
-    concurrencyAssumption(spec.bounds),
+    concurrencyAssumption(spec.bounds, mode.turns),
     ...explorationAssumption(options),
     ...(spec.pinned === undefined ? [] : [pinnedAssumption(spec.pinned)]),
     ...platform.assumptions,
   ];
-  const start = now();
-  const reached = { runs: 0, effectPoints: 0, faultsInjected: 0 };
+  const start = mode.start;
+  const reached = { runs: mode.runs, effectPoints: 0, faultsInjected: 0 };
+  /**
+   * Whether `run` showed an invocation's calls in parallel in an exploration that leaves them to
+   * real time, on a platform where their effects can be turns: the exploration starts over.
+   */
+  const startsOver = (run: Run): boolean =>
+    !mode.turns &&
+    takesTurns(platform) &&
+    // A replay that showed them was already made again with turns (`replayRun`).
+    (run.parallelCalls?.turnsWouldOrder === true || run.schedule.effectsAsTurns === true);
+  const over = (run: Run): ParallelCallsSeen => ({
+    parallelCalls: run.parallelCalls?.calls ?? "a replay showed calls in parallel",
+    runs: reached.runs,
+  });
+  /** The first parallel calls a run showed that nothing orders: their effects cannot be turns. */
+  let leftToRealTime: ParallelCalls | undefined;
+  /**
+   * What a run that did not replay may owe to such calls, added to its reason; empty when none
+   * were seen. It says they can make two runs differ, not that they did.
+   */
+  const unorderedCalls = (): string =>
+    leftToRealTime === undefined
+      ? ""
+      : `; the run made calls in parallel that nothing orders here, and which of them lands first is real time's to say: ${leftToRealTime.calls} (${
+          leftToRealTime.turnsWouldOrder
+            ? `the ${platform.name} platform delivers one event at a time`
+            : "they were made inside an effect that runs as one turn, as an object's are inside blockConcurrencyWhile"
+        })`;
   const done = (): BoundsReached => ({ ...reached, elapsedMs: now() - start });
   const base = { scenario: spec.name, seed: options.seed, assumptions };
   const exhaustive = options.exhaustive
@@ -323,6 +402,12 @@ export async function explore(
       "unsupported_bounds",
       `maxConcurrentInvocations above 1 is not supported on the ${platform.name} platform yet`,
     );
+  const marked = (spec.pinned ?? []).find((p) => p.effectsAsTurns === true);
+  if (marked !== undefined && !takesTurns(platform))
+    return unsupported(
+      "unsupported_bounds",
+      `pinned schedule ${JSON.stringify(marked.name)} was recorded with every effect a turn (effectsAsTurns), which ${cannotTakeTurns(platform)}`,
+    );
 
   /**
    * A run met something outside the model: the verdict carries its schedule and, when the run
@@ -334,7 +419,7 @@ export async function explore(
     const reason = run.unsupportedReasons.join("; ");
     const verdict = unsupported("unsupported_api", reason, run.schedule);
     const replay = run.asPinned("the run that reached UNSUPPORTED");
-    const again = await pinnedRun(spec, platform, replay, run.schedule.seed);
+    const again = await pinnedRun(spec, platform, replay, run.schedule.seed, mode.turns);
     reached.runs++;
     const reproduces =
       again.chooser.unplaced().length === 0 && again.run.unsupportedReasons.join("; ") === reason;
@@ -352,11 +437,13 @@ export async function explore(
     log: EffectLog,
     violation: Violation,
     pinned?: { readonly name: string; readonly unplaced: readonly string[] },
-  ): Promise<ScenarioVerdict> => {
+  ): Promise<ScenarioVerdict | ParallelCallsSeen> => {
     const schedule = run.schedule;
     const replayedRun = await replayRun(spec, platform, schedule);
     const replayed = replayedRun.log;
     reached.runs++;
+    if (startsOver(replayedRun)) return over(replayedRun);
+    leftToRealTime ??= replayedRun.parallelCalls;
     // A replay that reached something unsupported says so itself; one that differs says where.
     if (replayedRun.unsupportedReasons.length > 0)
       return unsupported("unsupported_api", replayedRun.unsupportedReasons.join("; "), schedule);
@@ -364,7 +451,7 @@ export async function explore(
     if (differed)
       return unsupported(
         "not_replayable",
-        `the violating run of seed ${schedule.seed} did not reproduce on replay: ${differed}`,
+        `the violating run of seed ${schedule.seed} did not reproduce on replay: ${differed}${unorderedCalls()}`,
         schedule,
       );
     if (pinned !== undefined)
@@ -387,6 +474,9 @@ export async function explore(
       now,
     });
     reached.runs += shrunk.runs;
+    // A smaller run showed an invocation's parallel calls where the whole one did not.
+    if (!mode.turns && shrunk.schedule.effectsAsTurns === true)
+      return { parallelCalls: "a replay showed calls in parallel", runs: reached.runs };
     return {
       ...base,
       kind: "VIOLATED",
@@ -417,8 +507,10 @@ export async function explore(
   // many: the fault count is exploration's.
   for (const pinned of spec.pinned ?? []) {
     for (const seed of pinnedSeeds(pinned)) {
-      const { run, chooser, log } = await pinnedRun(spec, platform, pinned, seed);
+      const { run, chooser, log } = await pinnedRun(spec, platform, pinned, seed, mode.turns);
       reached.runs++;
+      if (startsOver(run)) return over(run);
+      leftToRealTime ??= run.parallelCalls;
       reached.effectPoints += run.effectPoints;
       reached.faultsInjected += run.faultsInjected;
       if (run.unsupportedReasons.length > 0) return await unsupportedApi(run);
@@ -472,9 +564,12 @@ export async function explore(
             faultProbability,
             maxFaultsPerRun: spec.bounds.maxFaultsPerRun,
           }),
+      turns: mode.turns,
     });
     const log = await runOnce(spec, platform, run);
     reached.runs++;
+    if (startsOver(run)) return over(run);
+    leftToRealTime ??= run.parallelCalls;
     if (run.faultsInjected === 0) baseline = Math.max(baseline, run.eligiblePoints);
     longest = Math.max(longest, run.eligiblePoints);
     if (run.eligiblePoints > 0) anyEligible = true;
@@ -506,15 +601,23 @@ export async function explore(
   for (const witness of [...witnesses].reverse()) {
     const again = await replayRun(spec, platform, witness.schedule);
     reached.runs++;
+    if (startsOver(again)) return over(again);
+    leftToRealTime ??= again.parallelCalls;
     if (again.unsupportedReasons.length > 0)
       return unsupported("unsupported_api", again.unsupportedReasons.join("; "), witness.schedule);
     const differed = whatDiffered(witness.log, again.log);
     if (differed)
-      return unsupported(
-        "module_state_leak",
-        `run seed ${witness.schedule.seed} produced a different log when replayed after other runs: state is leaking between runs (module-level variables, or a binding Eutaxy does not reset); ${differed}`,
-        witness.schedule,
-      );
+      return leftToRealTime === undefined
+        ? unsupported(
+            "module_state_leak",
+            `run seed ${witness.schedule.seed} produced a different log when replayed after other runs: state is leaking between runs (module-level variables, or a binding Eutaxy does not reset); ${differed}`,
+            witness.schedule,
+          )
+        : unsupported(
+            "not_replayable",
+            `run seed ${witness.schedule.seed} produced a different log when replayed after other runs: either state is leaking between runs (module-level variables, or a binding Eutaxy does not reset) or two calls made in parallel landed in another order; ${differed}${unorderedCalls()}`,
+            witness.schedule,
+          );
   }
   return { ...base, kind: "BOUNDED", bounds: spec.bounds, reached: doneNow() };
 }

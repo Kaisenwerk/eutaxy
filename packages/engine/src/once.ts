@@ -15,7 +15,7 @@ import {
   type Schedule,
 } from "@eutaxy/core";
 import { replayChooser } from "./chooser.ts";
-import { Run, type StartedDelivery } from "./run.ts";
+import { concurrencySupported, Run, type StartedDelivery } from "./run.ts";
 
 /** Deliver events one at a time, each to completion; time passes until a delayed one is due. */
 async function deliverInOrder(spec: ScenarioSpec, platform: Platform, run: Run): Promise<void> {
@@ -74,7 +74,11 @@ async function deliverConcurrently(
     const next = pending.length > 0 ? earliestEvent(pending) : -1;
     const eventAt = pending[next]?.at ?? 0;
     const due = next >= 0 && eventAt <= run.now();
-    const canStart = active.length < spec.bounds.maxConcurrentInvocations && due;
+    // One invocation at a time (a run whose effects are turns for an invocation's parallel calls):
+    // an object's work after its answer runs to rest before the next event starts, as
+    // `deliverInOrder` has it.
+    const resting = spec.bounds.maxConcurrentInvocations === 1 && run.hasAfterWork();
+    const canStart = active.length < spec.bounds.maxConcurrentInvocations && due && !resting;
     // While only objects' work after their answers is alive, only its timers are ready work (see below).
     const afterWorkOnly = active.length === 0 && run.hasAfterWork();
     // What the loop does when nothing is parked: time passes to the next delayed event when nothing
@@ -157,13 +161,48 @@ export async function runOnce(
   return run.log;
 }
 
-/** Re-run a recorded schedule exactly and return the whole run (log and support status). */
+/**
+ * Whether a run on this platform can make every effect a turn: the host
+ * carries async context and the platform delivers with several invocations
+ * in flight. One invocation at a time needs the same once its calls run in
+ * parallel (`Run.parallelCalls`).
+ */
+export function takesTurns(platform: Platform): boolean {
+  return concurrencySupported && platform.concurrent === true;
+}
+
+/** Refuse a schedule recorded with every effect a turn on a platform or a host that cannot run it so. */
+export function mustTakeTurns(platform: Platform, what: string): void {
+  if (takesTurns(platform)) return;
+  throw new Error(
+    `${what} was recorded with every effect a turn (effectsAsTurns), which ${cannotTakeTurns(platform)}`,
+  );
+}
+
+/** Why effects cannot be turns here, for a reason; call only where `takesTurns` is false. */
+export function cannotTakeTurns(platform: Platform): string {
+  return concurrencySupported
+    ? `the ${platform.name} platform cannot do: it delivers one event at a time`
+    : "needs AsyncLocalStorage (Node, or workerd with nodejs_compat or nodejs_als)";
+}
+
+/**
+ * Re-run a recorded schedule exactly and return the whole run (log and
+ * support status): with every effect a turn where the schedule says its run
+ * had them so (`Schedule.effectsAsTurns`). A schedule that does not say so,
+ * replayed in a run that shows an invocation's calls in parallel, is run
+ * again that way where the platform can: `explore` would have recorded it so.
+ */
 export async function replayRun(
   spec: ScenarioSpec,
   platform: Platform,
   schedule: Schedule,
 ): Promise<Run> {
-  const run = new Run({ bounds: spec.bounds, chooser: replayChooser(schedule) });
+  const turns = schedule.effectsAsTurns === true;
+  if (turns) mustTakeTurns(platform, "the schedule");
+  const run = new Run({ bounds: spec.bounds, chooser: replayChooser(schedule), turns });
   await runOnce(spec, platform, run);
+  if (!turns && run.parallelCalls?.turnsWouldOrder === true && takesTurns(platform))
+    return replayRun(spec, platform, { ...schedule, effectsAsTurns: true });
   return run;
 }

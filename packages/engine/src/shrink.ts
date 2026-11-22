@@ -74,7 +74,12 @@ export async function shrink(
         sameViolation(v, violation),
       );
       if (found) {
-        state = candidate;
+        // A replay that showed an invocation's parallel calls was made again with every effect a
+        // turn (`replayRun`): the trace kept is that run's, so the schedule says so too.
+        state =
+          run.schedule.effectsAsTurns === true && candidate.schedule.effectsAsTurns !== true
+            ? { ...candidate, schedule: { ...candidate.schedule, effectsAsTurns: true } }
+            : candidate;
         best = { trace: log, violation: found };
         improved = true;
         break;

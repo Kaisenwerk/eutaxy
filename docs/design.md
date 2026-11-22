@@ -1474,6 +1474,47 @@ it and the candidate is dropped; such a violation can keep more events than
 it needs. The verdict reports the kept events, the shrunk schedule and the
 replayed shrunk trace.
 
+**Calls in parallel inside one invocation.** A handler that awaits two
+calls together (`Promise.all` over two object stubs, or a call started and
+awaited later) has two chains of effects in flight at once, and which call
+lands first is real time's to say: with one invocation at a time no effect
+is a turn, so two runs of one schedule may differ. Making every effect a
+turn always would settle the order, at one turn of the event loop per
+effect (about a millisecond in workerd) for every scenario, most of which
+make no such calls. So a run notes the first time an invocation makes an
+effect, without a turn, while another of its effects made in the same
+place (inside the same effect, or outside any) by the same attempt's code,
+also without a turn, is still being performed (`Run.parallelCalls`). In an
+exploration with one invocation at a time, where turns would order the two
+(they were made outside every effect, or by code an effect hosts that may
+be interrupted there), the exploration starts over with every asynchronous
+effect a turn, scheduled as above with one event started at a time and an
+object's work after its answer still run to rest before the next event;
+a replay that shows such calls starts it over too, the runs already made
+count, and so does their time. The verdict's concurrency assumption says
+the calls were interleaved. A schedule recorded that way carries
+`effectsAsTurns`, as does a pinned schedule written from such a run, and a
+replay follows the mark from its start: a shrunk schedule may no longer
+show the calls, and the two ways of running order timers differently. A
+schedule without the mark whose replay shows such calls is run again with
+turns; a marked one is refused where effects cannot be turns. Two cases
+stay real time's: a platform that is not `concurrent`, where no effect can
+be a turn, and calls made together inside an effect that runs as one turn
+(an object inside `blockConcurrencyWhile`, a platform's own effect), which
+no turn orders. A run that then does not replay is `not_replayable`, and
+its reason names the two calls as what may have differed beside leaking
+state: seeing such calls does not rule a leak out. A pair turns would order
+is noted in preference to one they would not, so the second kind does not
+keep the scenario from being run again with turns. A host without async
+context cannot tell two such calls from one made inside the other and
+names none. Not counted: a synchronous effect, which is never in flight;
+an attempt the engine gave up on, a strand with rules of its own (with
+every effect a turn its effects are late turns, as with several
+invocations in flight); and an object's work after its answer running
+beside the handler that called it within one delivery, which is the
+object's own invocation: that pair is still real time's with one
+invocation at a time.
+
 **Virtual clock and globals.** For the duration of a run the engine
 replaces `Date`, `Math.random`, `crypto.randomUUID`,
 `crypto.getRandomValues`, `performance.now` and the timer functions with

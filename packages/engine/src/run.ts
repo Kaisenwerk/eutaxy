@@ -84,6 +84,27 @@ export interface RunOptions {
    * chooser built by hand is unbounded unless wrapped.
    */
   readonly chooser: Chooser;
+  /**
+   * Every asynchronous effect is a turn even with one invocation at a time:
+   * for a scenario whose invocations make calls in parallel (see
+   * `Run.parallelCalls`), so their order is the chooser's and not real
+   * time's. Needs what a concurrent run needs of the host and the platform.
+   */
+  readonly turns?: boolean;
+}
+
+/** Two effects one invocation had in flight at once that the run did not order (`Run.parallelCalls`). */
+export interface ParallelCalls {
+  /** The two effects, for a reason: the invocation, what it made, and what of its was in flight. */
+  readonly calls: string;
+  /**
+   * Whether a run that makes every effect a turn would order them: they
+   * were made outside every effect, or by code an effect hosts where that
+   * code may be interrupted. Not so for effects made inside one that runs
+   * as a single turn (an object inside `blockConcurrencyWhile`, a
+   * platform's own effect).
+   */
+  readonly turnsWouldOrder: boolean;
 }
 
 class InvocationState implements Invocation {
@@ -283,8 +304,14 @@ export class Run implements RunHooks {
   /** Concurrent runs only: the scheduler of turns. */
   private readonly turns: Turns;
 
-  /** Whether several invocations may be in flight (`maxConcurrentInvocations` above 1). */
+  /**
+   * Whether asynchronous effects are turns: several invocations may be in
+   * flight (`maxConcurrentInvocations` above 1), or the run was asked to
+   * make them turns with one at a time (`RunOptions.turns`).
+   */
   readonly concurrent: boolean;
+  /** See `parallelCalls`. */
+  private parallel: ParallelCalls | undefined;
 
   private readonly options: RunOptions;
   /** The kinds a point may take under the bounds' fault sites (all it allows, without sites). */
@@ -302,7 +329,7 @@ export class Run implements RunHooks {
       () => this.hasAfterWork(),
       () => this.timersAllowed() !== null || this.idleBehindParked(),
     );
-    this.concurrent = options.bounds.maxConcurrentInvocations > 1;
+    this.concurrent = options.bounds.maxConcurrentInvocations > 1 || options.turns === true;
   }
 
   get log(): EffectLog {
@@ -317,6 +344,7 @@ export class Run implements RunHooks {
       seed,
       faults: [...this.faults],
       ...(recordsTurns ? { turns: [...this.turns.picks] } : {}),
+      ...(this.options.turns === true ? { effectsAsTurns: true as const } : {}),
     };
   }
 
@@ -347,6 +375,7 @@ export class Run implements RunHooks {
       faults,
       seeds: [schedule.seed],
       ...(schedule.turns === undefined ? {} : { turns: schedule.turns }),
+      ...(schedule.effectsAsTurns === true ? { effectsAsTurns: true as const } : {}),
     };
   }
 
@@ -381,6 +410,23 @@ export class Run implements RunHooks {
 
   get unsupportedReasons(): readonly string[] {
     return this.reasons;
+  }
+
+  /**
+   * The first time an invocation made an effect, without a turn, while
+   * another of its effects made in the same place, also without a turn, was
+   * still being performed (a handler awaiting two calls together), or the
+   * first such pair turns would order when there is one; undefined when
+   * none did. Which of two such calls lands first is real
+   * time's to say, so the run is one of several the same schedule allows.
+   * In a run whose effects are not turns, `explore` and the replays run the
+   * scenario again with every effect a turn (`RunOptions.turns`) where that
+   * would order them and the platform can. A host without async context
+   * cannot tell two such calls from one made inside the other, and reports
+   * none.
+   */
+  get parallelCalls(): ParallelCalls | undefined {
+    return this.parallel;
   }
 
   /** Replace the nondeterministic globals and `fetch` for this run. Call `uninstall` in a finally. */
@@ -1118,7 +1164,8 @@ export class Run implements RunHooks {
         const ended = ctx.frame ?? this.hostFrames.get(host);
         // Inside blockConcurrencyWhile nothing else enters the object and nothing it waits for gets
         // in, its poller's ticks included: the effect runs at once, as a call's would.
-        if (this.concurrent && (ended?.mayPark() ?? true)) {
+        const parks = this.concurrent && (ended?.mayPark() ?? true);
+        if (parks) {
           let released = false;
           this.turns.park(cont, own.target, () => {
             released = true;
@@ -1130,7 +1177,7 @@ export class Run implements RunHooks {
           while (!released && !cont.isCrashed()) await this.hostTick(host);
           if (!released) return hang();
         }
-        return this.performEffect(own, perform, summarize, options, cont, ended);
+        return this.performEffect(own, perform, summarize, options, cont, ended, undefined, parks);
       }
     }
     const inv = this.invocation(point.invocation);
@@ -1211,7 +1258,18 @@ export class Run implements RunHooks {
         },
       );
     }
-    return this.performEffect(point, perform, summarize, options, inv, enclosing);
+    // Parked above when the run's effects are turns and this one is inside no other.
+    const tookTurn = this.concurrent && !nested;
+    return this.performEffect(
+      point,
+      perform,
+      summarize,
+      options,
+      inv,
+      enclosing,
+      undefined,
+      tookTurn,
+    );
   }
 
   /**
@@ -1272,7 +1330,16 @@ export class Run implements RunHooks {
       return hang();
     }
     try {
-      return await this.performEffect(point, perform, summarize, options, inv, enclosing, host);
+      return await this.performEffect(
+        point,
+        perform,
+        summarize,
+        options,
+        inv,
+        enclosing,
+        host,
+        true,
+      );
     } finally {
       this.childEnds(host);
     }
@@ -1298,6 +1365,8 @@ export class Run implements RunHooks {
     enclosing: Frame | undefined,
     /** The hosting effect this one waited for a turn under, which waits on it while it waits. */
     host?: Frame,
+    /** Whether the effect waited for a turn: one that did not is ordered by nothing against another of its invocation's made in the same place. */
+    tookTurn = false,
   ): Promise<T> {
     // A crash hangs this effect; inside another effect's perform it ends that effect too (a host's
     // that has ended resets the object).
@@ -1325,8 +1394,24 @@ export class Run implements RunHooks {
     frame.onHostAbandoned = (h) => this.hostAbandoned(h);
     frame.parent = host;
     frame.attempt = this.attemptNow(enclosing, host);
+    frame.inside = enclosing;
     // A host's code, or a Worker's hosted from inside one: it runs in that object's context.
     frame.issuer = (hostScope?.getStore() ?? this.hostedWithin.get(made.invocation))?.host;
+    frame.tookTurn = tookTurn;
+    if (!tookTurn) {
+      const turnsWouldOrder =
+        !this.concurrent && (enclosing === undefined || (enclosing.hosts && enclosing.mayPark()));
+      // The first pair noted stands, except that one turns would order replaces one they would
+      // not: it decides whether the scenario is run again with turns.
+      if (this.parallel === undefined || (turnsWouldOrder && !this.parallel.turnsWouldOrder)) {
+        const beside = this.frames.beside(point.invocation, enclosing, frame.attempt);
+        if (beside)
+          this.parallel = {
+            calls: `${point.invocation} made ${point.target} ${point.op} while its ${beside.target} ${beside.op} was in flight`,
+            turnsWouldOrder,
+          };
+      }
+    }
     this.frames.enter(frame);
     if (enclosing) this.frames.adjust(enclosing, () => enclosing.performing++);
     let ended = false;

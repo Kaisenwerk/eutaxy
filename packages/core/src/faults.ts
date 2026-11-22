@@ -53,6 +53,13 @@ export interface Schedule {
    * Exhaustive exploration records them, since it picks rather than draws.
    */
   readonly turns?: readonly number[];
+  /**
+   * Present when the run made every asynchronous effect a turn although one
+   * invocation ran at a time, because an invocation made calls in parallel
+   * (a handler awaiting two calls together): a replay does the same, so the
+   * order of such calls is the schedule's and not real time's.
+   */
+  readonly effectsAsTurns?: true;
 }
 
 export interface FaultPolicy {

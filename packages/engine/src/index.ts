@@ -57,5 +57,11 @@ export {
 export { type CoreObserver, type ObservedCall, observeCore } from "./observe.ts";
 export { replayRun, runOnce } from "./once.ts";
 export { patchProperty } from "./patch.ts";
-export { CrashSignal, InjectedEffectError, Run, type RunOptions } from "./run.ts";
+export {
+  CrashSignal,
+  InjectedEffectError,
+  type ParallelCalls,
+  Run,
+  type RunOptions,
+} from "./run.ts";
 export { restrictSpec, type ShrinkOptions, type ShrinkResult, shrink } from "./shrink.ts";

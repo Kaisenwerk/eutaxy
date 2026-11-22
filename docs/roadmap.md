@@ -285,7 +285,7 @@ a measurement that asks for them):
 ## After v0.18
 
 Each phase's text is made exact, gate included, when it starts. v0.19 is
-next; it needs the semantics the phases before it settled.
+the current phase; v0.20 needs the semantics the phases before it settled.
 
 ### Candidates: the larger gaps in the model
 
@@ -310,14 +310,6 @@ when it does:
 - **A scripted binding for request-and-answer bindings** (Workers AI,
   Vectorize, Images and the like), answered from the scenario as
   `service()` answers a service binding.
-- **Calls in parallel inside one invocation.** A handler that awaits two
-  calls together (`Promise.all` over two object stubs) has two chains of
-  effects in flight at once. With several invocations in flight each
-  effect is a turn and the order is the seed's; with one at a time the
-  chains race in real time, and a check that sees two orders reports the
-  run as one that does not replay (`module_state_leak`), which names the
-  wrong cause. The effects of such chains want to be turns in a
-  sequential run too.
 - **Later:** RPC promise pipelining and capabilities (stubs returned,
   functions passed); the standard WebSocket API and auto-responses; D1
   sessions; R2 multipart uploads; constructors that read the alarm, as an
@@ -330,16 +322,39 @@ socket) is reported rather than guessed. The leak check could fire less
 often with fresh module state per run, at a cost in speed (among the
 patch work's performance items, waiting for a measurement).
 
-### v0.19 — The model proven
+### v0.19 — Parallel calls, a steadier suite, one spine
+
+Three pieces, in this order, then the release:
+- **Calls in parallel inside one invocation are turns.** A handler that
+  awaits two calls together (`Promise.all` over two object stubs) had its
+  chains race in real time when one invocation ran at a time, and a check
+  that saw two orders reported `module_state_leak`. It was the one
+  candidate among the model's gaps that gave a wrong reason rather than
+  none, so it goes ahead of the others: the first run that shows such
+  calls makes the check start over with every asynchronous effect a turn
+  (`docs/design.md`, "Calls in parallel inside one invocation").
+- **A slow runner does not fail `main`.** One test's verdict rests on
+  exhaustive exploration finishing within a budget of real time, and the
+  suite's 420 s ceiling sits about 60 s above its usual time: a runner a
+  third slower failed both on code that had passed three times.
+- **One spine for the two prover engines**, which were written beside each
+  other, so the model's translation has one place to live. The subset
+  reader is already split along its seams, and no module imports in a
+  circle.
+
+Gate: a Worker awaiting calls into two objects together ends in a verdict
+with every order run (`packages/cloudflare/workerd/parallel-object-calls`),
+and both engines pass the prover contract corpus on the shared spine.
+
+### v0.20 — The model proven
 
 The first step of the long-term direction: the platform model of queues,
 Durable Objects, D1 and alarms in Lean, validated against the executable
 model as the engine's translation is validated today, so a scenario
 invariant on the shell can be `PROVEN` against the model, not only
 `BOUNDED` by exploration. It validates against the runs v0.18 measured
-and gated, on the semantics v0.16 and v0.17 settled, and it opens by giving the two prover engines the one spine they were written
-beside, with the subset reader split along its seams and its circular
-import gone, so the model's translation has one place to live.
+and gated, on the semantics v0.16 and v0.17 settled, and its translation
+lives on the spine v0.19 gave the two engines.
 
 ## Toward 1.0
 

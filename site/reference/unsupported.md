@@ -50,6 +50,26 @@ different payload, the value that differs with its path (for a snapshot,
 the table, row and column). Route that input through a binding or an
 external. If it is Eutaxy's own, report it.
 
+**`run seed <seed> produced a different log when replayed after other runs: either state is leaking between runs (module-level variables, or a binding Eutaxy does not reset) or two calls made in parallel landed in another order; <what differed>; the run made calls in parallel that nothing orders here, and which of them lands first is real time's to say: <invocation> made <call> while its <call> was in flight (<why>)`**
+The first runs gave another log when replayed, and the code awaits two
+calls together (`Promise.all`, or a call started and awaited later) where
+nothing orders them: either can be why, and the reason says so. Nothing
+orders such calls when the platform runs one invocation at a time and
+makes no effect a turn (AWS today), or when they were made inside an
+effect that runs as one turn, as a Durable Object's are inside
+`blockConcurrencyWhile`. A Worker's own parallel calls on Cloudflare are
+interleaved as turns and do not give this reason. Await the calls one
+after the other, or keep what the two write apart so that their order does
+not show; if the difference stays, look for state that survives between
+runs, as below. The last clause is also added to the reason of a violating
+run that did not reproduce.
+
+**`pinned schedule "<name>" was recorded with every effect a turn (effectsAsTurns), which <why>`**
+The pinned schedule was written from a run on a platform that interleaved
+an invocation's parallel calls as turns, and this platform or host cannot
+run it that way. Run it where it was recorded, or remove `effectsAsTurns`
+to run it with no effect a turn.
+
 **`run seed <seed> produced a different log when replayed after other runs: state is leaking between runs (module-level variables, or a binding Eutaxy does not reset); <what differed>`**
 Before it reports `BOUNDED`, a check replays its first runs in reverse
 order. A module-level variable (a cache, a counter, a client holding
