@@ -186,7 +186,11 @@ need the real runtime live in its `workerd/` directory, one Worker each.
   allows for a shared interface; the boundary itself does not move. The
   subset reader is shared the same way: a type the reader learns to read
   reaches every engine's emitter in the same change, which takes it or
-  restricts the module to what it takes.
+  restricts the module to what it takes. What an engine does before it
+  translates is shared too (`readForEngine` in the reader): the functions
+  to report on, the subset restricted by the engine's own rules, and the
+  functions outside it with why, so an engine holds its restrictions and
+  its translation and a user reads one reason whichever engine gave it.
 
 ## Spec language, invariants and refines
 
