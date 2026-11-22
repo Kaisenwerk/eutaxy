@@ -11,6 +11,7 @@ import type { EffectLog } from "@eutaxy/core";
 import { replay, replayRun } from "@eutaxy/engine";
 import { expect, test } from "vitest";
 import { told } from "../told.ts";
+import { untimed } from "../untimed.ts";
 import scenario from "./scenario.sim.ts";
 import handler from "./worker.ts";
 
@@ -30,6 +31,7 @@ test("two calls awaited together, one invocation at a time: BOUNDED, with the ca
     seed: "gate",
     budgetMs: 30_000,
     exhaustive: true,
+    now: untimed,
     maxRuns: 1_000,
   });
   expect(verdict.kind, told(verdict)).toBe("BOUNDED");
