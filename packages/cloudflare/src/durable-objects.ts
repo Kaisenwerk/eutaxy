@@ -149,6 +149,8 @@ const hostOfId = new Map<
     readonly constructed: (state: DurableObjectState) => void;
     /** Told when a callback behind the instance's input gate failed: the runtime resets the object. */
     readonly broken: (state: DurableObjectState) => void;
+    /** Told when the object's own code calls `ctx.abort()`: a reset the simulation did not make. */
+    readonly selfReset: () => void;
   }
 >();
 
@@ -238,6 +240,7 @@ function constructionEnv(state: unknown, env: unknown): unknown {
   // Before the constructor's own code runs: a gate it takes is seen, and its effects wait behind it.
   // The gate is watched from here too: for an object nobody seeded, no reset has installed that yet.
   watchGate(state as DurableObjectState);
+  watchAbort(state as DurableObjectState);
   of.constructed(state as DurableObjectState);
   const sync = (state as { storage?: { sync?: () => Promise<void> } }).storage?.sync;
   const storage = (state as { storage?: object }).storage;
@@ -249,6 +252,42 @@ function constructionEnv(state: unknown, env: unknown): unknown {
       ? { slot: of.ctx.gate, durable: () => sync.call(storage) }
       : undefined,
   );
+}
+
+/** State prototypes whose `abort` tells the run of a reset an object makes itself. */
+const abortWatched = new WeakSet<object>();
+/** Set while the simulation itself aborts an object, for a crash it injected (`BindingState.abort`). */
+let simulationAborts = false;
+
+/**
+ * Tell the run when an object resets itself. `ctx.abort()` called by the
+ * object's own code ends the requests inside it and drops the instance,
+ * with what the object held in memory
+ * (developers.cloudflare.com/durable-objects/api/state/#abort). The
+ * simulation resets an object itself where it injects a crash, and then
+ * accounts for what the object had in flight; a reset it did not make is
+ * not accounted for, so the run is UNSUPPORTED (`selfReset`), wherever in
+ * the object's code the abort is: a call, an alarm, work after its answer.
+ * The wrapper only tells: the abort happens as the runtime makes it. It is
+ * on the prototype the states share, installed where the first state is
+ * seen: before the constructor for a class given a simulated base, and at
+ * the scenario's reset or the first entry otherwise. Not seen: an `abort`
+ * a constructor saved by reference (`ctx.abort.bind(ctx)`) before any
+ * state was seen, in a class without a simulated base, on the isolate's
+ * first run.
+ */
+function watchAbort(state: DurableObjectState): void {
+  const proto = Object.getPrototypeOf(state) as { abort?: (reason?: string) => void };
+  if (!proto || abortWatched.has(proto) || typeof proto.abort !== "function") return;
+  abortWatched.add(proto);
+  const native = proto.abort;
+  proto.abort = function (this: object, reason?: string) {
+    if (simulating && !simulationAborts) {
+      const id = (this as { id?: { toString(): string } }).id;
+      (id === undefined ? undefined : hostOfId.get(id.toString()))?.selfReset();
+    }
+    return native.call(this, reason);
+  };
 }
 
 /**
@@ -311,6 +350,8 @@ export class BindingState {
    * still here when the run would end is woken inside the run (`wakeEvents`).
    */
   readonly dropped = new Set<string>();
+  /** Ids of the objects that reset themselves this run (their own `ctx.abort()`), each told once. */
+  private readonly resetThemselves = new Set<string>();
   /** The SQL tables the seed left in each seeded object, materialized, for the snapshot of one never reached. */
   seededSql: SeededSql = new Map();
 
@@ -325,7 +366,15 @@ export class BindingState {
     this.alarms.clear();
     this.states.clear();
     this.dropped.clear();
+    this.resetThemselves.clear();
     this.seededSql = new Map();
+  }
+
+  /** The object reset itself: true the first time this run, so the run is told once for it. */
+  selfReset(id: string): boolean {
+    if (this.resetThemselves.has(id)) return false;
+    this.resetThemselves.add(id);
+    return true;
   }
 
   /**
@@ -351,10 +400,14 @@ export class BindingState {
     const state = this.states.get(id);
     this.states.delete(id);
     this.dropped.add(id);
+    // The simulation's own reset: not one the object made (`watchAbort`).
+    simulationAborts = true;
     try {
       state?.abort("Eutaxy: the invocation crashed inside this object");
     } catch {
       // abort() throws to unwind the object's code; the reset has happened.
+    } finally {
+      simulationAborts = false;
     }
   }
 }
@@ -718,9 +771,16 @@ function enterObject<T>(
     constructed: (live) => void state.states.set(id, live),
     broken: (live) =>
       state.broke(id, live, () => ctx.hooks.hostReset(hostOf(`DO:${binding}`, object))),
+    selfReset: () => {
+      if (state.selfReset(id))
+        ctx.hooks.unsupported(
+          `Durable Object ${object} reset itself with ctx.abort() during the run; the simulation resets an object only where it injects a crash, so what this one held in memory and had in flight is not modelled`,
+        );
+    },
   });
   return typed(helpers).runInDurableObject(stub, async (instance, live) => {
     watchGate(live);
+    watchAbort(live);
     state.states.set(id, live);
     await takeOverAlarms(
       live.storage,
@@ -805,6 +865,7 @@ async function clearAndSeed(
     await typed(helpers).runInDurableObject(stub, async (_instance, state) => {
       // Before any constructor of this run: so its blockConcurrencyWhile is seen too.
       watchGate(state);
+      watchAbort(state);
       // deleteAll drops SQL and key-value data alike (Cloudflare, Storage API).
       await state.storage.deleteAll();
       await deleteRealAlarm(state.storage);
