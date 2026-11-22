@@ -813,7 +813,13 @@ shares the reading of the limit and none of the proxy code.
   `setAlarm` inside `transactionSync()` makes the run `UNSUPPORTED`. A
   crash injected inside an object's own work resets the object with
   `ctx.abort()`, as a crash does, called where the crash happens because
-  abort() works only from inside the object. In a concurrent run an
+  abort() works only from inside the object. A reset the object
+  makes itself, by calling `ctx.abort()` in its own code, is not the
+  simulation's, and what the object had in flight is not accounted for:
+  the call is seen where it is made (the state's `abort` is wrapped, and
+  only tells), and the run is `UNSUPPORTED`, whether the abort is in a
+  call, an alarm or work after an answer, and whether or not anything
+  calls the object again. In a concurrent run an
   effect the object makes during a call (its own `fetch`) is a turn: the
   input gate is open while the object awaits outbound I/O (Cloudflare,
   Durable Objects: input and output gates), so another call into the

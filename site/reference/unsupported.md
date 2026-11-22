@@ -152,6 +152,16 @@ path.
 
 ## Durable Objects and alarms
 
+**`Durable Object <object> reset itself with ctx.abort() during the run; the simulation resets an object only where it injects a crash, so what this one held in memory and had in flight is not modelled`**
+The object's own code called `ctx.abort()`: in a call, an alarm, or work
+it went on with after answering. The requests inside it end, the instance
+is gone, and what it held in memory with it. The simulation resets an
+object itself where it injects a crash, and then accounts for what the
+object had in flight; a reset the object makes is not accounted for. Check
+the path that leads to the abort in a scenario of its own, or make the
+failure an error the caller handles. A call that only throws is no reset:
+the next call enters the same instance.
+
 **`Durable Object <object> was reset during the run and reconstructed for the snapshot; its constructor ran outside the simulation`**
 The object's instance went away during the run without Eutaxy resetting
 it (the runtime evicting it), and nothing entered it again, so only the
