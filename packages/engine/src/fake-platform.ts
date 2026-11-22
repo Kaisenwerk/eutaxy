@@ -60,8 +60,10 @@ export function createFakePlatform(
     insertHosts?: boolean;
     /** The insert checks for the row itself and calls out before writing, like an object's method. */
     checkInside?: boolean;
-    /** The insert makes two reads at once inside it, like an object awaiting two fetches together. */
+    /** The insert makes two reads at once inside it, of two rows, like an object awaiting two fetches together. */
     parallelInside?: boolean;
+    /** Awaited inside every read's effect: its I/O takes that long in real time, like a call into an object. */
+    readTakes?: () => Promise<void>;
     /**
      * The insert is a call to another Worker (`Service:CALLEE`) whose code runs as an invocation of
      * its own inside the call, and writes through its own binding (`D1:callee/DB`).
@@ -119,7 +121,8 @@ export function createFakePlatform(
           async () => {
             if (orderId === options.hangInsert) await new Promise(() => {});
             if (options.nestedRead) await env.count(orderId);
-            if (options.parallelInside) await Promise.all([env.count(orderId), env.count(orderId)]);
+            if (options.parallelInside)
+              await Promise.all([env.count(orderId), env.count(`${orderId}-beside`)]);
             if (options.checkInside) {
               // Like an object: read its own state, call out (the nested read), then write on what it read.
               const seen = rows.get(orderId) ?? 0;
@@ -175,7 +178,10 @@ export function createFakePlatform(
             args: { sql: "SELECT", params: [orderId] },
             allowed: ["crash_before", "crash_after", "error"],
           },
-          async () => rows.get(orderId) ?? 0,
+          async () => {
+            await options.readTakes?.();
+            return rows.get(orderId) ?? 0;
+          },
           (n) => n,
         );
       const env: FakeEnv = {

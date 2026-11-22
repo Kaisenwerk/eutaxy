@@ -37,6 +37,10 @@ export class Frame {
   readonly mayPark: () => boolean;
   /** The hosting effect this one was made inside of and waited for a turn under, if any. */
   parent: Frame | undefined;
+  /** The effect whose perform this one was made inside of, if any (`Frames.enclosing`), set by the run. */
+  inside: Frame | undefined;
+  /** Whether the effect waited for a turn before being performed, set by the run: the order of such effects is the chooser's. */
+  tookTurn = false;
   /** Effects the hosted code made as turns, parked or running now, and invocations hosted inside it. */
   children = 0;
   /** Of those, the ones given their turn that have not started performing yet: on their way. */
@@ -292,6 +296,27 @@ export class Frames {
     if (store?.active && store.invocation === invocation) return store;
     if (call?.active && call.invocation === invocation) return call;
     return hosted || store !== undefined ? this.hosting.get(invocation)?.at(-1) : undefined;
+  }
+
+  /**
+   * An effect of `invocation`'s being performed now, without having waited
+   * for a turn, that was made where a new one is being made: inside
+   * `enclosing` (or outside every effect), by the same attempt's code. Two
+   * such are two chains of the invocation's effects in flight at once (a
+   * handler awaiting two calls together), whose order is real time's.
+   */
+  beside(
+    invocation: string,
+    enclosing: Frame | undefined,
+    attempt: { readonly late: boolean } | undefined,
+  ): Frame | undefined {
+    return this.stack.find(
+      (f) =>
+        !f.tookTurn &&
+        f.invocation === invocation &&
+        f.inside === enclosing &&
+        f.attempt === attempt,
+    );
   }
 
   /**
