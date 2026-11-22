@@ -33,7 +33,13 @@ import {
   readCalleeConfig,
   readCallerResources,
 } from "./callees.ts";
-import { checkTestSource, metaKey, vitestConfigSource } from "./generate.ts";
+import {
+  type ConsoleWrite,
+  checkTestSource,
+  consoleFile,
+  metaKey,
+  vitestConfigSource,
+} from "./generate.ts";
 import { globKey } from "./keys.ts";
 import {
   type CloudflareRegressionOptions,
@@ -76,6 +82,8 @@ export interface CheckOptions {
   readonly expectViolation: boolean;
   /** Keep the generated `.eutaxy/` files for inspection. */
   readonly keep: boolean;
+  /** Show what was written to the console in the isolate during the check (the Workers', a callee's included), on stderr. */
+  readonly console?: boolean;
   readonly stdout: (text: string) => void;
   readonly stderr: (text: string) => void;
 }
@@ -198,6 +206,32 @@ function runVitest(
     });
     child.on("close", (code) => resolveRun({ code: code ?? 1, output }));
   });
+}
+
+/** A colour or style escape, which a console in the isolate adds to an object it prints whatever the terminal. */
+const styleEscape = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g");
+
+/**
+ * What was written to the console in the isolate during the check, for `--console`: the Workers'
+ * writes, a callee's included, and the scenario file's own, every run of the check (it runs the
+ * scenario many times, so a line a handler writes once appears once per run), without colour
+ * escapes. As Vitest reported it: the writes to one stream are in the order written, but it hands
+ * over what went to stdout before what went to stderr within one stretch of synchronous code, so a
+ * `console.error` can follow a `console.log` that was written after it.
+ */
+export function consoleOutput(file: string): string {
+  const writes = existsSync(file)
+    ? readFileSync(file, "utf8")
+        .split("\n")
+        .filter((line) => line !== "")
+        .map((line) => JSON.parse(line) as ConsoleWrite)
+    : [];
+  if (writes.length === 0) return "Nothing was written to the console during the check.\n";
+  const text = writes
+    .map((w) => w.content)
+    .join("")
+    .replace(styleEscape, "");
+  return `Console output during the check, every run, as Vitest reported it:\n${text}${text.endsWith("\n") ? "" : "\n"}`;
 }
 
 /** The transport the generated test left in its task meta, via Vitest's JSON reporter. */
@@ -375,10 +409,16 @@ export async function runCheck(o: CheckOptions): Promise<number> {
       writeFileSync(mainPath, mainModuleSource(workDir, callerEntry, callees, isolate));
       writeFileSync(
         configPath,
-        vitestConfigSource(wrangler, testPath, reportPath, {
-          main: mainPath,
-          miniflare: miniflareOptionsSource(callees, isolate, callerServices),
-        }),
+        vitestConfigSource(
+          wrangler,
+          testPath,
+          reportPath,
+          {
+            main: mainPath,
+            miniflare: miniflareOptionsSource(callees, isolate, callerServices),
+          },
+          o.console === true,
+        ),
       );
     } else
       writeFileSync(
@@ -395,9 +435,14 @@ export async function runCheck(o: CheckOptions): Promise<number> {
                   : {}),
               }
             : undefined,
+          o.console === true,
         ),
       );
+    rmSync(consoleFile(reportPath), { force: true }); // never show what an earlier --keep run wrote
     const { code, output } = await runVitest(vitestBin(dir), configPath, dir);
+    // Before anything the check goes on to say, an error of its own included: what the Workers wrote
+    // is often why.
+    if (o.console === true) o.stderr(consoleOutput(consoleFile(reportPath)));
     const left = (path: string) => (existsSync(path) ? readFileSync(path, "utf8") : undefined);
     const ran = { report: left(reportPath), unhandled: left(unhandledErrorsFile(reportPath)) };
     // Vitest fails a run on an error nothing handled; Cloudflare's runtime only logs one, so when

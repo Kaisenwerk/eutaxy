@@ -261,8 +261,6 @@ a measurement that asks for them):
   (qualified) binding name: the command carries a callee's `vars` into
   the isolate but not its secrets, and a caller's come from the process
   environment, outside the scenario.
-- A Worker's console output during a check, shown on request, to read
-  why a callee refused a call without running the generated test by hand.
 - The documentation site at eutaxy.dev (`site/`, VitePress, deployed to
   GitHub Pages by the `pages` workflow) is kept current with every change,
   outside the phases because it changes no behaviour; `docs/design.md` and
@@ -332,7 +330,9 @@ patch work's performance items, waiting for a measurement).
 
 ### v0.19 — Parallel calls, a steadier suite, one spine
 
-Three pieces, in this order, then the release:
+The first three pieces are done; the release then takes in what an
+adopter asked of the command and two cases where a verdict could be wrong
+or depend on the machine, in this order:
 - **Calls in parallel inside one invocation are turns.** A handler that
   awaits two calls together (`Promise.all` over two object stubs) had its
   chains race in real time when one invocation ran at a time, and a check
@@ -349,6 +349,17 @@ Three pieces, in this order, then the release:
   other, so the model's translation has one place to live. The subset
   reader is already split along its seams, and no module imports in a
   circle.
+- **A Worker's console output, on request.** `eutaxy check --console` shows
+  what the Workers wrote to the console during the check, a callee's
+  included: to read why a callee refused a call, an adopter had to run the
+  generated test by hand.
+- **A var or a secret from the scenario**, for the Worker or a callee, by
+  its (qualified) binding name.
+- **No TypeScript for a project that writes no specs.**
+- **An object that resets itself and is called again is reported**, where
+  the call's takeover adopted it silently.
+- **A dropped WebSocket end's close is waited for by its arrival**, not by
+  two real ticks, which a loaded machine can outlast.
 
 Gate: a Worker awaiting calls into two objects together ends in a verdict
 with every order run (`packages/cloudflare/workerd/parallel-object-calls`),
