@@ -384,8 +384,8 @@ again after a delivery that was handled, and exactly as often as the
 least of the run's end, the first handled delivery and the room each
 limit leaves (`packages/core/src/delivery-model.props.ts`), and the
 claims of the queue's decision rule and of the alarm's retry rule; a bug
-planted in each rule is refuted; a platform refuses a limit the claims
-do not cover, one that is not whole or is negative; the Lean form of
+planted in each rule is refuted; the rule refuses a limit the claims do
+not cover, one that is not whole or is negative; the Lean form of
 every model function computes what its TypeScript computes on drawn
 inputs; the run loop, one invocation at a time and concurrently, and the
 Cloudflare and AWS platforms deliver an event exactly as often as the

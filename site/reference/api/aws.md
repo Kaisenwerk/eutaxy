@@ -76,7 +76,7 @@ Every item of every table, unmarshalled and sorted canonically. [Source](https:/
 
 `function sqs(queue: string, messages: readonly SqsMessage[], options: { readonly maxReceiveCount?: number } = {}): SqsDrive`
 
-Drive the Lambda with these messages from an SQS queue; `maxReceiveCount` defaults to 3. [Source](https://github.com/Kaisenwerk/eutaxy/blob/main/packages/aws/src/scenario.ts)
+Drive the Lambda with these messages from an SQS queue; `maxReceiveCount`, a whole number of at least one, defaults to 3. [Source](https://github.com/Kaisenwerk/eutaxy/blob/main/packages/aws/src/scenario.ts)
 
 ### `sqsDelete`
 

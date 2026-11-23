@@ -122,6 +122,48 @@ describe("acknowledgement", () => {
   });
 });
 
+describe("max_retries", () => {
+  // The delivery model's claims are about limits that are whole and not negative; no other limit gets in.
+  test.each([2.5, -1, Number.NaN, Number.POSITIVE_INFINITY])(
+    "a max_retries of %s is refused when the platform is created",
+    (maxRetries) => {
+      expect(() =>
+        createCloudflarePlatform({
+          env: {},
+          handler: { queue: async () => {} },
+          schemas: {},
+          maxRetries,
+        }),
+      ).toThrow("maxRetries must be a non-negative integer");
+    },
+  );
+
+  test("a spec built by hand with a bound that is not whole is refused by the rule, not delivered by", async () => {
+    await expect(
+      logOf(spec({ bounds: { ...spec().bounds, maxRedeliveries: 0.5 } }), async (batch) => {
+        batch.retryAll();
+      }),
+    ).rejects.toThrow("bounds.maxRedeliveries must be a non-negative integer, got 0.5");
+  });
+
+  test("a max_retries of zero is taken: one delivery, then dead-lettered", async () => {
+    const run = new Run({ chooser: replayChooser({ seed: 1, faults: [] }), bounds: spec().bounds });
+    const platform = createCloudflarePlatform({
+      env: {},
+      handler: {
+        queue: async (batch) => {
+          batch.retryAll();
+        },
+      },
+      schemas: {},
+      maxRetries: 0,
+    });
+    const log = await runOnce(spec(), platform, run);
+    expect(ops(log).filter((o) => o.endsWith("call retry")).length).toBe(1);
+    expect(ops(log).at(-1)).toBe("platform result dead_letter");
+  });
+});
+
 describe("crashes", () => {
   test("a crash on the last permitted attempt dead-letters and still yields a verdict", async () => {
     const s = spec({ bounds: { ...spec().bounds, maxRedeliveries: 0 } });

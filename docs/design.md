@@ -700,7 +700,7 @@ faults that mean something there.
 
 Redelivery follows one rule, written once in `core` (`redelivery`): an
 event that was not handled is delivered again while the platform's own
-limit on redeliveries (Queues' `max_retries`, the caller's `retries`, SQS's
+limit on redeliveries (Queues' `max_retries`, a drive's `retries`, SQS's
 `maxReceiveCount` less the first delivery, an alarm's six retries) and the
 scenario's `maxRedeliveries` both leave room. The platforms and the
 differential runner's raw sides call the same function, so the raw side
@@ -719,7 +719,15 @@ delivery that was handled; and the count is exactly the least of the
 run's end, the first handled delivery and the room each limit leaves. A
 test delivers by `redelivery` on every list of outcomes and every pair
 of limits up to a bound and compares the count with the model's and with
-the same count written out.
+the same count written out. Every limit that reaches the rule is such a
+one, because `redelivery` throws on any other before it decides: a
+fraction, a negative number, `NaN` or an infinity is an error, never
+delivered by, however the scenario was built. The limits are also
+checked earlier, by their own names, where they are given: the
+scenario's `maxRedeliveries` and a drive's `retries` when the scenario is
+defined, a queue's `max_retries` when the platform is created, SQS's
+`maxReceiveCount` (which counts the first delivery, so at least one) when
+the scenario is defined; an alarm's six retries are a constant.
 
 **Platform semantics to encode, with a documentation source for each:**
 - D1: `batch()` is all-or-nothing; separate `run()`/`first()`/`all()` calls

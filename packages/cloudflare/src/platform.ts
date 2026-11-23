@@ -73,7 +73,7 @@ export interface CloudflarePlatformOptions {
   readonly handler: WorkerHandler | WorkerEntrypointClass;
   /** Schema SQL per D1 binding named in the scenario's setup. */
   readonly schemas: Readonly<Record<string, string>>;
-  /** Cloudflare's default when the consumer does not set max_retries. */
+  /** The consumer's max_retries, a whole number that is not negative; Cloudflare's default, 3, when it sets none. */
   readonly maxRetries?: number;
   /**
    * The Cloudflare Vitest plugin's test helpers (`import * as helpers from
@@ -151,6 +151,9 @@ export function createCloudflarePlatform(options: CloudflarePlatformOptions): Pl
   /** The name a binding is known by: itself, or the name it is an alias of. */
   const canonical = (name: string): string => aliases[name] ?? name;
   const maxRetries = options.maxRetries ?? 3;
+  // The redelivery rule takes no limit that is not whole or is negative; this says so by the option's name.
+  if (!(Number.isInteger(maxRetries) && maxRetries >= 0))
+    throw new Error("maxRetries must be a non-negative integer");
   let hooksRef: RunHooks | null = null;
 
   const connections = new Connections();
