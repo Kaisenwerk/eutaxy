@@ -320,7 +320,7 @@ a measurement that asks for them):
 ## After v0.19
 
 Each phase's text is made exact, gate included, when it starts. v0.20 is
-the current phase, and its gate is written with its first change.
+the current phase; its text and gate are below.
 
 ### Candidates: the larger gaps in the model
 
@@ -357,15 +357,40 @@ socket) is reported rather than guessed. The leak check could fire less
 often with fresh module state per run, at a cost in speed (among the
 patch work's performance items, waiting for a measurement).
 
-### v0.20 — The model proven
+### v0.20 — The delivery model proven
 
-The first step of the long-term direction: the platform model of queues,
-Durable Objects, D1 and alarms in Lean, validated against the executable
-model as the engine's translation is validated today, so a scenario
-invariant on the shell can be `PROVEN` against the model, not only
-`BOUNDED` by exploration. It validates against the runs v0.18 measured
-and gated, on the semantics v0.16 and v0.17 settled, and its translation
-lives on the spine v0.19 gave the two engines.
+The first step of the long-term direction. Of the platform model, this
+phase takes how events are delivered: the redelivery rule every platform
+shares, a queue message's first decision and its implicit
+acknowledgement, an alarm's retries with their backoff and supersession.
+A Durable Object's storage and gates and D1 are the runtime's own (the
+real objects workerd runs, Miniflare's SQLite), so Eutaxy has no model
+of them to prove, and the differential corpus stays what holds its
+proxies to them; the model of the Workflows engine is Eutaxy's own and
+waits for a later phase. The delivery rules become pure functions inside
+the provable subset, the same functions the platforms decide by, so a
+rule that is proved is the rule that runs. How often an event is then
+delivered is a model of the loops that deliver, proved over those rules
+by the Lean engine as v0.8 proved the enumeration model, and the loops
+are held to it by test, as the enumerator is held to its model. Scenario
+verdicts stay as they are. A handler is asynchronous code, which the
+subset does not take, so a scenario invariant `PROVEN` against this
+model is a later phase, written when it starts.
+
+Gate: `eutaxy report --prover lean` over the model reports `PROVEN`, by
+proofs Lean's kernel checked, that an event is delivered at most once
+more than the platform's limit and the scenario's bound allow, never
+again after a delivery that was handled, and exactly as often as the
+least of the run's end, the first handled delivery and the room each
+limit leaves (`packages/core/src/delivery-model.props.ts`), and the
+claims of the queue's decision rule and of the alarm's retry rule; a bug
+planted in each rule is refuted; a platform refuses a limit the claims
+do not cover, one that is not whole or is negative; the Lean form of
+every model function computes what its TypeScript computes on drawn
+inputs; the run loop, one invocation at a time and concurrently, and the
+Cloudflare and AWS platforms deliver an event exactly as often as the
+model says, on every sequence of outcomes up to a bound; and every
+example and earlier test stays green.
 
 ## Toward 1.0
 
@@ -392,12 +417,14 @@ Eutaxy stays a tool that runs real code; it never asks for a model of the
 system beside the code. The direction is to let the verdicts about that
 code climb, in steps each verdict states.
 - **The platform model is the shared model.** The simulator executes
-  Eutaxy's model of queues, Durable Objects, D1 and alarms, and the
-  differential corpus holds it to workerd. The same model gets a formal
-  form, validated against the executable one as the Lean engine's
-  translation is validated today, so a scenario invariant can be proven
-  for the shell against it, not only explored. The user's code and
-  Eutaxy's model are the whole system; nobody writes a second one.
+  Eutaxy's model of how events reach the code (queue deliveries, alarms,
+  redelivery) around Durable Objects and D1 that are the runtime's own,
+  and the differential corpus holds both to workerd. The model's rules
+  get a formal form by being proved as the code the platforms run
+  (v0.20, delivery first), with the Lean engine's translation validated
+  against that code, so a scenario invariant can be proven for the shell
+  against it, not only explored. The user's code and Eutaxy's model are
+  the whole system; nobody writes a second one.
 - **Scenario verdicts climb the ladder specs climb.** `BOUNDED` means no
   violation within stated bounds. A reduction proven complete makes it
   exhaustive within them; a proven property of the code, such as a
