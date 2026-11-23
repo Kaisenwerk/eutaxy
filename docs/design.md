@@ -706,6 +706,21 @@ scenario's `maxRedeliveries` both leave room. The platforms and the
 differential runner's raw sides call the same function, so the raw side
 shares the reading of the limit and none of the proxy code.
 
+The rule's decision is one function of the delivery model
+(`redelivers`, `core`'s `delivery-model.ts`), written in the subset the
+Lean engine translates, so the rule that is proved is the rule that
+runs. The model then counts an event's deliveries from the outcome of
+each (handled or not); that count models the loops that deliver, which
+stay each platform's own code. Three claims about it are `PROVEN`, for
+limits that are whole and not negative, by proofs supplied beside the
+spec file and checked by Lean's kernel: an event is delivered at most
+once more than either limit allows; it is not delivered again after a
+delivery that was handled; and the count is exactly the least of the
+run's end, the first handled delivery and the room each limit leaves. A
+test delivers by `redelivery` on every list of outcomes and every pair
+of limits up to a bound and compares the count with the model's and with
+the same count written out.
+
 **Platform semantics to encode, with a documentation source for each:**
 - D1: `batch()` is all-or-nothing; separate `run()`/`first()`/`all()` calls
   are each one effect and can be cut between statements; prepared statements
@@ -2159,6 +2174,7 @@ Self-verification targets, by cost of a bug:
 | Component             | Spec                                                                                                            | Cost of a bug                      |
 | --------------------- | --------------------------------------------------------------------------------------------------------------- | ---------------------------------- |
 | Exhaustive enumerator | Every schedule within bounds appears exactly once; count equals a closed-form formula; same seed, same schedule | False `BOUNDED` on every check     |
+| Delivery model        | At most one delivery more than either limit allows; none after a handled one; the count in closed form          | Redeliveries missed or invented    |
 | Invariant checkers    | Match a naive reference implementation on the same effect log                                                   | False `BOUNDED` for that invariant |
 | Verdict logic         | `VIOLATED` only after a successful replay                                                                       | False alarms                       |
 | Shrinker              | Output still violates and is no longer than input                                                               | Unhelpful traces only              |

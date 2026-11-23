@@ -5,6 +5,7 @@
  * the same reading of a platform's limit without any of its proxy code.
  */
 
+import { redelivers } from "./delivery-model.ts";
 import type { EventRef } from "./platform.ts";
 import type { Bounds } from "./scenario.ts";
 
@@ -32,15 +33,15 @@ export function earliestEvent(pending: readonly EventRef[]): number {
  * delivered again while both the platform's own limit on redeliveries
  * (Queues' `max_retries`, the caller's `retries`, SQS's `maxReceiveCount`
  * less the first delivery, an alarm's six retries) and the scenario's
- * `maxRedeliveries` leave room; the redeliveries so far are `attempt - 1`.
- * Pure.
+ * `maxRedeliveries` leave room, which `redelivers` decides: the rule of the
+ * delivery model, whose claims are proved (delivery-model.props.ts) for
+ * limits that are whole and not negative. Pure.
  */
 export function redelivery(
   event: EventRef,
   limit: number,
   bounds: Pick<Bounds, "maxRedeliveries">,
 ): EventRef | null {
-  const redeliveries = event.attempt - 1;
-  if (redeliveries >= limit || redeliveries >= bounds.maxRedeliveries) return null;
+  if (!redelivers(event.attempt, limit, bounds.maxRedeliveries)) return null;
   return { ...event, attempt: event.attempt + 1 };
 }

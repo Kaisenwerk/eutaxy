@@ -5,7 +5,10 @@
  * below, made in a copy of the core's sources, is refuted. And the
  * enumeration model's claims are PROVEN by the Lean engine, with the
  * proofs supplied in schedules.props.lean (engine's tests hold the
- * enumerator to the model).
+ * enumerator to the model), and so are the delivery model's, the first
+ * claims of v0.20's gate, with the proofs supplied in
+ * delivery-model.props.lean (core's tests hold a loop over `redelivery`
+ * to the model).
  */
 import { execFileSync } from "node:child_process";
 import { cpSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -56,7 +59,7 @@ describe.concurrent("the self-check", () => {
     for (const s of checkers) expect(atLeastChecked.has(s.kind), s.property).toBe(true);
   }, 120_000);
 
-  test("the enumeration model's claims are PROVEN by the Lean engine, with supplied proofs", async ({
+  test("the enumeration model's claims and the delivery model's are PROVEN by the Lean engine, with supplied proofs", async ({
     expect,
   }) => {
     // Required where the pinned Lean is installed (CI sets EUTAXY_REQUIRE_LEAN); skipped elsewhere.
@@ -82,6 +85,12 @@ describe.concurrent("the self-check", () => {
       inBounds: "PROVEN",
       // Held exactly on every tree up to a bound by engine's refinement test; its proof is not supplied.
       depthFirstOrder: "TESTED",
+    });
+    const delivery = r.report.specs.filter((s) => s.function === "deliveries");
+    expect(Object.fromEntries(delivery.map((s) => [s.property, s.kind]))).toEqual({
+      withinTheLimits: "PROVEN",
+      noneAfterHandled: "PROVEN",
+      exactCount: "PROVEN",
     });
   }, 300_000);
 
@@ -215,6 +224,20 @@ describe.concurrent("the self-check", () => {
       from: "return (levels[0] ?? []).flatMap(",
       to: "return (levels[0] ?? []).slice(1).flatMap(",
       refuted: ["countIsProduct"],
+    },
+    {
+      bug: "the delivery model redelivers once more than the platform's limit allows",
+      file: "delivery-model.ts",
+      from: "return !(attempt - 1 >= limit || attempt - 1 >= maxRedeliveries);",
+      to: "return !(attempt - 1 > limit || attempt - 1 >= maxRedeliveries);",
+      refuted: ["withinTheLimits", "exactCount"],
+    },
+    {
+      bug: "the delivery model delivers again after a delivery that was handled",
+      file: "delivery-model.ts",
+      from: "if ((handled[0] ?? true) || !redelivers(attempt, limit, maxRedeliveries)) return 1;",
+      to: "if (!redelivers(attempt, limit, maxRedeliveries)) return 1;",
+      refuted: ["noneAfterHandled", "exactCount"],
     },
   ])(
     "a planted bug is refuted: $bug",

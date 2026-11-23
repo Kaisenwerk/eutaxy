@@ -1,9 +1,11 @@
 /**
  * The delivery conventions: the invocation name, which pending event goes next, and the one redelivery rule held to the
- * four forms the platforms wrote before it existed, over every small combination of attempt and limits.
+ * four forms the platforms wrote before it existed, over every small combination of attempt and limits, and to the
+ * delivery model, whose claims are proved, over every run of outcomes up to a bound.
  */
 import { describe, expect, test } from "vitest";
 import { earliestEvent, invocationOf, redelivery } from "./delivery.ts";
+import { deliveries } from "./delivery-model.ts";
 import type { EventRef } from "./platform.ts";
 
 const event = (attempt: number): EventRef => ({
@@ -65,6 +67,43 @@ describe("redelivery", () => {
           // An alarm: retried while its retryCount (the attempt less one) is under both.
           const retryCount = attempt - 1;
           expect(again).toBe(retryCount < limit && retryCount < maxRedeliveries);
+        }
+      }
+    }
+  });
+});
+
+describe("the delivery model", () => {
+  test("redelivery delivers an event exactly as often as the model says, on every case up to a bound", () => {
+    // Every list of outcomes of up to six deliveries, under every limit and bound up to four, so each
+    // limit is passed by a list that goes on beyond it.
+    for (let length = 0; length <= 6; length++) {
+      for (let bits = 0; bits < 2 ** length; bits++) {
+        const handled = Array.from({ length }, (_, i) => ((bits >> i) & 1) === 1);
+        for (let limit = 0; limit <= 4; limit++) {
+          for (let maxRedeliveries = 0; maxRedeliveries <= 4; maxRedeliveries++) {
+            // Delivered as a platform delivers: an attempt per outcome, the next one redelivery's while not handled.
+            let delivered = 0;
+            let next: EventRef | null = event(1);
+            for (const wasHandled of handled) {
+              if (next === null) break;
+              delivered++;
+              expect(next.attempt).toBe(delivered);
+              next = wasHandled ? null : redelivery(next, limit, { maxRedeliveries });
+            }
+            expect(delivered).toBe(deliveries(handled, limit, maxRedeliveries));
+            // And as often as the count written out here, which shares no code with the rule: a
+            // mistake in `redelivers` moves the loop and the model together.
+            const firstHandled = handled.indexOf(true);
+            expect(delivered).toBe(
+              Math.min(
+                length,
+                (firstHandled < 0 ? length : firstHandled) + 1,
+                limit + 1,
+                maxRedeliveries + 1,
+              ),
+            );
+          }
         }
       }
     }
