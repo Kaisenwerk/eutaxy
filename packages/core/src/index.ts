@@ -2,6 +2,7 @@
 export { canonicalJson, type JsonValue } from "./canonical-json.ts";
 export { earliestEvent, invocationOf, redelivery } from "./delivery.ts";
 export { atLeastOnce, atLeastOncePerMessage, atMostOncePerKey } from "./delivery-invariants.ts";
+export { deliveries } from "./delivery-model.ts";
 export {
   appendEffect,
   digestLog,

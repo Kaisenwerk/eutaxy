@@ -34,6 +34,12 @@ run `UNSUPPORTED` and the callback receives the error. The handler's own clients
 the network: calls are redirected to the local clients given to the platform,
 matched by the client's class name (`DynamoDBClient`, `DynamoDBDocumentClient`).
 
+**Tests.** `src/delivery-model.test.ts` holds the platform to the delivery
+model `core` proves (`deliveries`): an SQS message is delivered exactly as
+often as it says, on every list of outcomes, every `maxReceiveCount` and
+every bound up to a bound, left on the queue by a throw, a reported batch
+item failure, or a crash that loses its deletion.
+
 **May import.** `@eutaxy/engine`, `@eutaxy/core`. Only these are declared in
 `package.json`, and pnpm links only declared workspace dependencies, so an
 import of any other package does not resolve. The project references in
