@@ -34,6 +34,16 @@ workerd against the real runtime, one Vitest project each
 Agents SDK, which one of them is written with, is a dev dependency. Each
 explores one check per claim (every schedule where they are few, a seeded
 sample where not) and replays the runs that pin what the model does.
+`src/delivery-model.test.ts` holds the platform to the delivery model
+`core` proves (`deliveries`): a queue message, an inbound request, a cron
+tick and an RPC call are each delivered exactly as often as it says, on
+every list of outcomes, every limit of the platform's and every bound of
+the scenario's up to a bound, made not handled by a retry, a 500, an
+exception, an answer past the caller's deadline, failed background work,
+or an injected crash that ends the handler or loses the acknowledgement
+or the response. `workerd/alarm-deliveries` holds the alarms of real
+objects to it, each failed by its handler, under the runtime's six
+retries and every bound of the scenario's up to seven.
 
 **Effect conventions** (what the proxies record, and what selectors match):
 

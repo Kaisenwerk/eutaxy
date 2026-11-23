@@ -729,6 +729,39 @@ defined, a queue's `max_retries` when the platform is created, SQS's
 `maxReceiveCount` (which counts the first delivery, so at least one) when
 the scenario is defined; an alarm's six retries are a constant.
 
+The loops that deliver are held to the count by test, as the enumerator
+is held to its model, each in its own package
+(`delivery-model.test.ts`): told of every delivery whether it is
+handled, each loop delivers every event exactly as often as the model
+says, attempt by attempt, on every list of outcomes and every pair of
+limits up to a bound.
+- **The engine's loops**: the one that delivers one event at a time; the
+  one that takes turns, with one slot, with two events in flight and
+  with more events than slots, under every order of turns, the next
+  attempt handed back as a follow-up or queued for later; and the
+  differential runner's raw side.
+- **The Cloudflare platform**: a queue message, an inbound request, a
+  cron tick and an RPC call, to a handler called once per delivery. A
+  delivery is made not handled by the handler saying so or throwing, by
+  an answer after its caller's deadline (the resend delayed), by failed
+  background work, or by an injected crash that ends the handler or
+  loses its acknowledgement or its response; a tick that fails after
+  `noRetry()` counts as handled, being one not to deliver again. Two
+  queue messages and two requests are also in flight together. The
+  alarms of real objects are held in workerd, under the runtime's six
+  retries and every bound of the scenario's, each failed by its handler.
+- **The AWS platform**: an SQS message, made not handled by a throw, by
+  reporting it as a batch item failure, or by an injected crash that
+  loses its deletion.
+
+Every list is at least as long as the most deliveries its limits allow,
+since a loop never ends a run while an event is pending: the list's end,
+the run's end in the model, ends none of these runs. Two things deliver by rules of their
+own and are not held to this count: an alarm set again or deleted before
+it fires is dropped, and a Workflow's deliveries (a step's retries, an
+instance restarted after a crash) are the model of the Workflows
+engine's.
+
 **Platform semantics to encode, with a documentation source for each:**
 - D1: `batch()` is all-or-nothing; separate `run()`/`first()`/`all()` calls
   are each one effect and can be cut between statements; prepared statements
