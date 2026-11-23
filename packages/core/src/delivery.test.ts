@@ -52,6 +52,19 @@ describe("redelivery", () => {
     expect(redelivery(event(1), 9, { maxRedeliveries: 0 })).toBeNull();
   });
 
+  // The delivery model's claims are about limits that are whole and not negative; the rule takes no other.
+  test.each([0.5, -1, Number.NaN, Number.POSITIVE_INFINITY])(
+    "refuses a platform's limit or a scenario's bound of %s",
+    (bad) => {
+      expect(() => redelivery(event(1), bad, { maxRedeliveries: 3 })).toThrow(
+        `the platform's limit on redeliveries must be a non-negative integer, got ${bad}`,
+      );
+      expect(() => redelivery(event(1), 3, { maxRedeliveries: bad })).toThrow(
+        `bounds.maxRedeliveries must be a non-negative integer, got ${bad}`,
+      );
+    },
+  );
+
   test("agrees with every form the platforms wrote it in", () => {
     for (let attempt = 1; attempt <= 6; attempt++) {
       for (let limit = 0; limit <= 5; limit++) {

@@ -33,7 +33,7 @@ export interface SqsDrive extends PlatformData {
   readonly maxReceiveCount: number;
 }
 
-/** Drive the Lambda with these messages from an SQS queue; `maxReceiveCount` defaults to 3. */
+/** Drive the Lambda with these messages from an SQS queue; `maxReceiveCount`, a whole number of at least one, defaults to 3. */
 export function sqs(
   queue: string,
   messages: readonly SqsMessage[],
@@ -45,6 +45,17 @@ export function sqs(
     messages: messages.map((m, i) => ({ id: m.id ?? `msg-${i + 1}`, body: m.body })),
     maxReceiveCount: options.maxReceiveCount ?? 3,
   };
+}
+
+/**
+ * What is wrong with an SQS drive. The count includes the first delivery, so it is a whole number
+ * of at least one; the redelivery rule, which is given the count less one, takes no limit that is
+ * not whole or is negative, and this says so by the drive's own name for it.
+ */
+function sqsDriveErrors(drive: SqsDrive): readonly string[] {
+  return Number.isInteger(drive.maxReceiveCount) && drive.maxReceiveCount >= 1
+    ? []
+    : ["sqs drive maxReceiveCount must be a positive integer"];
 }
 
 /** A DynamoDB table the scenario uses, by name and key schema: created empty before each run and snapshotted after it. */
@@ -108,7 +119,7 @@ export function defineAwsScenario(input: AwsScenarioInput): ScenarioSpec {
     invariants: input.invariants,
     bounds: { ...defaultBounds, ...input.bounds },
   };
-  const errors = validateScenario(spec);
+  const errors = [...validateScenario(spec), ...sqsDriveErrors(input.drive)];
   if (errors.length > 0)
     throw new Error(`invalid scenario ${JSON.stringify(input.name)}:\n- ${errors.join("\n- ")}`);
   return spec;

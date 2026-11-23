@@ -4,8 +4,9 @@
  * a delivery that was handled, and exactly as often as the least of four
  * counts says (the run's end, the first handled delivery, and the room
  * each limit leaves). Each is about every list of outcomes and every pair
- * of limits that are whole and not negative: a limit of one half would
- * allow a redelivery and break the first. Their proofs, which need
+ * of limits that are whole and not negative, as every limit that reaches
+ * the rule is (`redelivery` throws on any other): a limit of one half
+ * would allow a redelivery and break the first. Their proofs, which need
  * induction, are supplied in delivery-model.props.lean and checked by
  * Lean's kernel. The sample keeps the TESTED rung's draws to small limits,
  * where a drawn list can reach them; it is not part of any claim.

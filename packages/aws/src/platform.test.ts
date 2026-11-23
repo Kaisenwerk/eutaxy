@@ -139,6 +139,32 @@ const fixed: SqsHandler = async (event) => {
 
 const clients = () => ({ DynamoDBClient: local, DynamoDBDocumentClient: localDoc });
 
+describe("maxReceiveCount", () => {
+  const withCount = (maxReceiveCount: number) => ({
+    name: "sqs-count",
+    handler: { entry: "./handler.ts", config: "template.yaml" },
+    drive: sqs("payments", [{ body: { orderId: "o-1" } }], { maxReceiveCount }),
+    invariants: [
+      atMostOncePerKey("payment-recorded-once", dynamoWrite("payments"), "args.Item.order_id.S"),
+    ],
+  });
+
+  // The delivery model's claims are about limits that are whole and not negative; SQS's counts the
+  // first delivery, so it is at least one.
+  test.each([2.5, 0, -1, Number.NaN, Number.POSITIVE_INFINITY])(
+    "a maxReceiveCount of %s is refused when the scenario is defined",
+    (maxReceiveCount) => {
+      expect(() => defineAwsScenario(withCount(maxReceiveCount))).toThrow(
+        "sqs drive maxReceiveCount must be a positive integer",
+      );
+    },
+  );
+
+  test("a maxReceiveCount of one is taken", () => {
+    expect(defineAwsScenario(withCount(1)).drive).toMatchObject({ maxReceiveCount: 1 });
+  });
+});
+
 describe("SQS delivery and DynamoDB effects", () => {
   test("a fault-free run records the put, the implicit delete, and a snapshot", async () => {
     const log = await replay(

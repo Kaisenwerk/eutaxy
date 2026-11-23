@@ -31,17 +31,26 @@ export function earliestEvent(pending: readonly EventRef[]): number {
  * acknowledged or deleted, a request its caller resends, an alarm that
  * failed), or null when it is dropped (dead-lettered, given up on). It is
  * delivered again while both the platform's own limit on redeliveries
- * (Queues' `max_retries`, the caller's `retries`, SQS's `maxReceiveCount`
+ * (Queues' `max_retries`, a drive's `retries`, SQS's `maxReceiveCount`
  * less the first delivery, an alarm's six retries) and the scenario's
  * `maxRedeliveries` leave room, which `redelivers` decides: the rule of the
  * delivery model, whose claims are proved (delivery-model.props.ts) for
- * limits that are whole and not negative. Pure.
+ * limits that are whole and not negative. Any other limit throws here, so
+ * none is ever delivered by, however the scenario was built. Pure.
  */
 export function redelivery(
   event: EventRef,
   limit: number,
   bounds: Pick<Bounds, "maxRedeliveries">,
 ): EventRef | null {
+  whole("the platform's limit on redeliveries", limit);
+  whole("bounds.maxRedeliveries", bounds.maxRedeliveries);
   if (!redelivers(event.attempt, limit, bounds.maxRedeliveries)) return null;
   return { ...event, attempt: event.attempt + 1 };
+}
+
+/** Throws unless the limit is one the delivery model's claims cover. */
+function whole(name: string, limit: number): void {
+  if (!(Number.isInteger(limit) && limit >= 0))
+    throw new Error(`${name} must be a non-negative integer, got ${limit}`);
 }
