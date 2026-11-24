@@ -142,19 +142,19 @@ platform-neutral `engine`; and the pure, dependency-free core (`spec`,
 layer below it. Prover engines attach to `prover` from the side, loaded at
 runtime over a process boundary.
 
-| Module            | Responsibility                                                                                                                                                                        | May import       |
-| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------- |
-| `spec`            | `SpecIR` and the combinators users write specs with (`forall`, `total`)                                                                                                               | nothing          |
-| `core`            | Effect log, fault model, seeded PRNG, `Platform` interface, schedulers (seeded; exhaustive and partial-order reduction from v0.5), invariants including `refines`, shrinker, verdicts | `spec`           |
-| `engine`          | Run loop, virtual clock, globals patching, per-run state reset, replay                                                                                                                | `core`           |
-| `cloudflare`      | Binding proxies, platform model, allowlist, Vitest integration                                                                                                                        | `engine`, `core` |
-| `aws`             | AWS SDK `send` proxy, SQS-to-Lambda delivery model, DynamoDB reset and snapshots; runs in Node                                                                                        | `engine`, `core` |
-| `prover`          | `Prover` interface, the reader (a module and its spec file to `SpecIR`), spec ladder, aggregation                                                                                     | `core`, `spec`   |
-| `prover-lean`     | First-party engine: pure-TypeScript subset to Lean 4, tactic stack, translation validation                                                                                            | `prover`, `spec` |
-| `prover-smt`      | First-party engine: the same subset to SMT-LIB 2 for Z3; doubles, code-unit strings, datatypes; counterexamples replayed                                                              | `prover`, `spec` |
-| `report`          | Text, versioned JSON, Vitest regression emitter                                                                                                                                       | `core`           |
-| `cli`             | Commands, config, engine selection                                                                                                                                                    | all of the above |
-| `eutaxy` (facade) | Public API at `eutaxy`, `eutaxy/cloudflare` and `eutaxy/aws`                                                                                                                          | all of the above |
+| Module            | Responsibility                                                                                                                                                                        | May import               |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------ |
+| `spec`            | `SpecIR` and the combinators users write specs with (`forall`, `total`)                                                                                                               | nothing                  |
+| `core`            | Effect log, fault model, seeded PRNG, `Platform` interface, schedulers (seeded; exhaustive and partial-order reduction from v0.5), invariants including `refines`, shrinker, verdicts | `spec`                   |
+| `engine`          | Run loop, virtual clock, globals patching, per-run state reset, replay                                                                                                                | `core`                   |
+| `cloudflare`      | Binding proxies, platform model, allowlist, Vitest integration                                                                                                                        | `engine`, `core`, `spec` |
+| `aws`             | AWS SDK `send` proxy, SQS-to-Lambda delivery model, DynamoDB reset and snapshots; runs in Node                                                                                        | `engine`, `core`         |
+| `prover`          | `Prover` interface, the reader (a module and its spec file to `SpecIR`), spec ladder, aggregation                                                                                     | `core`, `spec`           |
+| `prover-lean`     | First-party engine: pure-TypeScript subset to Lean 4, tactic stack, translation validation                                                                                            | `prover`, `spec`         |
+| `prover-smt`      | First-party engine: the same subset to SMT-LIB 2 for Z3; doubles, code-unit strings, datatypes; counterexamples replayed                                                              | `prover`, `spec`         |
+| `report`          | Text, versioned JSON, Vitest regression emitter                                                                                                                                       | `core`                   |
+| `cli`             | Commands, config, engine selection                                                                                                                                                    | all of the above         |
+| `eutaxy` (facade) | Public API at `eutaxy`, `eutaxy/cloudflare` and `eutaxy/aws`                                                                                                                          | all of the above         |
 
 Outside `packages/`, the repository holds `corpus/` (planted bugs,
 differential scenarios, prover contracts; never published), `examples/`,
@@ -176,7 +176,12 @@ need the real runtime live in its `workerd/` directory, one Worker each.
   does need it says so when it is missing or older than 7.1.
 - Only `cloudflare` knows about Cloudflare and only `aws` knows about AWS;
   each is a sibling package implementing `Platform`, and the engine, the
-  invariants, the shrinker, the report and the CLI are shared.
+  invariants, the shrinker, the report and the CLI are shared. So the
+  delivery rules that are Cloudflare's own and are proved (a queue
+  message's decision, an alarm's retries and supersession) live in
+  `cloudflare`, not in `core`, and a spec file sits beside its module:
+  that is why `cloudflare` may import `spec`, the lowest layer, which
+  only those spec files do.
 - Only `engine` patches globals (`Date`, `Math.random`,
   `crypto.randomUUID`, `crypto.getRandomValues`, `performance.now`, timers,
   and later `fetch`); schedulers draw randomness from `core`'s PRNG and
@@ -758,9 +763,54 @@ Every list is at least as long as the most deliveries its limits allow,
 since a loop never ends a run while an event is pending: the list's end,
 the run's end in the model, ends none of these runs. Two things deliver by rules of their
 own and are not held to this count: an alarm set again or deleted before
-it fires is dropped, and a Workflow's deliveries (a step's retries, an
-instance restarted after a crash) are the model of the Workflows
-engine's.
+it fires is dropped, by the supersession rule below, and a Workflow's
+deliveries (a step's retries, an instance restarted after a crash) are
+the model of the Workflows engine's.
+
+Two rules of delivery are Cloudflare's own and are proved the same way.
+Each is a pure module of `cloudflare` in the subset, with its spec file
+and the proofs that need induction beside it, and the delivery code
+decides by its functions and holds no such decision of its own.
+- **A queue message's decision** (`queue-decision.ts`). Of a handler's
+  calls to `ack()` and `retry()` on a message the first stands and later
+  ones are ignored; a message whose handler completed without deciding
+  is acknowledged by the platform; a delivery is handled when its
+  decision is an acknowledgement (Cloudflare Queues: batching and
+  retries, explicit acknowledgement; JavaScript APIs, the consumer).
+  Over a model of a whole delivery, the handler's calls in order and
+  then its end, four claims are `PROVEN` for every list of calls: the
+  first decision wins, whatever is called after it and however the
+  handler ends; a message not decided is acknowledged exactly when the
+  handler completed; the delivery is handled exactly when its first call
+  is an acknowledgement, or it made none and completed; and a call takes
+  effect exactly when none came before it. A test holds queue delivery
+  to the model on every list of up to three calls, the handler
+  completing or throwing, under a crash either side of every decision
+  recorded, the platform's own acknowledgement included: a crash before
+  that one loses it, so the message is delivered again.
+- **An alarm's retries and supersession** (`alarm-rules.ts`). A failed
+  alarm is retried six times, the limit `redelivery` decides under,
+  after two seconds and then twice as long each time; every `setAlarm`
+  or `deleteAlarm` starts a new generation, and an event or retry of
+  another generation is superseded (Cloudflare, Durable Object Base
+  API). Four claims are `PROVEN`: the first retry waits two seconds;
+  each later one waits twice as long as the one before, through every
+  retry the limit leaves; the last retry the limit leaves waits
+  sixty-four seconds; and an event is superseded exactly when the alarm
+  was set again or deleted after it, however often. The delays are
+  written as a table, since the subset has neither a power nor recursion
+  on a number; the second and third claims hold the limit to six, a
+  seventh retry having no delay of its own and a fifth as the last
+  waiting half as long. The limit is applied by `redelivery` to the
+  event's attempts, one more than the alarm's retries, a count the
+  workerd tests hold.
+  Supersession is decided by the generation alone: an alarm's time is
+  written without a new generation only while an event of the current
+  one is being delivered, so no second check on the time is needed. A
+  test in workerd holds the alarms of real objects to both: every list
+  of up to four changes after the alarm is first set, with a replaced
+  alarm still pending when its replacement fires, and the waits of all
+  six retries.
 
 **Platform semantics to encode, with a documentation source for each:**
 - D1: `batch()` is all-or-nothing; separate `run()`/`first()`/`all()` calls
@@ -2216,6 +2266,7 @@ Self-verification targets, by cost of a bug:
 | --------------------- | --------------------------------------------------------------------------------------------------------------- | ---------------------------------- |
 | Exhaustive enumerator | Every schedule within bounds appears exactly once; count equals a closed-form formula; same seed, same schedule | False `BOUNDED` on every check     |
 | Delivery model        | At most one delivery more than either limit allows; none after a handled one; the count in closed form          | Redeliveries missed or invented    |
+| Cloudflare's rules    | A queue message's first decision wins; an alarm's backoff doubles; superseded exactly by a later change         | Wrong deliveries or drops          |
 | Invariant checkers    | Match a naive reference implementation on the same effect log                                                   | False `BOUNDED` for that invariant |
 | Verdict logic         | `VIOLATED` only after a successful replay                                                                       | False alarms                       |
 | Shrinker              | Output still violates and is no longer than input                                                               | Unhelpful traces only              |

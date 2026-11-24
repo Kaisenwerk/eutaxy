@@ -9,7 +9,8 @@
   "types": "./src/index.ts",
   "dependencies": {
     "@eutaxy/engine": "workspace:*",
-    "@eutaxy/core": "workspace:*"
+    "@eutaxy/core": "workspace:*",
+    "@eutaxy/spec": "workspace:*"
   },
   "devDependencies": {
     "@cloudflare/vitest-plugin": "1.4.6",

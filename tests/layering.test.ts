@@ -67,7 +67,7 @@ const allowed: Readonly<Record<string, readonly string[]>> = {
   spec: [],
   core: ["spec"],
   engine: ["core"],
-  cloudflare: ["engine", "core"],
+  cloudflare: ["engine", "core", "spec"],
   aws: ["engine", "core"],
   prover: ["core", "spec"],
   "prover-lean": ["prover", "spec"],

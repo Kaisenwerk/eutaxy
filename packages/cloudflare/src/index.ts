@@ -1,6 +1,7 @@
 // @eutaxy/cloudflare: see README.md.
 
 export { atLeastOnce, atMostOncePerKey } from "@eutaxy/core";
+export { alarmRetries, generationAfter, retryDelayMs, superseded } from "./alarm-rules.ts";
 export { type CalleeModule, calleeEnv } from "./callees.ts";
 export { check, expectHolds } from "./check.ts";
 export { proxyD1, resetD1, snapshotD1, splitSql } from "./d1.ts";

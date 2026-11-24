@@ -45,6 +45,32 @@ or the response. `workerd/alarm-deliveries` holds the alarms of real
 objects to it, each failed by its handler, under the runtime's six
 retries and every bound of the scenario's up to seven.
 
+**Proved rules.** Two rules of delivery are Cloudflare's own, each a pure
+module in the subset the Lean engine translates, with its claims in
+`<module>.props.ts` and the proofs that need induction in
+`<module>.props.lean` beside it; `eutaxy report packages/cloudflare/src
+--prover lean` reports every claim `PROVEN`, and `tests/self-check.test.ts`
+plants a bug in each rule and requires it refuted. `queue-decision.ts` is
+a queue message's decision: the first of a handler's `ack()` and `retry()`
+calls stands (`standsAfter`, `takesEffect`), the platform acknowledges for
+a handler that completed without deciding (`acknowledgedImplicitly`), and
+a delivery is handled when its decision is an acknowledgement (`handled`);
+`settled` models a whole delivery for the claims. `queues.ts` decides by
+these and `src/queue-decision.test.ts` holds it to the model, on every
+list of up to three calls, completed or thrown, under a crash either side
+of every decision. `alarm-rules.ts` is an alarm's retries and
+supersession: six retries (`alarmRetries`, which `redelivery` applies),
+two seconds before the first and twice as long before each next
+(`retryDelayMs`), and a new generation
+with every `setAlarm` or `deleteAlarm` (`nextGeneration`), an event of
+another generation being superseded (`superseded`; `generationAfter`
+states the claim). `alarms.ts` decides by these, and
+`workerd/alarm-rules` holds the alarms of real objects to them: every
+list of up to four changes after the alarm is first set, and the waits of
+all six retries. The package's index exports `alarmRetries`,
+`retryDelayMs`, `superseded` and `generationAfter` for that test alone;
+the facade does not.
+
 **Effect conventions** (what the proxies record, and what selectors match):
 
 | Target               | Op                                     | `call` payload                                                                                                                                                                                                                                                                                                 | `result` payload                                                                                                                                                                                   |
@@ -82,7 +108,7 @@ with `result.changes` of at least 1.
 
 `proxy-context.ts` holds `ProxyContext` (what every binding proxy is given), `pointAt` (the effect point of a proxied call) and `refuse` (report an unsupported reason and refuse the call with it), which the proxies' local one-liners delegate to. `object-access.ts` holds what a delivery into an object needs of its namespace (`ObjectAccess`), `hostedInObject`, the one effect an alarm or a WebSocket message performs inside an object (it hosts the object's effects, a fault abandoning it resets the object, and a crash evicts the instance), and how the object's code is entered as the host's (`hostOf`, `hostMethod`: the runtime carries no async context into it, so the method about to run is wrapped on its class and the alarm and WebSocket handlers are called through `RunHooks.hostedCode`), which makes work the object goes on with after its answer its own invocation, `DO:<binding>/<object>/after`. `simulateConstruction` gives each Durable Object class among the Worker's and the callees' exports a base between it and the runtime's, which constructs it with `envView` (or, outside a run, `outsideRunEnv`, which answers a scripted method from the script and refuses the rest), so `this.env` is the scenario's from the constructor's first line. What a constructor does behind `blockConcurrencyWhile` runs as the object's code while the call is on its way in (`RunHooks.hostEntering`, through the wrapper `durable-objects.ts` puts on the state's prototype, which finds the object's host by its id). `wakeEvent` and `deliverWake` wake an object a crash dropped and nothing entered since, as an event of the binding's own at the end of the run (`Platform.closingEvents`): a `DO:<binding>` `wake` effect, no faults, hosting the constructor's effects, so the snapshot never constructs an object outside the run. `ownEnv` puts the instance's `env` behind a view under which every binding is what the Worker sees under that name (`ProxyContext.env`, under the callee's qualified name when the object was constructed with `calleeEnv`'s view, marked by `calleeOfEnv`): the platform's own stub or proxy for a service binding, a D1 database, an R2 bucket, a Workflow binding and a Durable Object namespace (so one object's call into another is the stub call it is from the Worker), so the object's calls through them are effects, and the refusing stand-in for a binding of a kind the model does not cover; the object's output gate (`storage.sync()`) is left in `ProxyContext.gate` as each call starts, and the stub waits on it inside its effect (`outboundGate` in `proxy-context.ts`).
 
-**May import.** `@eutaxy/engine`, `@eutaxy/core`. Only these are declared in `package.json`, and
+**May import.** `@eutaxy/engine`, `@eutaxy/core`, and `@eutaxy/spec` in the spec files of its proved rules. Only these are declared in `package.json`, and
 pnpm links only declared workspace dependencies, so an import of any other
 package does not resolve. The project references in `tsconfig.json` mirror the
 list, and those of `workerd/tsconfig.json` are the list and this package; a
