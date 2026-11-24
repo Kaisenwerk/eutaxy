@@ -409,6 +409,9 @@ importers:
       '@eutaxy/engine':
         specifier: workspace:*
         version: link:../engine
+      '@eutaxy/spec':
+        specifier: workspace:*
+        version: link:../spec
     devDependencies:
       '@cloudflare/vitest-plugin':
         specifier: 1.4.6

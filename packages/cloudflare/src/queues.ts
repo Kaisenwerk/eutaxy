@@ -1,4 +1,10 @@
-/** Queue delivery: one invocation per delivery of a message, redelivered until acked or dead-lettered. */
+/**
+ * Queue delivery: one invocation per delivery of a message, redelivered
+ * until acked or dead-lettered. Which call takes effect, when the
+ * platform acknowledges for the handler and whether the delivery was
+ * handled are the rule of queue-decision.ts, whose claims are proved;
+ * this file decides none of them itself.
+ */
 
 import {
   type DeliveryResult,
@@ -12,6 +18,14 @@ import {
 } from "@eutaxy/core";
 import { decide, note, runInvocation } from "@eutaxy/engine";
 import { drainBackground, executionContext, type RunningWorker } from "./background.ts";
+import {
+  acknowledgedImplicitly,
+  type Decision,
+  handled,
+  type Standing,
+  standsAfter,
+  takesEffect,
+} from "./queue-decision.ts";
 import type { QueueDrive } from "./scenario.ts";
 
 /** Deep-copy JSON data so a handler that mutates its message cannot leak into other runs. */
@@ -31,11 +45,11 @@ export async function deliverMessage(
 ): Promise<DeliveryResult> {
   const queueTarget = `Queue:${drive.queue}`;
   const inv = hooks.startInvocation(invocation);
-  /** Cloudflare honours the first ack or retry decision per message; later ones are ignored. */
-  const state: { decision: "ack" | "retry" | null } = { decision: null };
+  /** The decision that stands for the message: Cloudflare honours the first, and later ones are ignored. */
+  const state: { standing: Standing } = { standing: "none" };
   const background: Promise<unknown>[] = [];
 
-  const decisionPoint = (op: "ack" | "retry", args: JsonValue): EffectPoint => ({
+  const decisionPoint = (op: Decision, args: JsonValue): EffectPoint => ({
     invocation,
     target: queueTarget,
     op,
@@ -43,14 +57,14 @@ export async function deliverMessage(
     allowed: decisionFaults,
   });
   /** The first decision wins; a later one is recorded as not effective. */
-  const take = (op: "ack" | "retry") => (): boolean => {
-    if (state.decision !== null) return false;
-    state.decision = op;
-    return true;
+  const take = (op: Decision) => (): boolean => {
+    const effective = takesEffect(state.standing);
+    state.standing = standsAfter(state.standing, op);
+    return effective;
   };
   const effective = (e: boolean): JsonValue => ({ effective: e });
   /** Records the handler's call; the result says whether it took effect. */
-  const record = (op: "ack" | "retry", args: JsonValue): void => {
+  const record = (op: Decision, args: JsonValue): void => {
     hooks.effectSync(decisionPoint(op, args), take(op), effective);
   };
   const message: Message<unknown> = {
@@ -78,7 +92,7 @@ export async function deliverMessage(
     )
   ).status;
 
-  if (status === "completed" && state.decision === null) {
+  if (acknowledgedImplicitly(status === "completed", state.standing)) {
     const implicit = decisionPoint("ack", {
       messageId: event.id,
       implicit: true,
@@ -90,7 +104,7 @@ export async function deliverMessage(
   if (await drainBackground(hooks, inv, invocation, queueTarget, background)) status = "crashed";
 
   const followUps: EventRef[] = [];
-  if (state.decision !== "ack") {
+  if (!handled(state.standing)) {
     const next = redelivery(event, maxRetries, spec.bounds);
     if (next) {
       followUps.push(next);

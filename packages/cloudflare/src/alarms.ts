@@ -11,7 +11,11 @@
  * `setAlarm` replaces it, execution is at least once, and a handler that
  * throws is retried with exponential backoff starting at two seconds, up to
  * six retries, with `{ retryCount, isRetry }`. `setAlarm` inside a
- * transaction takes effect only if the transaction commits.
+ * transaction takes effect only if the transaction commits. How many
+ * retries, how long before each and which alarm is superseded are the
+ * rules of alarm-rules.ts, whose claims are proved; this file decides
+ * none of the three itself, and counts an alarm's retries as its event's
+ * attempts less one, by which `redelivery` applies the limit.
  */
 
 import {
@@ -23,23 +27,20 @@ import {
   readFaults,
   redelivery,
 } from "@eutaxy/core";
+import { alarmRetries, nextGeneration, retryDelayMs, superseded } from "./alarm-rules.ts";
 import { hostedInObject, hostOf, type ObjectAccess } from "./object-access.ts";
 
 /** `EventRef.source` of an alarm event. */
 export const alarmSource = "durable_object_alarm";
 
-/** Cloudflare retries a failed alarm handler up to six times, after 2 s, 4 s, 8 s, ... */
-const maxRetries = 6;
-const firstRetryMs = 2_000;
-
 /** One object's alarm, kept across its instances for the run. */
 interface AlarmEntry {
   time: number | null;
-  /** Alarm changes for this object so far, for unique event ids. */
-  seq: number;
   /**
    * The current alarm's generation: every setAlarm or deleteAlarm starts a
-   * new one, and an event or retry of an older generation is superseded.
+   * new one (`nextGeneration`), and an event or retry of an older
+   * generation is superseded (`superseded`). It also numbers the alarm's
+   * events, whose ids are unique by it.
    */
   gen: number;
   /** Times the alarm fired this run (retries not counted). */
@@ -52,7 +53,6 @@ interface AlarmData {
   readonly gen: number;
   readonly id: string;
   readonly object: string;
-  readonly time: number;
   readonly retryCount: number;
 }
 
@@ -67,7 +67,7 @@ export class AlarmBook {
   entry(id: string): AlarmEntry {
     let e = this.entries.get(id);
     if (!e) {
-      e = { time: null, seq: 0, gen: 0, firings: 0 };
+      e = { time: null, gen: 0, firings: 0 };
       this.entries.set(id, e);
     }
     return e;
@@ -96,12 +96,11 @@ export function alarmControl(
     get: () => entry.time,
     set: (time) => {
       entry.time = time;
-      entry.seq++;
-      entry.gen = entry.seq;
-      const data: AlarmData = { binding, gen: entry.gen, id, object, time, retryCount: 0 };
+      entry.gen = nextGeneration(entry.gen);
+      const data: AlarmData = { binding, gen: entry.gen, id, object, retryCount: 0 };
       const now = Date.now();
       hooks().enqueue({
-        id: `alarm:${binding}:${object}:${entry.seq}`,
+        id: `alarm:${binding}:${object}:${entry.gen}`,
         attempt: 1,
         source: alarmSource,
         data: data as unknown as JsonValue,
@@ -111,8 +110,7 @@ export function alarmControl(
     delete: () => {
       entry.time = null;
       // Supersedes the pending event and any retry of it.
-      entry.seq++;
-      entry.gen = entry.seq;
+      entry.gen = nextGeneration(entry.gen);
     },
     unsupported: (reason) => hooks().unsupported(`Durable Object ${binding} ${object}: ${reason}`),
   };
@@ -272,7 +270,7 @@ export async function runAlarm(
   await d.objects.run(d.binding, id, object, async (instance) => {
     // Superseded while the effect waited for its turn: the handler of a cancelled alarm never runs.
     const entry = d.book.entry(id);
-    if (entry.gen !== gen) return;
+    if (superseded(gen, entry.gen)) return;
     // The alarm is consumed as its handler starts: from here getAlarm() returns null.
     entry.time = null;
     const handler = (instance as { alarm?: (info: unknown) => unknown }).alarm;
@@ -287,9 +285,10 @@ export async function runAlarm(
 }
 
 /**
- * Fire an alarm event: skip it when the object's alarm has since moved or
- * been deleted, run `alarm()` as one effect otherwise, and schedule a retry
- * with backoff when the handler fails, crashes, or a fault says it did.
+ * Fire an alarm event: skip it when the object's alarm has since been set
+ * again or deleted, run `alarm()` as one effect otherwise, and schedule a
+ * retry with backoff when the handler fails, crashes, or a fault says it
+ * did.
  */
 export async function deliverAlarm(
   event: EventRef,
@@ -300,9 +299,8 @@ export async function deliverAlarm(
   const a = event.data as unknown as AlarmData;
   const entry = d.book.entry(a.id);
   // Superseded by a later setAlarm or deleteAlarm: dropped before anything, faults included.
-  if (entry.gen !== a.gen) return { status: "completed", followUps: [] };
+  if (superseded(a.gen, entry.gen)) return { status: "completed", followUps: [] };
   if (a.retryCount === 0) {
-    if (entry.time !== a.time) return { status: "completed", followUps: [] };
     // It stays set until the handler starts (runAlarm clears it after the takeover), as natively.
     if (entry.firings >= d.limit) {
       entry.time = null;
@@ -338,16 +336,16 @@ export async function deliverAlarm(
   );
   if (status !== "completed") {
     // The retries so far are the attempt less one: retryCount counts them too.
-    const next = redelivery(event, maxRetries, { maxRedeliveries });
+    const next = redelivery(event, alarmRetries, { maxRedeliveries });
     if (next) {
-      const retryAt = Date.now() + firstRetryMs * 2 ** a.retryCount;
+      const retryAt = Date.now() + retryDelayMs(a.retryCount);
       const data: AlarmData = { ...a, retryCount: a.retryCount + 1 };
       // The alarm stays set, for its retry, until a later change supersedes it.
-      if (entry.gen === a.gen) entry.time = retryAt;
+      if (!superseded(a.gen, entry.gen)) entry.time = retryAt;
       hooks.enqueue({ ...next, data: data as unknown as JsonValue, at: retryAt });
     } else {
       // Given up on: no longer pending, unless a newer alarm replaced it meanwhile.
-      if (entry.gen === a.gen) entry.time = null;
+      if (!superseded(a.gen, entry.gen)) entry.time = null;
       d.bookkeep("alarm_gave_up", { object: a.object, retries: a.retryCount });
     }
   }
