@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.19.1](https://github.com/Kaisenwerk/eutaxy/compare/v0.19.0...v0.19.1) (2026-11-25)
+
+
+### Features
+
+* **cloudflare:** prove the queue and alarm delivery rules ([#52](https://github.com/Kaisenwerk/eutaxy/issues/52)) ([268af05](https://github.com/Kaisenwerk/eutaxy/commit/268af0556683f3c14e63bbf732ad9644be9c8ddf))
+* **core:** prove the delivery model's redelivery rule ([#48](https://github.com/Kaisenwerk/eutaxy/issues/48)) ([a4b4654](https://github.com/Kaisenwerk/eutaxy/commit/a4b4654d8199b213cc725aa6018cd57fcc25f356))
+
+
+### Bug Fixes
+
+* refuse a redelivery limit that is not a whole number ([#50](https://github.com/Kaisenwerk/eutaxy/issues/50)) ([0660981](https://github.com/Kaisenwerk/eutaxy/commit/0660981a79672234624d161ec09dee3d7aa46997))
+
 ## [0.19.0](https://github.com/Kaisenwerk/eutaxy/compare/v0.18.0...v0.19.0) (2026-11-22)
 
 
