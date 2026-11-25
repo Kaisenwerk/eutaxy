@@ -91,14 +91,14 @@ const workerdProjects = corpora.flatMap((root) =>
     })),
 );
 
-/** One workerd project per package test of the real runtime (`packages/<name>/workerd/<test>`). */
+/** One workerd project per package test of the real runtime (`packages/<name>/runtime-tests/<test>`). */
 const packageWorkerdProjects = readdirSync("packages", { withFileTypes: true })
-  .filter((p) => p.isDirectory() && existsSync(join("packages", p.name, "workerd")))
+  .filter((p) => p.isDirectory() && existsSync(join("packages", p.name, "runtime-tests")))
   .flatMap((p) =>
-    readdirSync(join("packages", p.name, "workerd"), { withFileTypes: true })
+    readdirSync(join("packages", p.name, "runtime-tests"), { withFileTypes: true })
       .filter((d) => d.isDirectory() && !["dist", "node_modules"].includes(d.name))
       .map((d) => {
-        const dir = `packages/${p.name}/workerd/${d.name}`;
+        const dir = `packages/${p.name}/runtime-tests/${d.name}`;
         // A test without its Worker's config would get no project and never run, silently.
         if (!existsSync(join(dir, "wrangler.jsonc")))
           throw new Error(`${dir} has no wrangler.jsonc, so its tests would never run`);

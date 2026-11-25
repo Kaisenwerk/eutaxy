@@ -1,5 +1,5 @@
 /**
- * Every package test of the real runtime (`packages/<name>/workerd/<test>`)
+ * Every package test of the real runtime (`packages/<name>/runtime-tests/<test>`)
  * is complete: a README saying what its Worker exercises, and scenarios
  * that build and point at a Worker and a config that exist. The tests pass
  * the handler to the platform themselves, so a scenario's own `worker`
@@ -18,15 +18,15 @@ interface Scenario {
 }
 
 const dirs = readdirSync(join(root, "packages"), { withFileTypes: true })
-  .filter((p) => p.isDirectory() && existsSync(join(root, "packages", p.name, "workerd")))
+  .filter((p) => p.isDirectory() && existsSync(join(root, "packages", p.name, "runtime-tests")))
   .flatMap((p) => {
-    const workerd = join(root, "packages", p.name, "workerd");
-    return readdirSync(workerd, { withFileTypes: true })
+    const folder = join(root, "packages", p.name, "runtime-tests");
+    return readdirSync(folder, { withFileTypes: true })
       .filter((d) => d.isDirectory() && !["dist", "node_modules"].includes(d.name))
-      .map((d) => ({ name: `${p.name}/workerd/${d.name}`, dir: join(workerd, d.name) }));
+      .map((d) => ({ name: `${p.name}/runtime-tests/${d.name}`, dir: join(folder, d.name) }));
   });
 
-describe("the packages' workerd tests", () => {
+describe("the packages' runtime tests", () => {
   test("there are some", () => {
     expect(dirs.length).toBeGreaterThan(0);
   });

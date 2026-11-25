@@ -66,7 +66,7 @@ describe("eutaxy check on an UNSUPPORTED run", () => {
       const outFile = join(out, "replay.test.ts");
       const r = eutaxy([
         "check",
-        "packages/eutaxy/workerd/unsupported-replay/scenario.sim.ts",
+        "packages/eutaxy/runtime-tests/unsupported-replay/scenario.sim.ts",
         "--json",
         "--seed",
         "corpus",
@@ -95,7 +95,7 @@ describe("eutaxy check on an UNSUPPORTED run", () => {
   test("writes nothing with --no-regression", () => {
     const r = eutaxy([
       "check",
-      "packages/eutaxy/workerd/unsupported-replay/scenario.sim.ts",
+      "packages/eutaxy/runtime-tests/unsupported-replay/scenario.sim.ts",
       "--json",
       "--seed",
       "corpus",

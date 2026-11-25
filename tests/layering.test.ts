@@ -131,12 +131,12 @@ describe("declared dependencies match the design", () => {
       expect(refs).toEqual([...deps].sort());
       // A package's tests in workerd have a project of their own: it references the package and
       // what the package may import, nothing else.
-      const workerd = join(dir, "workerd", "tsconfig.json");
-      if (existsSync(workerd)) {
-        const own = ((readJson(workerd)["references"] as { path: string }[] | undefined) ?? [])
+      const runtimeTests = join(dir, "runtime-tests", "tsconfig.json");
+      if (existsSync(runtimeTests)) {
+        const own = ((readJson(runtimeTests)["references"] as { path: string }[] | undefined) ?? [])
           .map((r) => (r.path === ".." ? pkg : r.path.replace(/^\.\.\/\.\.\//, "")))
           .sort();
-        expect(own, `packages/${pkg}/workerd/tsconfig.json`).toEqual([pkg, ...deps].sort());
+        expect(own, `packages/${pkg}/runtime-tests/tsconfig.json`).toEqual([pkg, ...deps].sort());
       }
     });
   }

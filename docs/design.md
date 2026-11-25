@@ -160,7 +160,9 @@ Outside `packages/`, the repository holds `corpus/` (planted bugs,
 differential scenarios, prover contracts; never published), `examples/`,
 `tests/` (the command end to end, with `tests/systems` for systems of
 Workers only the command can build) and `docs/`. A package's tests that
-need the real runtime live in its `workerd/` directory, one Worker each.
+need the real runtime live in its `runtime-tests/` directory, one Worker
+each; the directory is named for what it holds, not for the runtime the
+tests run in.
 - Boundaries are enforced by the package manager: each package declares
   exactly its allowed imports, and pnpm's isolated workspace links only
   declared dependencies, so a forbidden import does not resolve. TypeScript
@@ -803,7 +805,7 @@ decides by its functions and holds no such decision of its own.
   seventh retry having no delay of its own and a fifth as the last
   waiting half as long. The limit is applied by `redelivery` to the
   event's attempts, one more than the alarm's retries, a count the
-  workerd tests hold.
+  runtime tests hold.
   Supersession is decided by the generation alone: an alarm's time is
   written without a new generation only while an event of the current
   one is being delivered, so no second check on the time is needed. A
