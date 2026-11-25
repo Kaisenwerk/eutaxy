@@ -14,7 +14,7 @@
       "path": "packages/cloudflare"
     },
     {
-      "path": "packages/cloudflare/workerd"
+      "path": "packages/cloudflare/runtime-tests"
     },
     {
       "path": "packages/aws"
@@ -38,7 +38,7 @@
       "path": "packages/eutaxy"
     },
     {
-      "path": "packages/eutaxy/workerd"
+      "path": "packages/eutaxy/runtime-tests"
     },
     {
       "path": "tests"

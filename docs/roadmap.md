@@ -16,8 +16,8 @@ built. A phase's gate is its go/no-go and passed in CI when the phase
 closed; after the release what a gate's Workers hold is protection against
 regressions, which belongs with the code it protects. So once a phase is
 released its gate's tests move into the package that owns the feature
-(`packages/<name>/workerd/<test>`, run inside workerd on every change), or,
-for a system only the command can build (a Worker calling another by its
+(`packages/<name>/runtime-tests/<test>`, run inside workerd on every change),
+or, for a system only the command can build (a Worker calling another by its
 real name), into the command's own tests (`tests/systems/<test>`): the
 replays as they are, and the exploration, where the gate ran a matrix of
 cells, cut to one check per claim (exhaustive where the schedules are few,
@@ -187,7 +187,7 @@ a new phase's gate is built where its tests will stay.
   runner's load, and the ceiling is raised only with such runs recorded
   here. In the 453.6 s run a test that asserts every schedule was run, a
   second's work, spent its 30 s budget and failed. Such tests under
-  `packages/cloudflare/workerd` and in the corpus now pass a clock that
+  `packages/cloudflare/runtime-tests` and in the corpus now pass a clock that
   does not move, so the budget never ends their exploration early and a
   loaded runner slows them without failing them; the two that run the
   command (`tests/systems`) cannot, and give it 100 s. Gate: the planted
@@ -227,7 +227,7 @@ a new phase's gate is built where its tests will stay.
   its arrival, not by two real ticks, which a loaded machine can outlast.
   Gate: a Worker awaiting calls into two objects together ends in a
   verdict with every order run
-  (`packages/cloudflare/workerd/parallel-object-calls`), and both engines
+  (`packages/cloudflare/runtime-tests/parallel-object-calls`), and both engines
   pass the prover contract corpus on the shared spine.
 
 Notes on releases along the way:
@@ -262,17 +262,17 @@ a measurement that asks for them):
   (an object, two objects, a called Worker, and their mixes) under every
   fault placement and compares the runs
   (`packages/engine/src/nested-calls*.test.ts`), and
-  `packages/cloudflare/workerd/nested-object-timing` holds the v0.16
-  timings nested against the real runtime, beside the calls' own workerd tests
-  (`packages/cloudflare/workerd/object-calls-object`), the planted bug
+  `packages/cloudflare/runtime-tests/nested-object-timing` holds the v0.16
+  timings nested against the real runtime, beside the calls' own runtime tests
+  (`packages/cloudflare/runtime-tests/object-calls-object`), the planted bug
   (`object-unit-twice-across-objects`) and the differential entry
   (`object-calls-object`). A scripted namespace (`scriptedObject()`)
   answers its objects' methods and `fetch()` from the scenario, as
   `service()` answers a Worker, each call an effect, from the Worker and
   from another object: for an object the isolate cannot run (one backed
   by a container) or one the scenario does not explore, which an
-  adopter's second flow waited on. Its workerd test
-  (`packages/cloudflare/workerd/scripted-object`) has an object calling
+  adopter's second flow waited on. Its runtime test
+  (`packages/cloudflare/runtime-tests/scripted-object`) has an object calling
   scripted ones end in a verdict under every fault placement with nothing
   `UNSUPPORTED`, and
   the planted bug behind such a call
@@ -295,6 +295,11 @@ a measurement that asks for them):
   outside the phases because it changes no behaviour; `docs/design.md` and
   this roadmap are included in it verbatim, so they stay the one record of
   what is decided.
+- A package's tests against the real runtime live in its
+  `runtime-tests/` directory, a name that says what the directory holds;
+  one that named only the runtime misled about what the tests are. The
+  naming is outside the phases because it changes no behaviour: the same
+  tests, the same Vitest projects, the same results.
 - The `UNSUPPORTED` reasons that close with little model work (the site's
   catalogue of reasons lists them all): an R2 object's upload time on the
   virtual clock, so `onlyIf` conditions on it are modelled; alarm calls

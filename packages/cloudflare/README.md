@@ -27,7 +27,7 @@ State invariants: `d1Rows`, `durableObjectRows`, `r2Rows`, `workflowRows`, `ever
 `unique`, `references`, `queueAck`; `snapshotD1`.
 
 **Tests.** `src/*.test.ts` run in Node, against fakes where a binding
-needs the runtime. `workerd/<test>/` holds a Worker, its wrangler config,
+needs the runtime. `runtime-tests/<test>/` holds a Worker, its wrangler config,
 its scenarios and a README saying what the Worker exercises, run inside
 workerd against the real runtime, one Vitest project each
 (`vitest.config.ts`); they import this package by its own name, and the
@@ -41,7 +41,7 @@ every list of outcomes, every limit of the platform's and every bound of
 the scenario's up to a bound, made not handled by a retry, a 500, an
 exception, an answer past the caller's deadline, failed background work,
 or an injected crash that ends the handler or loses the acknowledgement
-or the response. `workerd/alarm-deliveries` holds the alarms of real
+or the response. `runtime-tests/alarm-deliveries` holds the alarms of real
 objects to it, each failed by its handler, under the runtime's six
 retries and every bound of the scenario's up to seven.
 
@@ -65,7 +65,7 @@ two seconds before the first and twice as long before each next
 with every `setAlarm` or `deleteAlarm` (`nextGeneration`), an event of
 another generation being superseded (`superseded`; `generationAfter`
 states the claim). `alarms.ts` decides by these, and
-`workerd/alarm-rules` holds the alarms of real objects to them: every
+`runtime-tests/alarm-rules` holds the alarms of real objects to them: every
 list of up to four changes after the alarm is first set, and the waits of
 all six retries. The package's index exports `alarmRetries`,
 `retryDelayMs`, `superseded` and `generationAfter` for that test alone;
@@ -111,7 +111,7 @@ with `result.changes` of at least 1.
 **May import.** `@eutaxy/engine`, `@eutaxy/core`, and `@eutaxy/spec` in the spec files of its proved rules. Only these are declared in `package.json`, and
 pnpm links only declared workspace dependencies, so an import of any other
 package does not resolve. The project references in `tsconfig.json` mirror the
-list, and those of `workerd/tsconfig.json` are the list and this package; a
-test keeps them in sync with the design.
+list, and those of `runtime-tests/tsconfig.json` are the list and this package;
+a test keeps them in sync with the design.
 
 **Phase.** v0.4 onward. See `docs/design.md` and `docs/roadmap.md`.

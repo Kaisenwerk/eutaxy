@@ -14,7 +14,7 @@
  * Two queue messages and two requests are also in flight together, under
  * every order of turns. Exhaustive within the bounds, not sampled. An
  * alarm's deliveries are held to the model in workerd
- * (`workerd/alarm-deliveries`).
+ * (`runtime-tests/alarm-deliveries`).
  */
 import {
   type Bounds,
